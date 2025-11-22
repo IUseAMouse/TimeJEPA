@@ -1,0 +1,50 @@
+# @package _global_
+
+model:
+  name: "jepa_tst_tiny"
+  
+  # Input configuration
+  seq_length: 512
+  patch_length: 16
+  stride: 8
+  num_channels: 1
+  prediction_length: 96
+  
+  # Encoder architecture
+  encoder:
+    d_model: 128
+    n_heads: 4
+    n_layers: 3
+    d_ff: 512
+    dropout: 0.1
+    activation: "gelu"
+    use_revin: true
+    use_rope: true
+    norm_first: true
+  
+  # Predictor architecture
+  predictor:
+    type: "transformer"  # transformer | mlp
+    d_model: 128
+    n_heads: 4
+    n_layers: 2
+    d_ff: 512
+    dropout: 0.1
+    activation: "gelu"
+  
+  # Decoder architecture
+  decoder:
+    type: "linear"  # linear | mlp | attentive
+    d_model: 128
+    hidden_dim: 256
+    n_layers: 2
+    dropout: 0.1
+  
+  # Target encoder (EMA)
+  target_encoder:
+    momentum_schedule: "cosine"
+    momentum_base: 0.996
+    momentum_final: 1.0
+  
+  # Model size stats
+  params_millions: ~0.5  # Approximate

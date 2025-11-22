@@ -1,11 +1,45 @@
-# configs/data/default.yaml
+# @package _global_
+
 data:
-  # Will load all datasets from configs/datasets.yaml
-  context_length: 168          # Default, can be overridden per dataset
-  prediction_length: 24        # Default
+  # Directory containing .npy files
+  data_dir: "data/processed"
+  
+  # Dataset selection
+  # null = load all, "electricity" = single, ["electricity", "weather"] = multiple
+  datasets: null
+  
+  dataset_pattern: "*.npy"
+  combine_mode: "concatenate"  # concatenate | separate
+  
+  # Time series params (utilise ta nomenclature)
+  context_length: 512
+  prediction_length: 96
+  stride: 1
+  
+  # Splits
+  train_val_test_split: [0.7, 0.15, 0.15]
+  
+  # Normalization (utilise ton système)
+  normalize_mode: "global"  # per_series | global
+  normalizer_type: "identity"  # standard | minmax | identity
+  
+  # DataLoader
   batch_size: 32
   num_workers: 4
+  pin_memory: true
+  persistent_workers: true
   
-  # Normalizer (identity for RevIN-based models)
-  normalizer: "identity"
-  normalize_mode: "per_series"  # Only used if normalizer != "identity"
+  # Filtering
+  max_series: null
+  min_series_length: null
+  
+  # Per-dataset overrides
+  dataset_overrides:
+    traffic:
+      batch_size: 16
+      max_series: 100  # Traffic has 862 channels, limit it
+    weather:
+      max_series: null
+  
+  # Seed
+  seed: 42

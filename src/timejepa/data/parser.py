@@ -29,67 +29,73 @@ class TSFileParser:
     
     def parse(self, file_path: Union[str, Path]) -> List[np.ndarray]:
         """
-        Parse a .ts file and return list of time series.
-        
-        Args:
-            file_path: Path to .ts file
-            
-        Returns:
-            List of numpy arrays (one per time series)
-            
-        Raises:
-            ParsingError: If parsing fails
+        Parse a .ts or .tsf file and return list of time series.
         """
         file_path = Path(file_path)
         
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        if file_path.suffix != '.ts':
-            logger.warning(f"File {file_path} does not have .ts extension")
+        if file_path.suffix not in ['.ts', '.tsf']:
+            logger.warning(f"File {file_path} has unexpected extension: {file_path.suffix}")
         
         logger.info(f"Parsing {file_path}...")
+        
+        # Try multiple encodings
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+        content = None
+        used_encoding = None
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+                used_encoding = encoding
+                logger.info(f"Successfully read file with {encoding} encoding")
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        if content is None:
+            raise ParsingError(f"Failed to decode {file_path} with any known encoding")
+        
+        lines = content.strip().split('\n')
         
         data = []
         started = False
         line_num = 0
         error_count = 0
         
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for line in tqdm(f, desc="Parsing lines"):
-                    line_num += 1
-                    line = line.strip()
-                    
-                    if not line or line.startswith('#'):
-                        continue
-                    
-                    if line.lower().startswith("@data"):
-                        started = True
-                        continue
-                    
-                    if started:
-                        try:
-                            series = self._parse_line(line)
-                            if series is not None and len(series) > 0:
-                                data.append(series)
-                        except Exception as e:
-                            error_count += 1
-                            logger.debug(f"Error parsing line {line_num}: {e}")
-                            if error_count > 100:
-                                raise ParsingError(f"Too many parsing errors (>{error_count})")
+        for line in tqdm(lines, desc="Parsing lines"):
+            line_num += 1
+            line = line.strip()
             
-            if not data:
-                raise ParsingError("No valid time series found in file")
+            if not line or line.startswith('#'):
+                continue
             
-            logger.info(f"Successfully parsed {len(data)} time series")
-            if error_count > 0:
-                logger.warning(f"Encountered {error_count} parsing errors")
+            if line.lower().startswith("@data"):
+                started = True
+                continue
             
-            return data
-            
-        except Exception as e:
-            raise ParsingError(f"Failed to parse {file_path}: {e}") from e
+            if started:
+                try:
+                    series = self._parse_line(line)
+                    if series is not None and len(series) > 0:
+                        data.append(series)
+                except Exception as e:
+                    error_count += 1
+                    logger.debug(f"Error parsing line {line_num}: {e}")
+                    if error_count > 100:
+                        raise ParsingError(f"Too many parsing errors (>{error_count})")
+        
+        if not data:
+            raise ParsingError("No valid time series found in file")
+        
+        logger.info(f"Successfully parsed {len(data)} time series")
+        if error_count > 0:
+            logger.warning(f"Encountered {error_count} parsing errors")
+        
+        return data
     
     def _parse_line(self, line: str) -> Optional[np.ndarray]:
         """Parse a single line into a time series array."""
@@ -181,12 +187,7 @@ def save_processed_data(
     output_path: Union[str, Path],
     compress: bool = False
 ) -> dict:
-    """
-    Save processed time series data and return statistics.
-    
-    Returns:
-        dict with keys: 'num_series', 'total_points', 'min_len', 'max_len', 'mean_len'
-    """
+    """Save processed time series data and return statistics."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -216,15 +217,11 @@ def save_processed_data(
     else:
         final_data = np.array(data, dtype=object)
     
-    # Save
+    # Save JUST the data array (not a dict)
     if compress:
-        np.savez_compressed(
-            output_path.with_suffix('.npz'),
-            data=final_data,
-            stats=stats  # Save stats too
-        )
+        np.savez_compressed(output_path.with_suffix('.npz'), data=final_data)
     else:
-        np.save(output_path, {'data': final_data, 'stats': stats})
+        np.save(output_path, final_data)  # ← FIX ICI : sauve juste l'array
     
     logger.info(f"Saved to {output_path}")
     

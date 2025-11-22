@@ -1,6 +1,6 @@
 # Makefile
 .PHONY: help install activate format lint typecheck check-all clean
-.PHONY: download-data list-datasets train evaluate
+.PHONY: download-data list-datasets analyze-data setup-all train evaluate
 
 # Default target
 .DEFAULT_GOAL := help
@@ -27,15 +27,33 @@ download-data: ## Download dataset (usage: make download-data DATASET=electricit
 	python scripts/download_data.py --dataset $(or $(DATASET),electricity) -v
 
 download-all: ## Download all datasets
+	@echo "📥 Downloading all datasets..."
 	python scripts/download_data.py --dataset all -v
+	@echo "✓ Download complete!"
+
+analyze-data: ## Analyze datasets and compute optimal model config
+	@echo "\n📊 Step 1/2: Computing dataset statistics..."
+	@echo "================================================"
+	python scripts/compute_dataset_stats.py --data-dir data
+	@echo "\n📐 Step 2/2: Computing optimal model configuration..."
+	@echo "================================================"
+	python scripts/compute_model_config.py --data-dir data
+	@echo "\n✓ Analysis complete! Update configs/model/jepa.yaml with recommended values.\n"
+
+setup-all: ## Download all datasets and analyze (complete setup)
+	@echo "🚀 Complete setup: download + analysis"
+	@echo "========================================"
+	@$(MAKE) download-all
+	@$(MAKE) analyze-data
+	@echo "\n✅ Setup complete! Next steps:"
+	@echo "  1. Review the recommendations above"
+	@echo "  2. Update configs/model/jepa.yaml"
+	@echo "  3. Run 'make train' to start training\n"
 
 ##@ Training
 
 train: ## Train model (default config)
-	python scripts/train.py --config configs/pretrain_electricity.yaml
-
-train-debug: ## Train in debug mode (fast_dev_run)
-	python scripts/train.py --config configs/pretrain_electricity.yaml --fast_dev_run
+	python scripts/train.py --config-path configs/training/pretrain.yaml
 
 ##@ Evaluation
 
@@ -66,6 +84,6 @@ clean: ## Remove build artifacts and caches
 
 clean-data: ## Remove downloaded and processed data (WARNING: destructive)
 	rm -rf data/raw/ data/processed/
-	@echo "⚠ Data removed. Run 'make download-data' to re-download."
+	@echo "⚠ Data removed. Run 'make download-all' to re-download."
 
 clean-all: clean clean-data ## Remove all generated files

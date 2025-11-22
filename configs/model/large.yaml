@@ -1,0 +1,45 @@
+# @package _global_
+
+model:
+  name: "jepa_tst_large"
+  
+  seq_length: 512
+  patch_length: 16
+  stride: 8
+  num_channels: 1
+  prediction_length: 96
+  
+  encoder:
+    d_model: 768
+    n_heads: 12
+    n_layers: 12
+    d_ff: 3072
+    dropout: 0.1
+    activation: "gelu"
+    use_revin: true
+    use_rope: true
+    norm_first: true
+  
+  predictor:
+    type: "transformer"
+    d_model: 768
+    n_heads: 12
+    n_layers: 6
+    d_ff: 3072
+    dropout: 0.1
+    activation: "gelu"
+  
+  decoder:
+    type: "attentive"
+    d_model: 768
+    hidden_dim: 1536
+    n_layers: 3
+    dropout: 0.1
+    n_heads: 12
+  
+  target_encoder:
+    momentum_schedule: "cosine"
+    momentum_base: 0.996
+    momentum_final: 1.0
+  
+  params_millions: ~65

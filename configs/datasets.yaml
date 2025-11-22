@@ -3,70 +3,35 @@ datasets:
   electricity:
     url: "https://zenodo.org/record/4656140/files/electricity_hourly_dataset.zip?download=1"
     description: "Electricity consumption hourly - 321 series"
-    expected_files: ["*.tsf"]
+    expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
     
   traffic:
     url: "https://zenodo.org/records/5129091/files/temperature_rain_dataset_without_missing_values.zip?download=1"
     description: "Traffic hourly data"
-    expected_files: ["*.tsf"]
+    expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
     
   weather:
     url: "https://zenodo.org/records/5184708/files/oikolab_weather_dataset.zip?download=1"
     description: "Weather dataset"
-    expected_files: ["*.tsf"]
+    expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
   
   # Datasets additionnels recommandés
   m4_hourly:
-    url: "https://zenodo.org/record/4656548/files/m4_hourly_dataset.zip?download=1"
+    url: "https://zenodo.org/records/4656589/files/m4_hourly_dataset.zip?download=1"
     description: "M4 competition hourly - 414 series"
-    expected_files: ["*.tsf"]
+    expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
+
     
-  m4_daily:
-    url: "https://zenodo.org/record/4656410/files/m4_daily_dataset.zip?download=1"
-    description: "M4 competition daily - 4,227 series"
-    expected_files: ["*.tsf"]
-    frequency: "daily"
-    
-  m4_weekly:
-    url: "https://zenodo.org/record/4656522/files/m4_weekly_dataset.zip?download=1"
-    description: "M4 competition weekly - 359 series"
-    expected_files: ["*.tsf"]
-    frequency: "weekly"
-    
-  tourism_monthly:
-    url: "https://zenodo.org/record/4656096/files/tourism_monthly_dataset.zip?download=1"
-    description: "Tourism monthly - 366 series"
-    expected_files: ["*.tsf"]
-    frequency: "monthly"
-    
-  tourism_quarterly:
-    url: "https://zenodo.org/record/4656093/files/tourism_quarterly_dataset.zip?download=1"
-    description: "Tourism quarterly - 427 series"
-    expected_files: ["*.tsf"]
-    frequency: "quarterly"
-    
-  tourism_yearly:
-    url: "https://zenodo.org/record/4656103/files/tourism_yearly_dataset.zip?download=1"
-    description: "Tourism yearly - 518 series"
-    expected_files: ["*.tsf"]
-    frequency: "yearly"
-  
-  # ETT datasets (très utilisés dans les benchmarks)
-  ett_h1:
-    url: "https://github.com/zhouhaoyi/ETDataset/raw/main/ETT-small/ETTh1.csv"
-    description: "Electricity Transformer Temperature hourly"
-    expected_files: ["*.csv"]
-    frequency: "hourly"
-    
-  ett_h2:
-    url: "https://github.com/zhouhaoyi/ETDataset/raw/main/ETT-small/ETTh2.csv"
-    description: "Electricity Transformer Temperature hourly"
-    expected_files: ["*.csv"]
-    frequency: "hourly"
+  australian-electricity-demand:
+    url: "https://zenodo.org/records/4659727/files/australian_electricity_demand_dataset.zip?download=1"
+    description: "Australian electricity demand - 1000 series"
+    expected_files: ["*.ts", "*.tsf"]
+    frequency: "half-hourly"
+
 
 download:
   chunk_size: 8192

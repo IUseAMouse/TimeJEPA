@@ -1,0 +1,44 @@
+# @package _global_
+
+model:
+  name: "jepa_tst_mini"
+  
+  seq_length: 512
+  patch_length: 16
+  stride: 8
+  num_channels: 1
+  prediction_length: 96
+  
+  encoder:
+    d_model: 256
+    n_heads: 4
+    n_layers: 4
+    d_ff: 1024
+    dropout: 0.1
+    activation: "gelu"
+    use_revin: true
+    use_rope: true
+    norm_first: true
+  
+  predictor:
+    type: "transformer"
+    d_model: 256
+    n_heads: 4
+    n_layers: 3
+    d_ff: 1024
+    dropout: 0.1
+    activation: "gelu"
+  
+  decoder:
+    type: "mlp"
+    d_model: 256
+    hidden_dim: 512
+    n_layers: 2
+    dropout: 0.1
+  
+  target_encoder:
+    momentum_schedule: "cosine"
+    momentum_base: 0.996
+    momentum_final: 1.0
+  
+  params_millions: ~2.5

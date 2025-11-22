@@ -1,0 +1,348 @@
+# src/timejepa/models/decoders/linear_decoder.py
+"""
+Linear Decoder for generative finetuning.
+
+After JEPA pretraining, we add a simple decoder head to generate
+actual time series values for forecasting tasks.
+
+Architecture: Representation [B, N, d_model] → Values [B, L_pred, C]
+"""
+
+import torch
+import torch.nn as nn
+from typing import Optional, Tuple
+
+from ..components.patching import UnPatching
+
+
+class LinearDecoder(nn.Module):
+    """
+    Simple linear decoder for forecasting.
+    
+    Projects patch-level representations back to time series values.
+    Used during finetuning for generative tasks.
+    
+    Architecture:
+        Patch representations [B, num_patches, d_model]
+        → Linear projection [B, num_patches, patch_size * C]
+        → Reshape to [B, L_pred, C]
+    
+    Args:
+        d_model: Model dimension (512)
+        patch_size: Size of each patch (16)
+        prediction_length: Length of prediction horizon
+        num_features: Number of output features/channels (1 for univariate)
+        use_unpatching: Whether to use UnPatching layer
+    """
+    
+    def __init__(
+        self,
+        d_model: int = 512,
+        patch_size: int = 16,
+        prediction_length: int = 96,
+        num_features: int = 1,
+        use_unpatching: bool = True
+    ):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.patch_size = patch_size
+        self.prediction_length = prediction_length
+        self.num_features = num_features
+        self.use_unpatching = use_unpatching
+        
+        if use_unpatching:
+            # Use proper unpatching with overlap handling
+            self.unpatching = UnPatching(
+                patch_size=patch_size,
+                d_model=d_model,
+                num_features=num_features
+            )
+        else:
+            # Simple linear projection
+            self.projection = nn.Linear(d_model, patch_size * num_features)
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        target_length: Optional[int] = None
+    ) -> torch.Tensor:
+        """
+        Decode representations to time series values.
+        
+        Args:
+            x: Patch representations [B, num_patches, d_model]
+            target_length: Target sequence length (default: prediction_length)
+            
+        Returns:
+            Time series predictions [B, L_pred, C]
+        """
+        if target_length is None:
+            target_length = self.prediction_length
+        
+        if self.use_unpatching:
+            # Use unpatching layer
+            output = self.unpatching(x, target_len=target_length)
+        else:
+            # Simple projection and reshape
+            batch_size, num_patches, _ = x.shape
+            
+            # Project to patch values
+            x = self.projection(x)  # [B, num_patches, patch_size * C]
+            
+            # Reshape
+            x = x.reshape(batch_size, num_patches * self.patch_size, self.num_features)
+            
+            # Trim to target length
+            output = x[:, :target_length, :]
+        
+        return output
+
+
+class MLPDecoder(nn.Module):
+    """
+    MLP-based decoder for more expressive decoding.
+    
+    Uses a small MLP instead of just linear projection.
+    Can capture non-linear relationships between representations and values.
+    
+    Args:
+        d_model: Model dimension
+        patch_size: Patch size
+        prediction_length: Prediction horizon
+        num_features: Number of output features
+        hidden_dim: Hidden dimension for MLP
+        num_layers: Number of MLP layers
+        dropout: Dropout rate
+    """
+    
+    def __init__(
+        self,
+        d_model: int = 512,
+        patch_size: int = 16,
+        prediction_length: int = 96,
+        num_features: int = 1,
+        hidden_dim: Optional[int] = None,
+        num_layers: int = 2,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.patch_size = patch_size
+        self.prediction_length = prediction_length
+        self.num_features = num_features
+        
+        hidden_dim = hidden_dim or d_model
+        
+        # Build MLP
+        layers = []
+        for i in range(num_layers):
+            in_dim = d_model if i == 0 else hidden_dim
+            out_dim = patch_size * num_features if i == num_layers - 1 else hidden_dim
+            
+            layers.append(nn.Linear(in_dim, out_dim))
+            if i < num_layers - 1:
+                layers.append(nn.GELU())
+                layers.append(nn.Dropout(dropout))
+        
+        self.mlp = nn.Sequential(*layers)
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        target_length: Optional[int] = None
+    ) -> torch.Tensor:
+        """
+        Decode with MLP.
+        
+        Args:
+            x: Patch representations [B, num_patches, d_model]
+            target_length: Target length
+            
+        Returns:
+            Predictions [B, L_pred, C]
+        """
+        if target_length is None:
+            target_length = self.prediction_length
+        
+        batch_size, num_patches, _ = x.shape
+        
+        # Apply MLP to each patch
+        x = self.mlp(x)  # [B, num_patches, patch_size * C]
+        
+        # Reshape
+        x = x.reshape(batch_size, num_patches * self.patch_size, self.num_features)
+        
+        # Trim to target length
+        output = x[:, :target_length, :]
+        
+        return output
+
+
+class AttentiveDecoder(nn.Module):
+    """
+    Attention-based decoder for more sophisticated decoding.
+    
+    Uses cross-attention between learnable query embeddings and
+    patch representations to generate predictions.
+    
+    Inspired by Perceiver and similar architectures.
+    
+    Args:
+        d_model: Model dimension
+        prediction_length: Prediction horizon
+        num_features: Number of output features
+        num_heads: Number of attention heads
+        dropout: Dropout rate
+    """
+    
+    def __init__(
+        self,
+        d_model: int = 512,
+        prediction_length: int = 96,
+        num_features: int = 1,
+        num_heads: int = 8,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.prediction_length = prediction_length
+        self.num_features = num_features
+        
+        # Learnable query embeddings for each output timestep
+        self.query_embeddings = nn.Parameter(
+            torch.randn(1, prediction_length, d_model) * 0.02
+        )
+        
+        # Cross-attention
+        self.cross_attention = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        
+        # Layer norm
+        self.norm = nn.LayerNorm(d_model)
+        
+        # Output projection
+        self.output_proj = nn.Linear(d_model, num_features)
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        target_length: Optional[int] = None
+    ) -> torch.Tensor:
+        """
+        Decode with cross-attention.
+        
+        Args:
+            x: Patch representations [B, num_patches, d_model] (keys/values)
+            target_length: Target length
+            
+        Returns:
+            Predictions [B, L_pred, C]
+        """
+        if target_length is None:
+            target_length = self.prediction_length
+        
+        batch_size = x.shape[0]
+        
+        # Get query embeddings
+        queries = self.query_embeddings[:, :target_length, :].expand(batch_size, -1, -1)
+        
+        # Cross-attention: queries attend to patch representations
+        attended, _ = self.cross_attention(
+            query=queries,
+            key=x,
+            value=x
+        )
+        
+        # Norm and project
+        attended = self.norm(attended)
+        output = self.output_proj(attended)  # [B, L_pred, C]
+        
+        return output
+
+
+class ForecastingHead(nn.Module):
+    """
+    Complete forecasting head with multiple decoder options.
+    
+    Wraps different decoder types and provides a unified interface.
+    Can also handle denormalization via RevIN.
+    
+    Args:
+        d_model: Model dimension
+        patch_size: Patch size
+        prediction_length: Prediction horizon
+        num_features: Number of features
+        decoder_type: Type of decoder ('linear', 'mlp', 'attentive')
+        revin: Optional RevIN layer for denormalization
+    """
+    
+    def __init__(
+        self,
+        d_model: int = 512,
+        patch_size: int = 16,
+        prediction_length: int = 96,
+        num_features: int = 1,
+        decoder_type: str = 'linear',
+        revin: Optional[nn.Module] = None
+    ):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.prediction_length = prediction_length
+        self.decoder_type = decoder_type
+        self.revin = revin
+        
+        # Create decoder
+        if decoder_type == 'linear':
+            self.decoder = LinearDecoder(
+                d_model=d_model,
+                patch_size=patch_size,
+                prediction_length=prediction_length,
+                num_features=num_features
+            )
+        elif decoder_type == 'mlp':
+            self.decoder = MLPDecoder(
+                d_model=d_model,
+                patch_size=patch_size,
+                prediction_length=prediction_length,
+                num_features=num_features
+            )
+        elif decoder_type == 'attentive':
+            self.decoder = AttentiveDecoder(
+                d_model=d_model,
+                prediction_length=prediction_length,
+                num_features=num_features
+            )
+        else:
+            raise ValueError(f"Unknown decoder_type: {decoder_type}")
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        denormalize: bool = True
+    ) -> torch.Tensor:
+        """
+        Generate forecasts.
+        
+        Args:
+            x: Representations [B, num_patches, d_model]
+            denormalize: Whether to apply RevIN denormalization
+            
+        Returns:
+            Forecasts [B, L_pred, C]
+        """
+        # Decode
+        predictions = self.decoder(x)
+        
+        # Denormalize if requested
+        if denormalize and self.revin is not None:
+            predictions = self.revin(predictions, mode='denorm')
+        
+        return predictions

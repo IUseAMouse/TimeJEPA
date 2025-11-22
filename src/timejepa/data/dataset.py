@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .normalization import Normalizer, get_normalizer
+from .normalizer import Normalizer, get_normalizer
 
 logger = logging.getLogger(__name__)
 
