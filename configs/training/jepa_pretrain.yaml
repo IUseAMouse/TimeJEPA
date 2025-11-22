@@ -1,0 +1,41 @@
+# configs/training/jepa_pretrain.yaml
+training:
+  stage: "pretrain"
+  
+  # JEPA variable-length training
+  # Ranges will be sampled uniformly during training
+  context_length_range: [96, 512]  # Min/max context
+  prediction_length_range: [24, 96]  # Min/max prediction
+  
+  # JEPA-specific
+  masking_strategy: "random_span"  # or "block", "random_patches"
+  mask_ratio: 0.4  # Proportion of context to mask
+  
+  # Loss
+  loss: "latent_mse"  # MSE in representation space
+  loss_weight: 1.0
+  
+  # Optimizer
+  optimizer: "adamw"
+  lr: 1e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  
+  # Learning rate schedule
+  lr_scheduler: "cosine"
+  warmup_epochs: 5
+  min_lr: 1e-6
+  
+  # Training
+  epochs: 50
+  batch_size: 64  # Adjust based on GPU
+  gradient_clip: 1.0
+  
+  # Validation
+  val_every_n_epochs: 5
+  patience: 10  # Early stopping
+  
+  # Checkpointing
+  save_top_k: 3
+  monitor: "val_loss"
+  mode: "min"

@@ -1,3 +1,5 @@
+# src/timejepa/data/normalizer.py
+
 """
 Normalizers for time series data with reversible transformations.
 

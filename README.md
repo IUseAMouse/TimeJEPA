@@ -107,6 +107,115 @@ The code is designed to work seamlessly with datasets from the [Monash Time Seri
 *   Weather
 *   ETT (via adapter)
 
+## 📐 Model Configuration Methodology
+
+### Scaling Law-Based Design
+
+This project follows a **data-driven approach** to determine model architecture, based on scaling laws adapted from language model research (Chinchilla, GPT-3).
+
+#### 1. Dataset Size Analysis
+
+First, compute total available datapoints across all training datasets:
+
+```bash
+python scripts/compute_model_config.py --data-dir data
+```
+
+This outputs:
+- **D** = Total datapoints across all series
+- Per-dataset statistics
+- Recommended model configurations
+
+#### 2. Optimal Parameter Count
+
+We use the approximation:
+
+```
+Optimal Parameters ≈ (D × Epochs) / 8
+```
+
+Where:
+- **D** = Total datapoints
+- **Epochs** = Training epochs (typically 50 for pretraining)
+- **8** = Tokens-per-parameter ratio (Chinchilla-derived)
+
+**Rationale**: This ensures the model has sufficient capacity to learn from the data without severe over/under-parameterization.
+
+#### 3. Architecture Dimensions
+
+Given target parameters P, we compute:
+
+```
+P ≈ 12 × num_layers × d_model²
+```
+
+We test multiple `(num_layers, d_model)` combinations and select based on:
+- **Computational budget** (GPU memory, training time)
+- **Closest to optimal P**
+- **Standard dimensions** (multiples of 64 for efficiency)
+
+**Example configurations**:
+
+| Dataset Size (D) | Optimal Params | Config |
+|------------------|----------------|--------|
+| 1-5M             | ~10M           | L=4, d=256, H=4  |
+| 5-20M            | ~25M           | L=6, d=384, H=6  |
+| 20-50M           | ~60M           | L=8, d=512, H=8  |
+| 50-100M          | ~150M          | L=12, d=768, H=12 |
+
+#### 4. Context/Prediction Lengths
+
+**Pretraining** (JEPA):
+- Variable lengths sampled from ranges
+- `context_length`: [96, 512]
+- `prediction_length`: [24, 96]
+- Teaches the model multi-scale representations
+
+**Finetuning** (Benchmarks):
+- Fixed lengths matching benchmark standards
+- Common: `context=512`, `prediction=96`
+- Also evaluate at multiple horizons (96, 192, 336, 720)
+
+#### 5. Patch Size
+
+Fixed at **16** based on:
+- PatchTST findings (optimal for most time series)
+- Computational efficiency (512/16 = 32 patches)
+- Representational granularity
+
+#### 6. Iterative Refinement
+
+1. **Baseline**: Train small model (10-20M params) on subset
+2. **Validate**: Check convergence, overfitting signs
+3. **Scale**: Adjust based on validation curves:
+   - Underfitting → Increase capacity
+   - Overfitting → More data, regularization, or reduce capacity
+4. **Repeat**: Until satisfactory performance
+
+### Current Configuration
+
+**Model** (baseline, will update after dataset analysis):
+- `d_model`: 256
+- `num_layers`: 8
+- `num_heads`: 8
+- `Total params`: ~25M
+
+**Training**:
+- Pretrain: 50 epochs, variable lengths
+- Finetune: 20 epochs, fixed benchmark lengths
+
+**To update configuration**:
+1. Download all datasets: `make download-all`
+2. Analyze and get recommendations: `make analyze-data`
+3. Update `configs/model/jepa.yaml` with recommended values
+4. Begin training: `make train`
+
+### References
+
+- Chinchilla Scaling Laws (Hoffmann et al., 2022)
+- PatchTST (Nie et al., 2023)
+- Granite TTM (IBM Research, 2024)
+
 ## 📝 Citation
 
 If you use this code for your research, please cite:

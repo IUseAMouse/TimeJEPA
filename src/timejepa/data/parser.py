@@ -1,4 +1,4 @@
-# src/ts_jepa/data/parser.py
+# src/timejepa/data/parser.py
 import logging
 import zipfile
 from pathlib import Path
@@ -180,17 +180,12 @@ def save_processed_data(
     data: List[np.ndarray],
     output_path: Union[str, Path],
     compress: bool = False
-) -> Path:
+) -> dict:
     """
-    Save processed time series data.
+    Save processed time series data and return statistics.
     
-    Args:
-        data: List of time series arrays
-        output_path: Where to save
-        compress: Whether to compress the output
-        
     Returns:
-        Path to saved file
+        dict with keys: 'num_series', 'total_points', 'min_len', 'max_len', 'mean_len'
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,25 +193,39 @@ def save_processed_data(
     if not data:
         raise ValueError("Cannot save empty data")
     
-    # Check if all series have same length
+    # Compute statistics
     lengths = [len(x) for x in data]
+    stats = {
+        'num_series': len(data),
+        'total_points': sum(lengths),
+        'min_len': min(lengths),
+        'max_len': max(lengths),
+        'mean_len': np.mean(lengths),
+        'median_len': np.median(lengths)
+    }
     
+    logger.info(f"Dataset statistics:")
+    logger.info(f"  - Number of series: {stats['num_series']}")
+    logger.info(f"  - Total datapoints: {stats['total_points']:,}")
+    logger.info(f"  - Length range: [{stats['min_len']}, {stats['max_len']}]")
+    logger.info(f"  - Mean/Median length: {stats['mean_len']:.1f} / {stats['median_len']:.1f}")
+    
+    # Stack or keep as object array
     if len(set(lengths)) == 1:
-        # Stack into dense array (N, T)
         final_data = np.stack(data)
-        logger.info(f"Saving dense array with shape: {final_data.shape}")
     else:
-        # Keep as object array for variable lengths
         final_data = np.array(data, dtype=object)
-        logger.info(f"Saving {len(data)} series with variable lengths: "
-                   f"min={min(lengths)}, max={max(lengths)}, mean={np.mean(lengths):.1f}")
     
-    # Save with or without compression
+    # Save
     if compress:
-        np.savez_compressed(output_path.with_suffix('.npz'), data=final_data)
-        logger.info(f"Saved compressed data to {output_path.with_suffix('.npz')}")
+        np.savez_compressed(
+            output_path.with_suffix('.npz'),
+            data=final_data,
+            stats=stats  # Save stats too
+        )
     else:
-        np.save(output_path, final_data)
-        logger.info(f"Saved data to {output_path}")
+        np.save(output_path, {'data': final_data, 'stats': stats})
     
-    return output_path
+    logger.info(f"Saved to {output_path}")
+    
+    return stats

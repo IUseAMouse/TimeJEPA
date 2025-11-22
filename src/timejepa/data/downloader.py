@@ -1,4 +1,4 @@
-# src/ts_jepa/data/downloader.py
+# src/timejepa/data/downloader.py
 import hashlib
 import logging
 import time
