@@ -1,0 +1,71 @@
+# Makefile
+.PHONY: help install activate format lint typecheck check-all clean
+.PHONY: download-data list-datasets train evaluate
+
+# Default target
+.DEFAULT_GOAL := help
+
+##@ General
+
+help: ## Display this help
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+
+##@ Setup
+
+install: ## Install dependencies in editable mode
+	uv venv
+	source .venv/bin/activate
+	uv pip install -e ".[dev]"
+	@echo "✓ Installation complete. Activate venv with: source .venv/bin/activate"
+
+##@ Data
+
+list-datasets: ## List available datasets
+	python scripts/download_data.py --list
+
+download-data: ## Download dataset (usage: make download-data DATASET=electricity)
+	python scripts/download_data.py --dataset $(or $(DATASET),electricity) -v
+
+download-all: ## Download all datasets
+	python scripts/download_data.py --dataset all -v
+
+##@ Training
+
+train: ## Train model (default config)
+	python scripts/train.py --config configs/pretrain_electricity.yaml
+
+train-debug: ## Train in debug mode (fast_dev_run)
+	python scripts/train.py --config configs/pretrain_electricity.yaml --fast_dev_run
+
+##@ Evaluation
+
+evaluate: ## Evaluate trained model
+	python scripts/evaluate.py --checkpoint data/checkpoints/best.ckpt
+
+##@ Code Quality
+
+format: ## Format code with ruff
+	ruff format src/ scripts/
+	ruff check --fix src/ scripts/
+
+lint: ## Lint code with ruff
+	ruff check src/ scripts/
+
+typecheck: ## Type check with mypy
+	mypy src/
+
+check-all: format lint typecheck ## Run all code quality checks
+	@echo "✓ All checks passed!"
+
+##@ Cleanup
+
+clean: ## Remove build artifacts and caches
+	rm -rf build/ dist/ *.egg-info .pytest_cache/ .mypy_cache/ .ruff_cache/
+	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -type f -name "*.pyc" -delete
+
+clean-data: ## Remove downloaded and processed data (WARNING: destructive)
+	rm -rf data/raw/ data/processed/
+	@echo "⚠ Data removed. Run 'make download-data' to re-download."
+
+clean-all: clean clean-data ## Remove all generated files

@@ -1,0 +1,21 @@
+datasets:
+  electricity:
+    url: "https://zenodo.org/record/4656140/files/electricity_hourly_dataset.zip?download=1"
+    description: "Electricity consumption hourly data"
+    expected_files: ["*.tsf"]
+    
+  traffic:
+    url: "https://zenodo.org/records/5129091/files/temperature_rain_dataset_without_missing_values.zip?download=1"
+    description: "Traffic hourly data"
+    expected_files: ["*.tsf"]
+    
+  weather:
+    url: "https://zenodo.org/records/5184708/files/oikolab_weather_dataset.zip?download=1"
+    description: "Weather dataset"
+    expected_files: ["*.tsf"]
+
+download:
+  chunk_size: 8192
+  timeout: 300
+  max_retries: 3
+  retry_delay: 5

@@ -1,0 +1,11 @@
+# configs/data/default.yaml
+data:
+  # Will load all datasets from configs/datasets.yaml
+  context_length: 168          # Default, can be overridden per dataset
+  prediction_length: 24        # Default
+  batch_size: 32
+  num_workers: 4
+  
+  # Normalizer (identity for RevIN-based models)
+  normalizer: "identity"
+  normalize_mode: "per_series"  # Only used if normalizer != "identity"
