@@ -4,10 +4,10 @@ Callbacks for PyTorch Lightning training.
 """
 
 from .ema_callback import EMACallback, GradientClipCallback
-from .mlflow_callback import MLflowCallback
+from .mlflow_callback import WandbCallback
 
 __all__ = [
     'EMACallback',
     'GradientClipCallback',
-    'MLflowCallback',
+    'WandbCallback',
 ]

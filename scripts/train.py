@@ -11,13 +11,14 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
+from pytorch_lightning.loggers import WandbLogger 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.data.datamodule import MultiDatasetMonashDataModule
 from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
 from timejepa.training.finetune_module import FinetuneModule
-from timejepa.training.callbacks import EMACallback, MLflowCallback
+from timejepa.training.callbacks import EMACallback
 from timejepa.models import JEPATST
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ def main(cfg: DictConfig):
         
         # 🔥 CRÉER LE MODÈLE D'ABORD
         model = create_model_from_config(cfg)
-        model = torch.compile(model)
+        model.train()
         
         logger.info("Creating JEPA pretraining module...")
         
@@ -229,20 +230,19 @@ def main(cfg: DictConfig):
             schedule=cfg.training.ema.schedule,
         ))
     
-    # MLflow
-    callbacks.append(MLflowCallback(
-        tracking_uri=cfg.mlflow.tracking_uri,
-        experiment_name=cfg.mlflow.experiment_name,
-        run_name=cfg.mlflow.run_name or cfg.model.name,
-        tags=OmegaConf.to_container(cfg.mlflow.tags, resolve=True),
-        log_model=cfg.mlflow.log_model,
-        log_artifacts=cfg.mlflow.log_artifacts,
-        log_system_metrics=cfg.mlflow.log_system_metrics,
-    ))
+    wandb_logger = WandbLogger(
+        project=cfg.wandb.project,
+        entity=cfg.wandb.entity,
+        name=cfg.wandb.run_name or cfg.model.name,
+        tags=cfg.wandb.tags,
+        config=OmegaConf.to_container(cfg, resolve=True),
+        log_model=cfg.wandb.log_model,
+    )
     
     # Trainer
     trainer = pl.Trainer(
         accelerator=cfg.trainer.accelerator,
+        logger=wandb_logger,
         devices=cfg.trainer.devices,
         precision=cfg.trainer.precision,
         max_epochs=cfg.trainer.max_epochs,

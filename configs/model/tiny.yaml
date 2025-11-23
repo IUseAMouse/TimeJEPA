@@ -107,7 +107,7 @@ data:
   output_dir: "lightning/"
   datasets: [] # This load alls
   combine_mode: "concatenate"
-  batch_size: 1024
+  batch_size: 256
   stride: 1
   normalize_mode: "global"
   normalizer_type: "identity"
@@ -132,7 +132,7 @@ early_stopping:
 trainer:
   accelerator: "auto"  # auto | cpu | gpu | tpu
   devices: 1  # Number of devices to use
-  precision: "bf16-mixed"  # 32-true | 16-mixed | bf16-mixed
+  precision: "16-mixed"  # 32-true | 16-mixed | bf16-mixed
   max_epochs: ${training.max_epochs}  # Reference from training section
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
   accumulate_grad_batches: 6  # Gradient accumulation steps
@@ -142,16 +142,15 @@ trainer:
   enable_progress_bar: true
   enable_model_summary: true
 
-# MLflow configuration
-mlflow:
-  tracking_uri: "mlruns"  # Local directory or remote server URI
-  experiment_name: "TimeJEPA-Tiny"
-  run_name: null  # Auto-generated if null, uses cfg.name from Hydra
+wandb:
+  project: "JEPA-TST"
+  entity: "iuseamouse"
+  run_name: null  # Auto-generated
   tags:
-    model_size: "tiny"
-    model_type: "jepa_tst"
-    version: "v1"
-    framework: "pytorch-lightning"
-  log_model: true  # Log final model for deployment
-  log_artifacts: true  # Log configs, checkpoints, plots
-  log_system_metrics: true  # Log GPU/CPU/memory usage
+    - "tiny"
+    - "jepa_tst"
+    - "v1"
+    - "pytorch-lightning"
+  log_model: true  # Log checkpoints
+  log_gradients: false  # Log gradients (expensive)
+  log_freq: 100  # Gradient logging frequency
