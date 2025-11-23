@@ -224,16 +224,7 @@ Fixed at **16** based on:
 
 ## 📝 Citation
 
-If you use this code for your research, please cite:
-
-```bibtex
-@software{timejepa2025,
-  author = {Yvann Vincent},
-  title = {TimeJEPA: Joint Embedding Predictive Architecture for Time Series},
-  year = {2025},
-  url = {https://github.com/IUseAMouse/TimeJEPA}
-}
-```
+Waiting for all training runs to finish before writing the paper.
 
 ## 📄 License
 
