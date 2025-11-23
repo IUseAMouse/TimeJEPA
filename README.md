@@ -113,7 +113,7 @@ The code is designed to work seamlessly with datasets from the [Monash Time Seri
 *   Weather
 *   ETT (via adapter)
 
-## 📐 Model Configuration Methodology
+<!-- ## 📐 Model Configuration Methodology
 
 ### Scaling Law-Based Design
 
@@ -220,7 +220,7 @@ Fixed at **16** based on:
 
 - Chinchilla Scaling Laws (Hoffmann et al., 2022)
 - PatchTST (Nie et al., 2023)
-- Granite TTM (IBM Research, 2024)
+- Granite TTM (IBM Research, 2024) -->
 
 ## 📝 Citation
 
