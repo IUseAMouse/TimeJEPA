@@ -12,6 +12,14 @@ This project explores the application of non-generative self-supervised learning
 *   **Logging:** Native **MLFlow** integration for experiment tracking.
 *   **Data:** Automated pipelines for the **Monash Time Series Forecasting Archive**.
 
+## 🏗️ Architecture
+
+TimeJEPA models (JEPA-TST for now) use a non-generative approach to Time Series forecasting. Instead of predicting the raw signals, TimeJEPA models forecast the latent representation of future values.
+
+![TimeJEPA Architecture](docs/assets/architecture.png)
+
+*Figure 1: The Context Encoder (bottom) learns to predict the representations of the Target Encoder (top). The weights of the Target Encoder are an exponential moving average of the Context Encoder*
+
 ## 🚀 Quick Start
 
 ### Prerequisites

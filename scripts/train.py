@@ -236,8 +236,7 @@ def main(cfg: DictConfig):
         name=cfg.wandb.run_name or cfg.model.name,
         tags=cfg.wandb.tags,
         config=OmegaConf.to_container(cfg, resolve=True),
-        log_model=cfg.wandb.log_model,
-        log_freq=cfg.wandb.log_freq
+        log_model=cfg.wandb.log_model
     )
 
     wandb_logger.watch(model)
