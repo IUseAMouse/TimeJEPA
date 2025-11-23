@@ -203,7 +203,9 @@ class MLflowCallback(Callback):
         for key, value in metrics.items():
             if "train" in key:
                 try:
-                    mlflow.log_metric(key, float(value), step=step)
+                    # ✅ Replace slashes with underscores to avoid path issues
+                    safe_key = key.replace('/', '_')
+                    mlflow.log_metric(safe_key, float(value), step=step)
                 except (TypeError, ValueError):
                     pass  # Skip non-numeric metrics
     
@@ -219,9 +221,11 @@ class MLflowCallback(Callback):
         for key, value in metrics.items():
             if "val" in key:
                 try:
-                    mlflow.log_metric(key, float(value), step=epoch)
-                except (TypeError, ValueError):
-                    pass
+                    # ✅ Replace slashes with underscores to avoid path issues
+                    safe_key = key.replace('/', '_')
+                    mlflow.log_metric(safe_key, float(value), step=epoch)
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Could not log metric {key}: {e}")
     
     @rank_zero_only
     def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
@@ -234,7 +238,9 @@ class MLflowCallback(Callback):
         for key, value in metrics.items():
             if "test" in key:
                 try:
-                    mlflow.log_metric(key, float(value))
+                    # ✅ Replace slashes with underscores to avoid path issues
+                    safe_key = key.replace('/', '_')
+                    mlflow.log_metric(safe_key, float(value))
                 except (TypeError, ValueError):
                     pass
     

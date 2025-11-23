@@ -71,8 +71,6 @@ Launch a JEPA pre-training run. This uses PyTorch Lightning and logs to MLFlow.
 
 ```bash
 make train
-# Or manually:
-python scripts/train.py --config configs/pretrain_electricity.yaml
 ```
 
 ### 3. Evaluation (Linear Probing / Fine-tuning)

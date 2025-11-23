@@ -133,6 +133,7 @@ class JEPATST(nn.Module):
         self.predictor_type = predictor_type
         self.decoder_type = decoder_type
         self.use_revin = use_revin
+        self.num_patches = (input_length - patch_size) // stride + 1
         
         # ===== RevIN Normalization =====
         if use_revin:

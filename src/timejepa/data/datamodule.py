@@ -282,7 +282,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         datasets: Optional[List[str]] = None,  # None = auto-load all
         dataset_pattern: str = "*.npy",
         combine_mode: Literal["concatenate", "separate"] = "concatenate",
-        batch_size: int = 32,
+        batch_size: int = 64,
         stride: int = 1,
         normalize_mode: Literal["per_series", "global"] = "per_series",
         normalizer_type: str = "identity",
@@ -352,7 +352,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             )
         
         # Filter by requested datasets
-        if self.datasets is None:
+        if self.datasets is None or self.datasets == []:
             # Use all found datasets
             self.dataset_files = {f.stem: f for f in all_files}
         elif isinstance(self.datasets, str):

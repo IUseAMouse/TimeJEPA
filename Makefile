@@ -53,7 +53,7 @@ setup-all: ## Download all datasets and analyze (complete setup)
 ##@ Training
 
 train: ## Train model (default config)
-	python scripts/train.py --config-path configs/training/pretrain.yaml
+	python scripts/train.py --config-name tiny.yaml
 
 ##@ Evaluation
 

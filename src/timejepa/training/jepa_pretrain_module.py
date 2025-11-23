@@ -147,8 +147,8 @@ class JEPAPretrainModule(pl.LightningModule):
         # Compute loss
         loss = jepa_loss(predictions, targets, loss_type=self.loss_type, reduction='mean')
         
-        # Logging
-        self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # ✅ Logging with underscores instead of slashes
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         
         # Additional metrics every N steps
         if batch_idx % self.log_every_n_steps == 0:
@@ -159,7 +159,8 @@ class JEPAPretrainModule(pl.LightningModule):
                     context_embeddings=outputs.get('context_embeddings')
                 )
                 for key, value in metrics.items():
-                    self.log(f'train/{key}', value, on_step=True, prog_bar=False, logger=True)
+                    # ✅ Use underscores: train_mse, train_cosine_sim, etc.
+                    self.log(f'train_{key}', value, on_step=True, prog_bar=False, logger=True)
         
         return loss
     
@@ -183,8 +184,8 @@ class JEPAPretrainModule(pl.LightningModule):
         # Compute loss
         loss = jepa_loss(predictions, targets, loss_type=self.loss_type, reduction='mean')
         
-        # Log
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        # ✅ Logging with underscores instead of slashes
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         
         # Compute metrics
         metrics = compute_pretrain_metrics(
@@ -193,7 +194,8 @@ class JEPAPretrainModule(pl.LightningModule):
             context_embeddings=outputs.get('context_embeddings')
         )
         for key, value in metrics.items():
-            self.log(f'val/{key}', value, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+            # ✅ Use underscores: val_mse, val_cosine_sim, etc.
+            self.log(f'val_{key}', value, on_step=False, on_epoch=True, prog_bar=False, logger=True)
         
         return loss
     

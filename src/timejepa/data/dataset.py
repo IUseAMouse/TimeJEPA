@@ -60,37 +60,45 @@ class TimeSeriesDataset(Dataset):
         # Load data
         logger.info(f"Loading data from {self.data_path}")
         data = np.load(self.data_path, allow_pickle=True)
-        
+
         # Handle object arrays (variable length series)
         if data.dtype == object:
             logger.warning("Data contains variable-length series")
             # Filter by min length
             min_len = context_length + prediction_length
             data = [s for s in data if len(s) >= min_len]
+            
+            # 🔥 FIX: Reconvertir en array numpy object
+            data = np.array(data, dtype=object)
+            
             logger.info(f"Kept {len(data)} series with length >= {min_len}")
-        
+
         # Limit number of series if requested
         if max_series is not None and len(data) > max_series:
             logger.info(f"Limiting to {max_series} series (out of {len(data)})")
             data = data[:max_series]
-        
+
         # Filter by minimum length
         if min_series_length is not None:
-            if data.dtype == object:
+            if isinstance(data, np.ndarray) and data.dtype == object:
+                # 🔥 FIX: Filtrer puis reconvertir
                 data = [s for s in data if len(s) >= min_series_length]
-            else:
-                mask = data.shape[-1] >= min_series_length
+                data = np.array(data, dtype=object)
+            elif isinstance(data, np.ndarray):
+                # Homogeneous array
+                mask = np.array([s.shape[-1] >= min_series_length for s in data])
                 data = data[mask]
+            
             logger.info(f"After length filter: {len(data)} series")
-        
+
         # Convert to array if homogeneous
-        if data.dtype == object:
+        if isinstance(data, np.ndarray) and data.dtype == object:
             # Check if all same length
             lengths = [s.shape[-1] for s in data]
             if len(set(lengths)) == 1:
                 data = np.stack(data)
                 logger.info(f"Converted to dense array: {data.shape}")
-        
+
         self.data = data
         self.is_multivariate = data.ndim == 3
         

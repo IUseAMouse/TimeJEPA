@@ -20,15 +20,33 @@ class EMACallback(Callback):
     exponential moving average with a cosine schedule.
     """
     
-    def __init__(self, update_after_step: bool = True, update_after_epoch: bool = False):
+    def __init__(
+        self,
+        momentum_base: float = 0.996,
+        momentum_final: float = 1.0,
+        schedule: str = "cosine",
+        update_after_step: bool = True,
+        update_after_epoch: bool = False,
+    ):
         """
         Args:
+            momentum_base: Initial EMA momentum (tau)
+            momentum_final: Final EMA momentum (tau)
+            schedule: Momentum schedule type ('cosine', 'linear', 'constant')
             update_after_step: Update EMA after each training step
             update_after_epoch: Update EMA after each epoch (usually not needed)
         """
         super().__init__()
+        self.momentum_base = momentum_base
+        self.momentum_final = momentum_final
+        self.schedule = schedule
         self.update_after_step = update_after_step
         self.update_after_epoch = update_after_epoch
+        
+        logger.info(
+            f"EMACallback initialized with momentum_base={momentum_base}, "
+            f"momentum_final={momentum_final}, schedule={schedule}"
+        )
     
     def on_train_batch_end(
         self,

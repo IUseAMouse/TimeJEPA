@@ -291,9 +291,36 @@ def get_masking_strategy(
     
     strategy_cls = strategies[strategy_name]
     
-    return strategy_cls(
-        num_patches=num_patches,
-        context_ratio=context_ratio,
-        target_ratio=target_ratio,
-        **kwargs
-    )
+    # Base arguments for all strategies
+    base_args = {
+        'num_patches': num_patches,
+        'context_ratio': context_ratio,
+        'target_ratio': target_ratio,
+    }
+    
+    # Strategy-specific arguments
+    if strategy_name == 'block':
+        # BlockMasking accepts additional arguments
+        block_args = {}
+        if 'num_target_blocks' in kwargs:
+            block_args['num_target_blocks'] = kwargs['num_target_blocks']
+        if 'n_context_blocks' in kwargs:  # Support both names
+            block_args['num_target_blocks'] = kwargs['n_context_blocks']
+        if 'allow_overlap' in kwargs:
+            block_args['allow_overlap'] = kwargs['allow_overlap']
+        if 'min_block_size' in kwargs:
+            block_args['min_block_size'] = kwargs['min_block_size']
+        
+        return strategy_cls(**base_args, **block_args)
+    
+    elif strategy_name == 'random':
+        # RandomMasking accepts allow_overlap
+        random_args = {}
+        if 'allow_overlap' in kwargs:
+            random_args['allow_overlap'] = kwargs['allow_overlap']
+        
+        return strategy_cls(**base_args, **random_args)
+    
+    else:
+        # TemporalMasking and RandomTemporalMasking only use base args
+        return strategy_cls(**base_args)
