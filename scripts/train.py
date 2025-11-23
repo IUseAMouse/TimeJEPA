@@ -8,6 +8,7 @@ from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
+import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 
@@ -109,6 +110,7 @@ def main(cfg: DictConfig):
         normalizer_type=cfg.data.normalizer_type,
         train_val_test_split=cfg.data.train_val_test_split,
         seed=cfg.data.seed,
+        num_workers=-1
     )
     
     # Prepare data
@@ -119,9 +121,11 @@ def main(cfg: DictConfig):
     
     if is_pretrain:
         logger.info("Creating JEPA model...")
+        print("test")
         
         # 🔥 CRÉER LE MODÈLE D'ABORD
         model = create_model_from_config(cfg)
+        model = torch.compile(model)
         
         logger.info("Creating JEPA pretraining module...")
         
