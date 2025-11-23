@@ -237,7 +237,10 @@ def main(cfg: DictConfig):
         tags=cfg.wandb.tags,
         config=OmegaConf.to_container(cfg, resolve=True),
         log_model=cfg.wandb.log_model,
+        log_freq=cfg.wandb.log_freq
     )
+
+    wandb_logger.watch(model)
     
     # Trainer
     trainer = pl.Trainer(
