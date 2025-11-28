@@ -11,13 +11,12 @@ from typing import Optional
 
 from ..components.attention import TransformerBlock
 
-
 class BareTransformerEncoder(nn.Module):
     """
     Encoder sans patching, juste transformer blocks.
-    
+
     Pour JEPA où le patching est géré en amont pour appliquer les masks.
-    
+
     Args:
         d_model: Model dimension
         num_layers: Number of transformer layers
@@ -26,7 +25,7 @@ class BareTransformerEncoder(nn.Module):
         dropout: Dropout rate
         activation: Activation function
     """
-    
+
     def __init__(
         self,
         d_model: int = 512,
@@ -58,7 +57,7 @@ class BareTransformerEncoder(nn.Module):
         
         # Final layer norm
         self.final_norm = nn.LayerNorm(d_model)
-    
+
     def forward(
         self,
         x: torch.Tensor,

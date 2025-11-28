@@ -1,18 +1,17 @@
-# src/timejepa/models/jepa_tst.py
 """
 JEPA-TST: Joint-Embedding Predictive Architecture with PatchTST.
 
 This is the main model that combines all components:
-- Online Encoder (PatchTST)
-- Target Encoder (EMA of online encoder)
-- Predictor (Lightweight transformer)
-- Decoder (For finetuning)
 
+Online Encoder (BareEncoder)
+Target Encoder (EMA of online encoder)
+Predictor (Lightweight transformer)
+Decoder (For finetuning)
 The model can work in two modes:
-1. Pretrain mode: JEPA self-supervised learning (context → predict target)
-2. Finetune mode: Supervised forecasting (input → forecast future)
-"""
 
+Pretrain mode: JEPA self-supervised learning (context → predict target)
+Finetune mode: Supervised forecasting (input → forecast future)
+"""
 import torch
 import torch.nn as nn
 from typing import Optional, Dict, Any, Tuple, Literal
@@ -24,11 +23,10 @@ from .encoders.target_encoder import TargetEncoder
 from .predictors.transformer_predictor import TransformerPredictor, MLPPredictor
 from .decoders.linear_decoder import ForecastingHead
 
-
 class JEPATST(nn.Module):
     """
     Complete JEPA-TST model for time series.
-    
+
     Architecture:
         Pretrain:
             Input [B, L, C]
@@ -47,7 +45,7 @@ class JEPATST(nn.Module):
             → Decoder → forecast [B, L_pred, C]
             → RevIN denormalization
             → Loss: MSE(forecast, ground_truth)
-    
+
     Args:
         # Data params
         input_length: Length of input sequence (context_length in pretrain)
@@ -84,7 +82,7 @@ class JEPATST(nn.Module):
         affine: Whether RevIN uses affine transformation
         subtract_last: Alternative normalization (subtract last value)
     """
-    
+
     def __init__(
         self,
         # Data params
@@ -208,7 +206,7 @@ class JEPATST(nn.Module):
     def is_pretrain_mode(self) -> bool:
         """Check if model is in pretrain mode."""
         return self._pretrain_mode
-    
+
     def forward_pretrain(
         self,
         x: torch.Tensor,
@@ -309,7 +307,7 @@ class JEPATST(nn.Module):
             'targets': target_emb_clean.detach(),
             'context_embeddings': context_emb_clean,
         }
-    
+
     def forward_finetune(
         self,
         x: torch.Tensor,
@@ -349,7 +347,7 @@ class JEPATST(nn.Module):
             result['representations'] = representations
         
         return result
-    
+
     def forward(
         self,
         x: torch.Tensor,
@@ -376,22 +374,22 @@ class JEPATST(nn.Module):
             return self.forward_pretrain(x, context_mask, target_mask)
         else:
             return self.forward_finetune(x, **kwargs)
-    
+
     def freeze_encoder(self):
         """Freeze encoder parameters (for finetuning)."""
         for param in self.online_encoder.parameters():
             param.requires_grad = False
-    
+
     def unfreeze_encoder(self):
         """Unfreeze encoder parameters."""
         for param in self.online_encoder.parameters():
             param.requires_grad = True
-    
+
     def freeze_target_encoder(self):
         """Freeze target encoder (should always be frozen)."""
         for param in self.target_encoder.parameters():
             param.requires_grad = False
-    
+
     def get_num_params(self) -> Dict[str, int]:
         """Get parameter counts for each component."""
         return {
@@ -402,12 +400,12 @@ class JEPATST(nn.Module):
             'total': sum(p.numel() for p in self.parameters()),
             'trainable': sum(p.numel() for p in self.parameters() if p.requires_grad),
         }
-    
+
     @torch.no_grad()
     def update_target_encoder(self, step: int, max_steps: int):
         """Update target encoder with EMA."""
         self.target_encoder.update(self.online_encoder, step, max_steps)
-    
+
     def load_pretrained_encoder(self, checkpoint_path: str):
         """Load pretrained encoder weights."""
         state_dict = torch.load(checkpoint_path, map_location='cpu')
@@ -422,7 +420,7 @@ class JEPATST(nn.Module):
         # Load into online encoder
         self.online_encoder.load_state_dict(encoder_state)
         print(f"✅ Loaded pretrained encoder from {checkpoint_path}")
-    
+
     def save_pretrained_encoder(self, save_path: str):
         """Save encoder weights only."""
         encoder_state = {
@@ -450,7 +448,6 @@ def create_jepa_tst_tiny() -> JEPATST:
         predictor_d_ff=256,
     )
 
-
 def create_jepa_tst_small() -> JEPATST:
     """Create a small JEPA-TST."""
     return JEPATST(
@@ -468,7 +465,6 @@ def create_jepa_tst_small() -> JEPATST:
         predictor_d_ff=1024,
     )
 
-
 def create_jepa_tst_base() -> JEPATST:
     """Create the base JEPA-TST (as per paper specs)."""
     return JEPATST(
@@ -485,7 +481,6 @@ def create_jepa_tst_base() -> JEPATST:
         predictor_num_heads=8,
         predictor_d_ff=2048,
     )
-
 
 def create_jepa_tst_large() -> JEPATST:
     """Create a large JEPA-TST."""
