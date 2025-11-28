@@ -25,12 +25,47 @@ datasets:
     expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
 
+  m4_monthly:
+    url: "https://zenodo.org/records/4656480/files/m4_monthly_dataset.zip?download=1"
+    description: "M4 competition monthly - 48000 series"
+    expected_files: ["*.tsf"]
+    frequency: "monthly"
+
+  m4_weekly:
+    url: "https://zenodo.org/records/4656522/files/m4_weekly_dataset.zip?download=1"
+    description: "M4 competition weekly - 359 series"
+    expected_files: ["*.tsf"]
+    frequency: "weekly"
     
   australian-electricity-demand:
     url: "https://zenodo.org/records/4659727/files/australian_electricity_demand_dataset.zip?download=1"
-    description: "Australian electricity demand - 1000 series"
+    description: "Australian electricity demand - 5 series"
     expected_files: ["*.ts", "*.tsf"]
     frequency: "half-hourly"
+
+  web-traffic-extended:
+    url: "https://zenodo.org/records/7371038/files/web_traffic_extended_dataset_without_missing_values.zip?download=1"
+    description: "Extended web traffic on wikepedia from 2015-07-01 to 2022-06-30 - 145063 time series"
+    expected_files: ["*.tsf"]
+    frequency: "faily"
+
+  vehicle-trips:
+    url: "https://zenodo.org/records/5122537/files/vehicle_trips_dataset_without_missing_values.zip?download=1"
+    description: "Vehicle trips - 329 series"
+    expected_files: ["*.tsf"]
+    frequency: ["daily"]
+
+  rideshare:
+    url: "https://zenodo.org/records/5122232/files/rideshare_dataset_without_missing_values.zip?download=1"
+    description: "Rideshare data - Unknown number of series"
+    expected_files: ["*.tsf"]
+    frequency: ["hourly"]
+
+  kaggle-web-traffic:
+    url: "https://zenodo.org/records/4656664/files/kaggle_web_traffic_weekly_dataset.zip?download=1"
+    description: "Web traffic on wikipedia from 2015-07-01 to 2017-09-05 - 145063 series"
+    expected_files: ["*.tsf"]
+    frequency: "weekly"
 
 
 download:

@@ -160,7 +160,9 @@ class JEPATST(nn.Module):
             num_heads=num_heads,
             d_ff=d_ff,
             dropout=dropout,
-            activation=activation
+            activation=activation,
+            use_rope=True,
+            max_seq_len=self.input_length
         )
         
         # ===== Target Encoder (EMA of online encoder) =====
