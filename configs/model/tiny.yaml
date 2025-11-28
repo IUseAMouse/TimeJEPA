@@ -115,7 +115,7 @@ data:
   seed: 420
 
 checkpoint:
-  monitor: "val/loss"
+  monitor: "val_loss"
   mode: "min"
   save_top_k: 3
   save_last: true
@@ -124,7 +124,7 @@ checkpoint:
 
 early_stopping:
   enabled: false
-  monitor: "val/loss"
+  monitor: "val_loss"
   patience: 15
   mode: "min"
   min_delta: 0.0001

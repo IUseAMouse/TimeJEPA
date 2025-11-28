@@ -31,18 +31,6 @@ datasets:
     expected_files: ["*.ts", "*.tsf"]
     frequency: "half-hourly"
 
-  web-traffic-extended:
-    url: "https://zenodo.org/records/7371038/files/web_traffic_extended_dataset_without_missing_values.zip?download=1"
-    description: "Extended web traffic on wikepedia from 2015-07-01 to 2022-06-30 - 145063 time series"
-    expected_files: ["*.tsf"]
-    frequency: "faily"
-
-  rideshare:
-    url: "https://zenodo.org/records/5122232/files/rideshare_dataset_without_missing_values.zip?download=1"
-    description: "Rideshare data - Unknown number of series"
-    expected_files: ["*.tsf"]
-    frequency: ["hourly"]
-
 
 download:
   chunk_size: 8192

@@ -3,7 +3,7 @@ JEPA-TST: Joint-Embedding Predictive Architecture with PatchTST.
 
 This is the main model that combines all components:
 
-Online Encoder (BareEncoder)
+Online Encoder (PatchTST)
 Target Encoder (EMA of online encoder)
 Predictor (Lightweight transformer)
 Decoder (For finetuning)
@@ -158,9 +158,7 @@ class JEPATST(nn.Module):
             num_heads=num_heads,
             d_ff=d_ff,
             dropout=dropout,
-            activation=activation,
-            use_rope=True,
-            max_seq_len=self.input_length
+            activation=activation
         )
         
         # ===== Target Encoder (EMA of online encoder) =====
