@@ -123,7 +123,7 @@ def compute_optimal_config(
     print("=" * 70)
     
     # Total training tokens
-    total_tokens = total_points * epochs
+    total_tokens = total_points
     
     print(f"\n📊 Dataset Statistics:")
     print(f"  Total datapoints (D):     {total_points:>15,}")

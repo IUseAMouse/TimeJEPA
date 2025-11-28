@@ -3,7 +3,7 @@
 model:
   name: "jepa_tst_mini"
   
-  seq_length: 512
+  seq_length: 384
   patch_length: 16
   stride: 8
   num_channels: 1
@@ -67,15 +67,15 @@ training:
   # Optimization
   optimizer:
     name: "adamw"
-    learning_rate: 1.0e-3
-    weight_decay: 0.05
+    learning_rate: 1.0e-4
+    weight_decay: 0.02
     betas: [0.9, 0.95]
     eps: 1.0e-8
   
   # Learning rate schedule
   lr_scheduler:
     type: "cosine"  # cosine | linear | constant
-    warmup_epochs: 10
+    warmup_epochs: 0.1
     min_lr: 1.0e-6
   
   # Training duration
@@ -89,7 +89,7 @@ training:
     schedule: "cosine"
   
   # Regularization
-  dropout: 0.1
+  dropout: 0.05
   gradient_clip_val: 1.0
   
   # Logging
@@ -98,11 +98,54 @@ training:
 
 data:
   data_dir: "data/processed/"
-  datasets: None, # This load alls
+  checkpoint_dir: "checkpoints/"
+  output_dir: "lightning/"
+  datasets: [] # This load alls
   combine_mode: "concatenate"
-  batch_size: 64
+  batch_size: 256
   stride: 1
   normalize_mode: "global"
   normalizer_type: "identity"
-  train_val_test_split: (0.8, 0.1, 0.1)
+  train_val_test_split: [0.8, 0.1, 0.1]
   seed: 420
+
+checkpoint:
+  monitor: "val_loss"
+  mode: "min"
+  save_top_k: 3
+  save_last: true
+  filename: "epoch={epoch:02d}-val_loss={val/loss:.4f}"
+  auto_insert_metric_name: false
+
+early_stopping:
+  enabled: false
+  monitor: "val_loss"
+  patience: 15
+  mode: "min"
+  min_delta: 0.0001
+
+trainer:
+  accelerator: "auto"  # auto | cpu | gpu | tpu
+  devices: 1  # Number of devices to use
+  precision: "bf16-mixed"  # 32-true | 16-mixed | bf16-mixed
+  max_epochs: ${training.max_epochs}  # Reference from training section
+  gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
+  accumulate_grad_batches: 6  # Gradient accumulation steps
+  val_check_interval: 0.2  # Validate every epoch (1.0) or every N steps (int)
+  log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
+  deterministic: false  # Set to true for reproducibility (slower)
+  enable_progress_bar: true
+  enable_model_summary: true
+
+wandb:
+  project: "JEPA-TST"
+  entity: "iuseamouse"
+  run_name: null  # Auto-generated
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "v1"
+    - "pytorch-lightning"
+  log_model: true  # Log checkpoints
+  log_gradients: false  # Log gradients (expensive)
+  log_freq: 100  # Gradient logging frequency
