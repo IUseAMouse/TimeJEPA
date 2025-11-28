@@ -61,12 +61,6 @@ datasets:
     expected_files: ["*.tsf"]
     frequency: ["hourly"]
 
-  kaggle-web-traffic:
-    url: "https://zenodo.org/records/4656664/files/kaggle_web_traffic_weekly_dataset.zip?download=1"
-    description: "Web traffic on wikipedia from 2015-07-01 to 2017-09-05 - 145063 series"
-    expected_files: ["*.tsf"]
-    frequency: "weekly"
-
 
 download:
   chunk_size: 8192
