@@ -66,7 +66,7 @@ finetune-linear: ## Linear Probe: Freeze encoder, train decoder. Usage: make fin
 	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
 		training.mode="finetune" \
 		training.finetune_mode="linear_probe" \
-		training.pretrained_encoder_path="$(CHECKPOINT)" \
+		'training.pretrained_encoder_path="$(CHECKPOINT)"' \
 		model.decoder.type="linear" \
 		training.max_epochs=$(or $(EPOCHS),50) \
 		training.optimizer.learning_rate=$(or $(LR),1e-4) \
@@ -83,7 +83,7 @@ finetune-full: ## Full Finetune: Train encoder + decoder. Usage: make finetune-f
 	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
 		training.mode="finetune" \
 		training.finetune_mode="full_finetune" \
-		training.pretrained_encoder_path="$(CHECKPOINT)" \
+		'training.pretrained_encoder_path="$(CHECKPOINT)"' \
 		model.decoder.type="mlp" \
 		training.max_epochs=$(or $(EPOCHS),50) \
 		training.optimizer.learning_rate=$(or $(LR),1e-4) \
