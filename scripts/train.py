@@ -119,12 +119,11 @@ def main(cfg: DictConfig):
     
     # Create Lightning module based on mode
     is_pretrain = cfg.training.mode == "pretrain"
+    # 🔥 CRÉER LE MODÈLE D'ABORD
+    model = create_model_from_config(cfg)
     
     if is_pretrain:
         logger.info("Creating JEPA model...")
-        
-        # 🔥 CRÉER LE MODÈLE D'ABORD
-        model = create_model_from_config(cfg)
         model.train()
         
         logger.info("Creating JEPA pretraining module...")

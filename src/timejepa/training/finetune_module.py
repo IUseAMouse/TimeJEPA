@@ -143,14 +143,53 @@ class FinetuneModule(pl.LightningModule):
         self.val_metrics_history = []
     
     def load_pretrained_encoder(self, path: Path):
-        """Load pretrained encoder weights."""
+        """Load pretrained encoder weights from Lightning checkpoint."""
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Pretrained encoder not found: {path}")
         
         logger.info(f"Loading pretrained encoder from {path}")
-        self.model.load_pretrained_encoder(str(path))
-        logger.info("✓ Pretrained encoder loaded successfully")
+        
+        # 1. Charger le checkpoint Lightning (CPU pour éviter les OOM)
+        checkpoint = torch.load(path, map_location='cpu')
+        
+        # 2. Extraire le state_dict (gérer le cas .ckpt vs .pt)
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint  # Cas d'un fichier poids bruts
+            
+        # 3. Nettoyer les clés (Prefix Removal)
+        # Le modèle était dans 'model.' dans le PretrainModule, on veut charger dans 'model.' ici aussi
+        # MAIS on ne veut charger QUE l'encoder.
+        encoder_state_dict = {}
+        for k, v in state_dict.items():
+            # On cherche les clés qui appartiennent à l'encodeur
+            # Dans le checkpoint: "model.encoder.layers..."
+            if "encoder." in k and "target_encoder" not in k and "predictor" not in k:
+                # Si ta classe JEPATST a l'attribut 'encoder', on garde 'model.encoder...'
+                # Mais attention : self.model ici est JEPATST.
+                # Si on fait self.model.load_state_dict, il attend 'encoder.layers...'
+                
+                # Nettoyage du préfixe 'model.' qui vient du wrapper Lightning Pretrain
+                clean_key = k.replace("model.", "") 
+                encoder_state_dict[clean_key] = v
+        
+        if not encoder_state_dict:
+            raise ValueError("No encoder weights found in checkpoint! Check prefixes.")
+
+        # 4. Chargement Strict=False
+        # On charge dans self.model (JEPATST). 
+        # strict=False est OBLIGATOIRE car on ne charge PAS le predictor ni le decoder.
+        missing, unexpected = self.model.load_state_dict(encoder_state_dict, strict=False)
+        
+        # Vérification de sécurité
+        # On s'attend à ce que 'encoder' soit chargé, mais que 'predictor'/'decoder' soient manquants.
+        encoder_missing = [k for k in missing if "encoder" in k and "target" not in k]
+        if len(encoder_missing) > 0:
+            logger.warning(f"⚠️ Attention: Certaines parties de l'encoder n'ont pas été chargées: {encoder_missing[:5]}...")
+        else:
+            logger.info("✓ Encoder weights loaded successfully (ignoring predictor/decoder missing keys).")
     
     def _apply_finetune_strategy(self, mode: str):
         """Apply freezing strategy based on finetune mode."""

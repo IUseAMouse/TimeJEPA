@@ -1,6 +1,7 @@
 # Makefile
 .PHONY: help install activate format lint typecheck check-all clean
 .PHONY: download-data list-datasets analyze-data setup-all train evaluate
+.PHONY: finetune-linear finetune-full
 
 # Default target
 .DEFAULT_GOAL := help
@@ -52,8 +53,40 @@ setup-all: ## Download all datasets and analyze (complete setup)
 
 ##@ Training
 
-train: ## Train model (default config)
-	python scripts/train.py --config-name tiny.yaml
+train: ## Train model from scratch (Pretraining)
+	python scripts/train.py --config-name tiny
+
+finetune-linear: ## Linear Probe: Freeze encoder, train decoder. Usage: make finetune-linear CHECKPOINT=path/to/ckpt
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "❌ Error: CHECKPOINT is not set."; \
+		echo "Usage: make finetune-linear CHECKPOINT=checkpoints/my_model/epoch=03.ckpt [EPOCHS=50] [LR=1e-3]"; \
+		exit 1; \
+	fi
+	@echo "🚀 Starting Linear Probe with checkpoint: $(CHECKPOINT)"
+	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
+		training.mode="finetune" \
+		training.finetune_mode="linear_probe" \
+		training.pretrained_encoder_path="$(CHECKPOINT)" \
+		wandb.run_name="linear-probe-$(shell date +%Y%m%d-%H%M)" \
+		$(ARGS)
+
+finetune-full: ## Full Finetune: Train encoder + decoder. Usage: make finetune-full CHECKPOINT=path/to/ckpt
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "❌ Error: CHECKPOINT is not set."; \
+		echo "Usage: make finetune-full CHECKPOINT=checkpoints/my_model/epoch=03.ckpt"; \
+		exit 1; \
+	fi
+	@echo "🚀 Starting Full Finetune with checkpoint: $(CHECKPOINT)"
+	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
+		training.mode="finetune" \
+		training.finetune_mode="full_finetune" \
+		training.pretrained_encoder_path="$(CHECKPOINT)" \
+		model.decoder.type="mlp" \
+		training.max_epochs=$(or $(EPOCHS),50) \
+		training.optimizer.learning_rate=$(or $(LR),1e-4) \
+		training.optimizer.encoder_lr_multiplier=0.1 \
+		wandb.run_name="full-finetune-$(shell date +%Y%m%d-%H%M)" \
+		$(ARGS)
 
 ##@ Evaluation
 

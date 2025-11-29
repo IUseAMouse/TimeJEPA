@@ -81,29 +81,11 @@ datasets:
     expected_files: ["*.tsf"]
     frequency: "4 seconds"
 
-  covid-deaths:
-    url: "https://zenodo.org/records/4656009/files/covid_deaths_dataset.zip?download=1"
-    description: "Daily covid deaths per country - 266 Series"
-    expected_files: ["*.tsf"]
-    frequency: "daily"
-
-  covid-mobility:
-    url: "https://zenodo.org/records/4663809/files/covid_mobility_dataset_without_missing_values.zip?download=1"
-    description: "Evolution of 6 aspects of life during covid - 559 series"
-    expected_files: ["*.tsf"]
-    frequency: "daily"
-
   nn5-daily:
     url: "https://zenodo.org/records/4656117/files/nn5_daily_dataset_without_missing_values.zip?download=1"
     description: "Daily cash withdrawals - 111 series"
     expected_files: ["*.tsf"]
     frequency: "daily"
-
-  nn5-weekly:
-    url: "https://zenodo.org/records/4656125/files/nn5_weekly_dataset.zip?download=1"
-    description: "Weekly cash withdrawals - 111 series"
-    expected_files: ["*.tsf"]
-    frequency: "weekly"
 
 download:
   chunk_size: 8192
