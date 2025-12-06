@@ -305,7 +305,7 @@ class FinetuneModule(pl.LightningModule):
         loss = self.compute_loss(predictions_norm, target_norm)
         
         # Logging
-        self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         
         # Additional metrics every N steps
         if batch_idx % self.log_every_n_steps == 0:
@@ -337,7 +337,7 @@ class FinetuneModule(pl.LightningModule):
         loss = self.compute_loss(predictions_norm, target_norm)
 
         # Log
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         
         # Compute all metrics
         metrics = compute_forecasting_metrics(predictions_norm, target_norm)
@@ -367,7 +367,7 @@ class FinetuneModule(pl.LightningModule):
         loss = self.compute_loss(predictions_norm, target_norm)
         
         # Log
-        self.log('test/loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log('test_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         
         # Compute all metrics
         metrics = compute_forecasting_metrics(predictions_norm, target_norm)
@@ -522,7 +522,7 @@ class FinetuneModule(pl.LightningModule):
                 'optimizer': optimizer,
                 'lr_scheduler': {
                     'scheduler': scheduler,
-                    'monitor': 'val/loss',
+                    'monitor': 'val_loss',
                     'interval': 'epoch',
                     'frequency': 1,
                 }
@@ -543,8 +543,8 @@ class FinetuneModule(pl.LightningModule):
     def on_validation_epoch_end(self):
         """Track validation metrics."""
         # Get current val metrics
-        if 'val/mse' in self.trainer.callback_metrics:
-            val_mse = self.trainer.callback_metrics['val/mse'].item()
+        if 'val_mse' in self.trainer.callback_metrics:
+            val_mse = self.trainer.callback_metrics['val_mse'].item()
             self.val_metrics_history.append(val_mse)
     
     def predict_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -671,6 +671,6 @@ class MultiHorizonFinetuneModule(FinetuneModule):
             for key, value in metrics.items():
                 self.log(f'val/h{horizon}_{key}', value, on_epoch=True, prog_bar=False)
         
-        self.log('val/loss', total_loss, on_epoch=True, prog_bar=True)
+        self.log('val_loss', total_loss, on_epoch=True, prog_bar=True)
         
         return total_loss

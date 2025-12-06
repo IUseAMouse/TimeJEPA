@@ -3,46 +3,51 @@
 model:
   name: "jepa_tst_mini"
   
-  seq_length: 384
+  # Input configuration
+  seq_length: 512
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 96
+  prediction_length: 128
   
+  # Encoder architecture
   encoder:
     d_model: 256
     n_heads: 4
-    n_layers: 4
-    d_ff: 1024
+    n_layers: 5
+    d_ff: 512
     dropout: 0.1
     activation: "gelu"
     use_revin: true
     use_rope: true
     norm_first: true
   
+  # Predictor architecture
   predictor:
-    type: "transformer"
+    type: "transformer"  # transformer | mlp
     d_model: 256
     n_heads: 4
-    n_layers: 3
-    d_ff: 1024
+    n_layers: 4
+    d_ff: 512
     dropout: 0.1
     activation: "gelu"
   
+  # Decoder architecture
   decoder:
-    type: "mlp"
+    type: "attentive"  # linear | mlp | attentive
     d_model: 256
-    hidden_dim: 512
+    hidden_dim: 128
     n_layers: 2
     dropout: 0.1
   
+  # Target encoder (EMA)
   target_encoder:
     momentum_schedule: "cosine"
     momentum_base: 0.996
     momentum_final: 1.0
   
-  params_millions: ~2.5
-
+  # Model size stats
+  params_millions: ~1.6  # Approximate
 
 training:
   mode: "pretrain"
@@ -67,10 +72,11 @@ training:
   # Optimization
   optimizer:
     name: "adamw"
-    learning_rate: 1.0e-4
+    learning_rate: 1.0e-3
     weight_decay: 0.02
     betas: [0.9, 0.95]
     eps: 1.0e-8
+    encoder_lr_multiplier: 1.00
   
   # Learning rate schedule
   lr_scheduler:
@@ -79,7 +85,7 @@ training:
     min_lr: 1.0e-6
   
   # Training duration
-  max_epochs: 200
+  max_epochs: 40
   
   # EMA configuration
   ema:
@@ -114,13 +120,13 @@ checkpoint:
   mode: "min"
   save_top_k: 3
   save_last: true
-  filename: "epoch={epoch:02d}-val_loss={val/loss:.4f}"
+  filename: "epoch={epoch:02d}-val_loss={val_loss:.4f}"
   auto_insert_metric_name: false
 
 early_stopping:
   enabled: false
   monitor: "val_loss"
-  patience: 15
+  patience: 12
   mode: "min"
   min_delta: 0.0001
 
@@ -131,19 +137,19 @@ trainer:
   max_epochs: ${training.max_epochs}  # Reference from training section
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
   accumulate_grad_batches: 6  # Gradient accumulation steps
-  val_check_interval: 0.2  # Validate every epoch (1.0) or every N steps (int)
+  val_check_interval: 0.05  # Validate every epoch (1.0) or every N steps (int)
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
   deterministic: false  # Set to true for reproducibility (slower)
   enable_progress_bar: true
   enable_model_summary: true
 
 wandb:
-  project: "JEPA-TST"
+  project: "TimeJEPA"
   entity: "iuseamouse"
   run_name: null  # Auto-generated
   tags:
-    - "tiny"
-    - "jepa_tst"
+    - "mini"
+    - "timejepa_mini"
     - "v1"
     - "pytorch-lightning"
   log_model: true  # Log checkpoints
