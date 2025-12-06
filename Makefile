@@ -54,7 +54,10 @@ setup-all: ## Download all datasets and analyze (complete setup)
 ##@ Training
 
 train: ## Train model from scratch (Pretraining)
-	python scripts/train.py --config-name tiny
+	@if [ -z "$(CONFIG)" ]; then \
+		echo "❌ Error: CONFIG is not set."; \
+		exit 1; \
+	python scripts/train.py --config-name $(or $(CONFIG),mini)
 
 finetune-linear: ## Linear Probe: Freeze encoder, train decoder. Usage: make finetune-linear CHECKPOINT=path/to/ckpt
 	@if [ -z "$(CHECKPOINT)" ]; then \
@@ -69,7 +72,7 @@ finetune-linear: ## Linear Probe: Freeze encoder, train decoder. Usage: make fin
 		+'training.pretrained_encoder_path="$(CHECKPOINT)"' \
 		model.decoder.type="linear" \
 		training.max_epochs=$(or $(EPOCHS),20) \
-		training.optimizer.learning_rate=$(or $(LR),1e-4) \
+		training.optimizer.learning_rate=$(or $(LR),1e-3) \
 		wandb.run_name="linear-probe-$(shell date +%Y%m%d-%H%M)" \
 		$(ARGS)
 
