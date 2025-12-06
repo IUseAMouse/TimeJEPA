@@ -322,27 +322,25 @@ class ForecastingHead(nn.Module):
             )
         else:
             raise ValueError(f"Unknown decoder_type: {decoder_type}")
+        
+        self.output_norm = nn.LayerNorm(num_features)
     
     def forward(
         self,
-        x: torch.Tensor,
-        denormalize: bool = True
+        x: torch.Tensor
     ) -> torch.Tensor:
         """
         Generate forecasts.
         
         Args:
             x: Representations [B, num_patches, d_model]
-            denormalize: Whether to apply RevIN denormalization
             
         Returns:
-            Forecasts [B, L_pred, C]
+            Forecasts [B, L_pred, C], Forecasts Denorm [B, L_pred, C]
         """
-        # Decode
+        
+        
         predictions = self.decoder(x)
+        predictions_denorm = self.revin(predictions, mode='denorm')
         
-        # Denormalize if requested
-        if denormalize and self.revin is not None:
-            predictions = self.revin(predictions, mode='denorm')
-        
-        return predictions
+        return predictions, predictions_denorm

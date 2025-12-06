@@ -14,6 +14,7 @@ import logging
 
 from ..models.jepa_tst import JEPATST
 from .utils.metrics import compute_forecasting_metrics, mse, mae
+from .utils.masking import get_masking_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,12 @@ class FinetuneModule(pl.LightningModule):
         pretrained_encoder_path: Optional[Path] = None,
         
         # Finetuning strategy
+        masking_strategy: Literal['random', 'block', 'temporal', 'random_temporal'] = 'temporal',
         finetune_mode: Literal['linear_probe', 'full_finetune', 'gradual_unfreeze'] = 'full_finetune',
         unfreeze_after_epoch: int = 5,  # For gradual_unfreeze
+        context_ratio: float = 0.7,
+        target_ratio: float = 0.3,
+        masking_kwargs: Optional[Dict[str, Any]] = None,
         
         # Loss
         loss_type: Literal['mse', 'mae', 'huber'] = 'mse',
@@ -99,7 +104,16 @@ class FinetuneModule(pl.LightningModule):
         
         # Model
         self.model = model
-        
+        masking_kwargs = masking_kwargs or {}
+        self.masking_fn = get_masking_strategy(
+            strategy_name=masking_strategy,
+            num_patches=model.num_patches,
+            context_ratio=context_ratio,
+            target_ratio=target_ratio,
+            **masking_kwargs
+        )
+
+
         # Switch to finetune mode
         self.model.set_pretrain_mode(False)
         logger.info("✓ Model switched to finetune mode")
@@ -142,60 +156,74 @@ class FinetuneModule(pl.LightningModule):
         # Metrics tracking
         self.val_metrics_history = []
     
-    def load_pretrained_encoder(self, path: Path):
-        """Load pretrained encoder weights from Lightning checkpoint."""
-        path = Path(path)
-        if not path.exists():
-            raise FileNotFoundError(f"Pretrained encoder not found: {path}")
+    def load_pretrained_encoder(self, checkpoint_path: str):
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
-        logger.info(f"Loading pretrained encoder from {path}")
-        
-        # 1. Charger le checkpoint Lightning (CPU pour éviter les OOM)
-        checkpoint = torch.load(path, map_location='cpu')
-        
-        # 2. Extraire le state_dict (gérer le cas .ckpt vs .pt)
         if 'state_dict' in checkpoint:
             state_dict = checkpoint['state_dict']
         else:
-            state_dict = checkpoint  # Cas d'un fichier poids bruts
-            
-        # 3. Nettoyer les clés (Prefix Removal)
-        # Le modèle était dans 'model.' dans le PretrainModule, on veut charger dans 'model.' ici aussi
-        # MAIS on ne veut charger QUE l'encoder.
-        encoder_state_dict = {}
+            state_dict = checkpoint
+        
+        cleaned_state_dict = {}
         for k, v in state_dict.items():
-            # On cherche les clés qui appartiennent à l'encodeur
-            # Dans le checkpoint: "model.encoder.layers..."
-            if "encoder." in k and "target_encoder" not in k and "predictor" not in k:
-                # Si ta classe JEPATST a l'attribut 'encoder', on garde 'model.encoder...'
-                # Mais attention : self.model ici est JEPATST.
-                # Si on fait self.model.load_state_dict, il attend 'encoder.layers...'
-                
-                # Nettoyage du préfixe 'model.' qui vient du wrapper Lightning Pretrain
-                clean_key = k.replace("model.", "") 
-                encoder_state_dict[clean_key] = v
+            clean_key = k.replace("model.", "").replace("_orig_mod.", "")
+            
+            # Exclure target_encoder (pas utilisé en finetune)
+            if "target_encoder" in clean_key:
+                continue
+            
+            # Exclure les buffers runtime de RevIN
+            if "revin" in clean_key and (clean_key.endswith('.mean') or clean_key.endswith('.std')):
+                continue
+            
+            cleaned_state_dict[clean_key] = v
         
-        if not encoder_state_dict:
-            raise ValueError("No encoder weights found in checkpoint! Check prefixes.")
+        missing, unexpected = self.model.load_state_dict(cleaned_state_dict, strict=False)
+        
+        # Définir ce qui est "attendu" comme missing
+        def is_expected_missing(k):
+            if 'decoder' in k:
+                return True  # Nouveau pour finetune
+            if 'target_encoder' in k:
+                return True  # Pas chargé, pas utilisé
+            if 'revin' in k and (k.endswith('.mean') or k.endswith('.std')):
+                return True  # Buffers runtime
+            return False
+        
+        critical_missing = [k for k in missing if not is_expected_missing(k)]
+        
+        logger.info(f"📦 Loaded {len(cleaned_state_dict)} keys from checkpoint")
+        logger.info(f"   Expected missing (decoder, target_encoder, buffers): {len(missing) - len(critical_missing)}")
+        
+        if critical_missing:
+            logger.error(f"❌ CRITICAL missing: {critical_missing}")
+            raise RuntimeError(f"Failed to load: {critical_missing}")
+        
+        if unexpected:
+            logger.warning(f"⚠️ Unexpected keys: {unexpected}")
+        
+        logger.info("✓ Pretrained weights loaded successfully")
 
-        # 4. Chargement Strict=False
-        # On charge dans self.model (JEPATST). 
-        # strict=False est OBLIGATOIRE car on ne charge PAS le predictor ni le decoder.
-        missing, unexpected = self.model.load_state_dict(encoder_state_dict, strict=False)
+        # Avant le load, inspecte ce que contient le checkpoint
+        print("🔍 Keys in checkpoint:")
+        for k in sorted(cleaned_state_dict.keys()):
+            print(f"   {k}")
+
+        print("\n🔍 Keys in model:")
+        for k in sorted(self.model.state_dict().keys()):
+            print(f"   {k}")
         
-        # Vérification de sécurité
-        # On s'attend à ce que 'encoder' soit chargé, mais que 'predictor'/'decoder' soient manquants.
-        encoder_missing = [k for k in missing if "encoder" in k and "target" not in k]
-        if len(encoder_missing) > 0:
-            logger.warning(f"⚠️ Attention: Certaines parties de l'encoder n'ont pas été chargées: {encoder_missing[:5]}...")
-        else:
-            logger.info("✓ Encoder weights loaded successfully (ignoring predictor/decoder missing keys).")
+        logger.info("✓ All pretrained components loaded successfully")
     
     def _apply_finetune_strategy(self, mode: str):
         """Apply freezing strategy based on finetune mode."""
         if mode == 'linear_probe':
             # Freeze encoder completely
             self.model.freeze_encoder()
+            self.model.freeze_predictor()
+            self.model.freeze_patching()
+            self.model.freeze_revin()
+            self.model.freeze_target_encoder()
             logger.info("✓ Applied LINEAR PROBE: encoder frozen, decoder trainable")
         
         elif mode == 'full_finetune':
@@ -257,6 +285,9 @@ class FinetuneModule(pl.LightningModule):
         # Get context and target
         context = batch['context']  # [B, L_context, C]
         target = batch['target']    # [B, L_target, C]
+        batch_size = context.shape[0]
+
+        context_mask, _ = self.masking_fn(batch_size, device=context.device)
         
         # Add channel dim if univariate
         if context.ndim == 2:
@@ -264,13 +295,14 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        # Forward pass
-        prediction_length = target.shape[1]
-        predictions = self.model.forecast(context, prediction_length=prediction_length)
+        results = self.model.forecast(context, context_mask)
+        predictions_norm = results['forecast']
+        predictions_denorm = results['forecast_denorm']
+        target_norm = self.model.revin(target, mode='norm')
         # predictions: [B, L_target, C]
         
         # Compute loss
-        loss = self.compute_loss(predictions, target)
+        loss = self.compute_loss(predictions_norm, target_norm)
         
         # Logging
         self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
@@ -278,7 +310,7 @@ class FinetuneModule(pl.LightningModule):
         # Additional metrics every N steps
         if batch_idx % self.log_every_n_steps == 0:
             with torch.no_grad():
-                metrics = compute_forecasting_metrics(predictions, target)
+                metrics = compute_forecasting_metrics(predictions_norm, target_norm)
                 for key, value in metrics.items():
                     self.log(f'train/{key}', value, on_step=True, prog_bar=False, logger=True)
         
@@ -288,24 +320,27 @@ class FinetuneModule(pl.LightningModule):
         """Validation step."""
         context = batch['context']
         target = batch['target']
+        batch_size = context.shape[0]
         
         if context.ndim == 2:
             context = context.unsqueeze(-1)
         if target.ndim == 2:
             target = target.unsqueeze(-1)
+
+        context_mask, _ = self.masking_fn(batch_size, device=context.device)
         
-        # Forward
-        prediction_length = target.shape[1]
-        predictions = self.model.forecast(context, prediction_length=prediction_length)
+        results = self.model.forecast(context, context_mask)
+        predictions_norm = results['forecast']
+        target_norm = self.model.revin(target, mode='norm')
         
         # Compute loss
-        loss = self.compute_loss(predictions, target)
-        
+        loss = self.compute_loss(predictions_norm, target_norm)
+
         # Log
         self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         
         # Compute all metrics
-        metrics = compute_forecasting_metrics(predictions, target)
+        metrics = compute_forecasting_metrics(predictions_norm, target_norm)
         for key, value in metrics.items():
             self.log(f'val/{key}', value, on_step=False, on_epoch=True, prog_bar=False, logger=True)
         
@@ -315,31 +350,34 @@ class FinetuneModule(pl.LightningModule):
         """Test step."""
         context = batch['context']
         target = batch['target']
+        batch_size = context.shape[0]
         
         if context.ndim == 2:
             context = context.unsqueeze(-1)
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        # Forward
-        prediction_length = target.shape[1]
-        predictions = self.model.forecast(context, prediction_length=prediction_length)
+        context_mask, _ = self.masking_fn(batch_size, device=context.device)
+
+        results = self.model.forecast(context, context_mask)
+        predictions_norm = results['forecast']
+        target_norm = self.model.revin(target, mode='norm')
         
         # Compute loss
-        loss = self.compute_loss(predictions, target)
+        loss = self.compute_loss(predictions_norm, target_norm)
         
         # Log
         self.log('test/loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         
         # Compute all metrics
-        metrics = compute_forecasting_metrics(predictions, target)
+        metrics = compute_forecasting_metrics(predictions_norm, target_norm)
         for key, value in metrics.items():
             self.log(f'test/{key}', value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         
         return {
             'loss': loss,
-            'predictions': predictions,
-            'targets': target,
+            'predictions': predictions_norm,
+            'targets': target_norm,
             'metrics': metrics
         }
     
@@ -357,7 +395,7 @@ class FinetuneModule(pl.LightningModule):
             if not param.requires_grad:
                 continue  # Skip frozen params
             
-            if 'encoder' in name and 'target_encoder' not in name:
+            if 'decoder' in name and 'target_encoder' not in name:
                 # Online encoder
                 encoder_params.append(param)
             else:

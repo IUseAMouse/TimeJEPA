@@ -1,3 +1,4 @@
+# scripts/train.py
 """
 Training script compatible with existing MonashDataModule.
 """
@@ -26,48 +27,42 @@ logger = logging.getLogger(__name__)
 def create_model_from_config(cfg) -> JEPATST:
     """
     Create JEPA-TST model from Hydra config.
-    
-    Args:
-        cfg: Hydra config object with model, training, and data sections
-    
-    Returns:
-        JEPATST model instance
     """
-    
     # Map config to model arguments
     model = JEPATST(
         # Data params
-        input_length=cfg.model.seq_length,  # 384
-        prediction_length=cfg.model.prediction_length,  # 96
-        num_features=cfg.model.num_channels,  # 1
+        input_length=cfg.model.seq_length,
+        prediction_length=cfg.model.prediction_length,
+        num_features=cfg.model.num_channels,
         
         # Patching
-        patch_size=cfg.model.patch_length,  # 16
-        stride=cfg.model.stride,  # 8
+        patch_size=cfg.model.patch_length,
+        stride=cfg.model.stride,
         
         # Encoder
-        d_model=cfg.model.encoder.d_model,  # 128
-        num_layers=cfg.model.encoder.n_layers,  # 3
-        num_heads=cfg.model.encoder.n_heads,  # 4
-        d_ff=cfg.model.encoder.d_ff,  # 512
-        dropout=cfg.model.encoder.dropout,  # 0.1
-        activation=cfg.model.encoder.activation,  # "gelu"
+        d_model=cfg.model.encoder.d_model,
+        num_layers=cfg.model.encoder.n_layers,
+        num_heads=cfg.model.encoder.n_heads,
+        d_ff=cfg.model.encoder.d_ff,
+        dropout=cfg.model.encoder.dropout,
+        activation=cfg.model.encoder.activation,
         
         # Predictor
-        predictor_type=cfg.model.predictor.type,  # "transformer"
-        predictor_num_layers=cfg.model.predictor.n_layers,  # 2
-        predictor_num_heads=cfg.model.predictor.n_heads,  # 4
-        predictor_d_ff=cfg.model.predictor.d_ff,  # 512
+        predictor_type=cfg.model.predictor.type,
+        predictor_num_layers=cfg.model.predictor.n_layers,
+        predictor_num_heads=cfg.model.predictor.n_heads,
+        predictor_d_ff=cfg.model.predictor.d_ff,
         
         # Decoder (for finetuning)
-        decoder_type=cfg.model.decoder.type,  # "linear"
+        decoder_type=cfg.model.decoder.type,
+        # Note: JEPATST gère la création du décodeur en interne selon ce type
         
         # EMA
-        ema_tau_base=cfg.model.target_encoder.momentum_base,  # 0.996
-        ema_tau_end=cfg.model.target_encoder.momentum_final,  # 1.0
+        ema_tau_base=cfg.model.target_encoder.momentum_base,
+        ema_tau_end=cfg.model.target_encoder.momentum_final,
         
         # RevIN
-        use_revin=cfg.model.encoder.use_revin,  # true
+        use_revin=cfg.model.encoder.use_revin,
     )
     
     # Log model info
@@ -117,20 +112,19 @@ def main(cfg: DictConfig):
     # Prepare data
     datamodule.prepare_data()
     
-    # Create Lightning module based on mode
-    is_pretrain = cfg.training.mode == "pretrain"
-    # 🔥 CRÉER LE MODÈLE D'ABORD
+    # Create Model (Architecture)
     model = create_model_from_config(cfg)
+    
+    # Create Lightning Module (Training Logic)
+    is_pretrain = cfg.training.mode == "pretrain"
     
     if is_pretrain:
         logger.info("Creating JEPA model...")
         model.train()
         
         logger.info("Creating JEPA pretraining module...")
-        
-        # 🔥 PASSER LE MODÈLE AU MODULE
         pl_module = JEPAPretrainModule(
-            model=model,  # ← Le modèle créé ci-dessus
+            model=model,
             
             # Masking
             masking_strategy=cfg.training.masking.strategy,
@@ -161,34 +155,36 @@ def main(cfg: DictConfig):
         )
     else:
         logger.info("Creating finetuning module...")
+        
+        warmup_epochs = cfg.training.lr_scheduler.warmup_epochs
+        
         pl_module = FinetuneModule(
-            seq_length=cfg.data.context_length,
-            patch_length=cfg.model.patch_length,
-            stride=cfg.model.stride,
-            num_channels=cfg.model.encoder.get('num_channels', 1),
-            prediction_length=cfg.data.prediction_length,
-            d_model=cfg.model.encoder.d_model,
-            n_heads=cfg.model.encoder.n_heads,
-            n_layers=cfg.model.encoder.n_layers,
-            d_ff=cfg.model.encoder.d_ff,
-            dropout=cfg.model.encoder.dropout,
+            model=model,  # <-- On passe l'instance du modèle créée plus haut
             
-            # Decoder
-            decoder_type=cfg.model.decoder.type,
-            decoder_hidden_dim=cfg.model.decoder.hidden_dim,
-            decoder_n_layers=cfg.model.decoder.n_layers,
-            
-            # Training
-            learning_rate=cfg.training.optimizer.learning_rate,
-            weight_decay=cfg.training.optimizer.weight_decay,
-            encoder_lr_multiplier=cfg.training.optimizer.get('encoder_lr_multiplier', 0.1),
-            
-            # Pretrained
+            # Pretrained weights & Strategy
             pretrained_encoder_path=cfg.training.get('pretrained_encoder_path'),
-            finetune_mode=cfg.training.get('finetune_mode', 'full_finetune'),
+            finetune_mode=cfg.training.get('finetune_mode', 'linear_probe'),
             
             # Loss
             loss_type=cfg.training.loss.type,
+            
+            # Optimizer
+            learning_rate=cfg.training.optimizer.learning_rate,
+            weight_decay=cfg.training.optimizer.weight_decay,
+            encoder_lr_multiplier=cfg.training.optimizer.get('encoder_lr_multiplier', 0.1),
+            betas=tuple(cfg.training.optimizer.betas),
+            
+            # Scheduler
+            warmup_epochs=warmup_epochs,
+            max_epochs=cfg.training.max_epochs,
+            lr_scheduler=cfg.training.lr_scheduler.type,
+            min_lr=cfg.training.lr_scheduler.min_lr,
+            
+            # Regularization
+            dropout=cfg.training.dropout,
+            
+            # Logging
+            log_every_n_steps=cfg.training.log_every_n_steps,
         )
     
     # Callbacks
@@ -256,7 +252,6 @@ def main(cfg: DictConfig):
         deterministic=cfg.trainer.get('deterministic', False),
     )
 
-    # Dans train.py, après model = JEPATST(...)
     print(f"🔍 DEBUG Model:")
     print(f"  model.seq_length: {model.input_length}")
     print(f"  model.num_patches: {model.num_patches}")

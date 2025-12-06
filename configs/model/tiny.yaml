@@ -51,7 +51,6 @@ model:
 
 training:
   mode: "pretrain"
-  finetune_mode: "linear_probe"
   
   # Masking strategy
   masking:
@@ -77,6 +76,7 @@ training:
     weight_decay: 0.02
     betas: [0.9, 0.95]
     eps: 1.0e-8
+    encoder_lr_multiplier: 1.00
   
   # Learning rate schedule
   lr_scheduler:
@@ -85,7 +85,7 @@ training:
     min_lr: 1.0e-6
   
   # Training duration
-  max_epochs: 200
+  max_epochs: 20
   
   # EMA configuration
   ema:
@@ -137,14 +137,14 @@ trainer:
   max_epochs: ${training.max_epochs}  # Reference from training section
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
   accumulate_grad_batches: 6  # Gradient accumulation steps
-  val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
+  val_check_interval: 0.05  # Validate every epoch (1.0) or every N steps (int)
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
   deterministic: false  # Set to true for reproducibility (slower)
   enable_progress_bar: true
   enable_model_summary: true
 
 wandb:
-  project: "JEPA-TST"
+  project: "JEPA-TST-POSTTRAIN"
   entity: "iuseamouse"
   run_name: null  # Auto-generated
   tags:

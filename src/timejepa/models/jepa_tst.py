@@ -311,11 +311,16 @@ class JEPATST(nn.Module):
     def forward_finetune(
         self,
         x: torch.Tensor,
+        context_mask: torch.Tensor,
         return_representations: bool = False
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass for supervised finetuning (forecasting).
+        
+        Flow: Context → Encoder → Predictor (predict future repr) → Decoder
         """
+        batch_size = x.shape[0]
+
         # 1. RevIN normalization
         if self.revin is not None:
             x_norm = self.revin(x, mode='norm')
@@ -325,27 +330,57 @@ class JEPATST(nn.Module):
         # 2. Patching
         patches = self.patching(x_norm)  # [B, num_patches, d_model]
         
-        # 3. Encode with online encoder (maintenant correct !)
-        representations = self.online_encoder(patches)
+        # 3. Encode context with online encoder
+        context_patches = patches.clone()
+        context_patches[~context_mask] = 0  # Mask out non-context patches
         # [B, num_patches, d_model]
+
+        # 4. Encode context with online encoder
+        context_embeddings = self.online_encoder(context_patches)
         
-        # 4. Decode to forecasts
-        forecast_norm = self.decoder(
-            representations,
-            denormalize=False
+        # Extract only context positions
+        # We need to gather the valid context embeddings
+        num_context = context_mask.sum(dim=1).max().item()  # Max context length in batch
+        context_indices = torch.where(context_mask)
+        context_emb_list = []
+        for b in range(batch_size):
+            b_mask = context_mask[b]
+            b_context = context_embeddings[b][b_mask]  # [N_context_b, d_model]
+            # Pad to num_context if needed
+            if b_context.shape[0] < num_context:
+                padding = torch.zeros(
+                    num_context - b_context.shape[0],
+                    self.d_model,
+                    device=b_context.device,
+                    dtype=b_context.dtype
+                )
+                b_context = torch.cat([b_context, padding], dim=0)
+            context_emb_list.append(b_context)
+        context_emb_clean = torch.stack(context_emb_list, dim=0)
+        # [B, num_context, d_model]
+        
+        # 7. Predict target representations from context
+        predictions = self.predictor.forward_simple(
+            context_embeddings=context_emb_clean,
+            num_targets=self.prediction_length
         )
-        # [B, L_pred, C]
+
+        # [B, num_targets, d_model]
+        # 5. Decode to forecasts, RevIN denorm handled in decoder
+        forecast, forecast_denorm = self.decoder(
+            predictions
+        )
         
-        # 5. RevIN denormalization
-        if self.revin is not None:
-            forecast = self.revin(forecast_norm, mode='denorm')
-        else:
-            forecast = forecast_norm
-        
-        result = {'forecast': forecast}
+        result = {'forecast': forecast, 'forecast_denorm': forecast_denorm}
         if return_representations:
-            result['representations'] = representations
+            result['representations'] = predictions
         
+        return result
+
+    def forecast(self, x: torch.Tensor, context_mask: torch.Tensor) -> torch.Tensor:
+        """Convenience wrapper for FinetuneModule."""
+       
+        result = self.forward_finetune(x, context_mask)
         return result
 
     def forward(
@@ -373,7 +408,7 @@ class JEPATST(nn.Module):
                 )
             return self.forward_pretrain(x, context_mask, target_mask)
         else:
-            return self.forward_finetune(x, **kwargs)
+            return self.forward_finetune(x, context_mask, **kwargs)
 
     def freeze_encoder(self):
         """Freeze encoder parameters (for finetuning)."""
@@ -389,6 +424,36 @@ class JEPATST(nn.Module):
         """Freeze target encoder (should always be frozen)."""
         for param in self.target_encoder.parameters():
             param.requires_grad = False
+
+    def freeze_predictor(self):
+        """Freeze predictor for finetuning"""
+        for param in self.predictor.parameters():
+            param.requires_grad = False
+
+    def unfreeze_predictor(self):
+        """Unfreeze the predictor"""
+        for param in self.predictor.parameters():
+            param.requires_grad = True
+
+    def freeze_patching(self):
+        """Freeze patching layers for finetuning (only decoder should be unfrozen)"""
+        for param in self.patching.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_patching(self):
+        """Unfreeze patching layer"""
+        for param in self.patching.parameters():
+            param.requires_grad = True
+
+    def freeze_revin(self):
+        """Freeze revin layers for finetuning"""
+        for param in self.revin.parameters():
+            param.requires_grad = False
+
+    def unfreeze_revin(self):
+        """Unfreeze revin layers"""
+        for param in self.revin.parameters():
+            param.requires_grad = True
 
     def get_num_params(self) -> Dict[str, int]:
         """Get parameter counts for each component."""
@@ -406,21 +471,6 @@ class JEPATST(nn.Module):
         """Update target encoder with EMA."""
         self.target_encoder.update(self.online_encoder, step, max_steps)
 
-    def load_pretrained_encoder(self, checkpoint_path: str):
-        """Load pretrained encoder weights."""
-        state_dict = torch.load(checkpoint_path, map_location='cpu')
-        
-        # Extract encoder weights
-        encoder_state = {}
-        for key, value in state_dict.items():
-            if key.startswith('online_encoder.'):
-                new_key = key.replace('online_encoder.', '')
-                encoder_state[new_key] = value
-        
-        # Load into online encoder
-        self.online_encoder.load_state_dict(encoder_state)
-        print(f"✅ Loaded pretrained encoder from {checkpoint_path}")
-
     def save_pretrained_encoder(self, save_path: str):
         """Save encoder weights only."""
         encoder_state = {
@@ -429,72 +479,3 @@ class JEPATST(nn.Module):
         }
         torch.save(encoder_state, save_path)
         print(f"✅ Saved pretrained encoder to {save_path}")
-
-
-def create_jepa_tst_tiny() -> JEPATST:
-    """Create a tiny JEPA-TST for debugging/testing."""
-    return JEPATST(
-        input_length=128,
-        prediction_length=32,
-        num_features=1,
-        patch_size=8,
-        stride=4,
-        d_model=64,
-        num_layers=4,
-        num_heads=4,
-        d_ff=256,
-        predictor_num_layers=2,
-        predictor_num_heads=4,
-        predictor_d_ff=256,
-    )
-
-def create_jepa_tst_small() -> JEPATST:
-    """Create a small JEPA-TST."""
-    return JEPATST(
-        input_length=256,
-        prediction_length=96,
-        num_features=1,
-        patch_size=16,
-        stride=8,
-        d_model=256,
-        num_layers=12,
-        num_heads=8,
-        d_ff=1024,
-        predictor_num_layers=3,
-        predictor_num_heads=8,
-        predictor_d_ff=1024,
-    )
-
-def create_jepa_tst_base() -> JEPATST:
-    """Create the base JEPA-TST (as per paper specs)."""
-    return JEPATST(
-        input_length=512,
-        prediction_length=96,
-        num_features=1,
-        patch_size=16,
-        stride=8,
-        d_model=512,
-        num_layers=24,
-        num_heads=8,
-        d_ff=2048,
-        predictor_num_layers=4,
-        predictor_num_heads=8,
-        predictor_d_ff=2048,
-    )
-
-def create_jepa_tst_large() -> JEPATST:
-    """Create a large JEPA-TST."""
-    return JEPATST(
-        input_length=512,
-        prediction_length=192,
-        num_features=1,
-        patch_size=16,
-        stride=8,
-        d_model=768,
-        num_layers=32,
-        num_heads=12,
-        d_ff=3072,
-        predictor_num_layers=6,
-        predictor_num_heads=12,
-        predictor_d_ff=3072,
-    )

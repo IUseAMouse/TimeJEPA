@@ -27,11 +27,7 @@ from .decoders.linear_decoder import (
 )
 
 from .jepa_tst import (
-    JEPATST,
-    create_jepa_tst_tiny,
-    create_jepa_tst_small,
-    create_jepa_tst_base,
-    create_jepa_tst_large,
+    JEPATST
 )
 
 __all__ = [
@@ -60,9 +56,5 @@ __all__ = [
     'ForecastingHead',
     
     # Main model
-    'JEPATST',
-    'create_jepa_tst_tiny',
-    'create_jepa_tst_small',
-    'create_jepa_tst_base',
-    'create_jepa_tst_large',
+    'JEPATST'
 ]

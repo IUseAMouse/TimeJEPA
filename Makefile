@@ -65,10 +65,10 @@ finetune-linear: ## Linear Probe: Freeze encoder, train decoder. Usage: make fin
 	@echo "🚀 Starting Linear Probe with checkpoint: $(CHECKPOINT)"
 	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
 		training.mode="finetune" \
-		training.finetune_mode="linear_probe" \
-		'training.pretrained_encoder_path="$(CHECKPOINT)"' \
+		+training.finetune_mode="linear_probe" \
+		+'training.pretrained_encoder_path="$(CHECKPOINT)"' \
 		model.decoder.type="linear" \
-		training.max_epochs=$(or $(EPOCHS),50) \
+		training.max_epochs=$(or $(EPOCHS),20) \
 		training.optimizer.learning_rate=$(or $(LR),1e-4) \
 		wandb.run_name="linear-probe-$(shell date +%Y%m%d-%H%M)" \
 		$(ARGS)
