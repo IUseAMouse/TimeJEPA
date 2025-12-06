@@ -1,7 +1,7 @@
 # @package _global_
 
 model:
-  name: "jepa_tst_mini"
+  name: "timejepa_mini"
   
   # Input configuration
   seq_length: 512
@@ -126,7 +126,7 @@ checkpoint:
 early_stopping:
   enabled: false
   monitor: "val_loss"
-  patience: 12
+  patience: 15
   mode: "min"
   min_delta: 0.0001
 
