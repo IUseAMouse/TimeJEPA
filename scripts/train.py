@@ -21,6 +21,7 @@ from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
 from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.callbacks import EMACallback
 from timejepa.models import JEPATST
+from timejepa.models.decoders import ForecastingHead
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,15 @@ def main(cfg: DictConfig):
         logger.info("Creating finetuning module...")
         
         warmup_epochs = cfg.training.lr_scheduler.warmup_epochs
+
+        model.decoder = ForecastingHead(
+            d_model=cfg.model.decoder.d_model,
+            patch_size=cfg.model.patch_length,
+            prediction_length=cfg.model.prediction_length,
+            num_features=cfg.model.num_channels,
+            decoder_type="attentive",
+            revin=model.revin
+        )
         
         pl_module = FinetuneModule(
             model=model,  # <-- On passe l'instance du modèle créée plus haut

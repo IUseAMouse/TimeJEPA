@@ -34,7 +34,7 @@ model:
   
   # Decoder architecture
   decoder:
-    type: "linear"  # linear | mlp | attentive
+    type: "attentive"  # linear | mlp | attentive
     d_model: 128
     hidden_dim: 256
     n_layers: 2
