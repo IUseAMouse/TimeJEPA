@@ -1,20 +1,16 @@
+# src/timejepa/models/jepa_tst.py
 """
-JEPA-TST: Joint-Embedding Predictive Architecture with PatchTST.
+JEPA-TST: Joint-Embedding Predictive Architecture for Time Series Forecasting.
 
-This is the main model that combines all components:
-
-Online Encoder (PatchTST)
-Target Encoder (EMA of online encoder)
-Predictor (Lightweight transformer)
-Decoder (For finetuning)
-The model can work in two modes:
-
-Pretrain mode: JEPA self-supervised learning (context → predict target)
-Finetune mode: Supervised forecasting (input → forecast future)
+This model learns to predict future representations from past context:
+- Pretrain: Context → Encoder → Predictor → Predicted future repr
+            Target → Target Encoder (EMA) → Target repr
+            Loss: MSE(Predicted, Target)
+- Finetune: Context → Encoder → Predictor → Decoder → Forecast values
 """
 import torch
 import torch.nn as nn
-from typing import Optional, Dict, Any, Tuple, Literal
+from typing import Optional, Dict, Any, Literal
 
 from .components.revin import RevIN
 from .components.patching import Patching
@@ -23,70 +19,27 @@ from .encoders.target_encoder import TargetEncoder
 from .predictors.transformer_predictor import TransformerPredictor, MLPPredictor
 from .decoders.linear_decoder import ForecastingHead
 
+
 class JEPATST(nn.Module):
     """
-    Complete JEPA-TST model for time series.
+    JEPA-TST model for time series forecasting.
 
     Architecture:
-        Pretrain:
-            Input [B, L, C]
-            → RevIN normalization
-            → Patching [B, num_patches, d_model]
-            → Context/Target masking
-            → Online Encoder (context) → context_repr [B, N_ctx, d_model]
-            → Target Encoder (target) → target_repr [B, N_tgt, d_model]
-            → Predictor (context_repr) → pred_repr [B, N_tgt, d_model]
-            → Loss: MSE(pred_repr, target_repr.detach())
+        Pretrain (True Forecasting JEPA):
+            Context [B, L_ctx, C] → RevIN → Patching → Online Encoder → context_repr
+            Target [B, L_tgt, C] → RevIN (same stats) → Patching → Target Encoder (EMA) → target_repr
+            Predictor(context_repr) → pred_repr
+            Loss: MSE(pred_repr, target_repr.detach())
         
         Finetune:
-            Input [B, L_in, C]
-            → RevIN normalization
-            → Patching + Online Encoder → repr [B, num_patches, d_model]
-            → Decoder → forecast [B, L_pred, C]
-            → RevIN denormalization
-            → Loss: MSE(forecast, ground_truth)
-
-    Args:
-        # Data params
-        input_length: Length of input sequence (context_length in pretrain)
-        prediction_length: Length of prediction horizon (for finetune)
-        num_features: Number of input features/channels
-        
-        # Patching params
-        patch_size: Size of each patch (16)
-        stride: Stride for patching (8, allows 50% overlap)
-        
-        # Encoder params (shared by online and target)
-        d_model: Model dimension (512)
-        num_layers: Number of transformer layers in encoder (24)
-        num_heads: Number of attention heads (8)
-        d_ff: Feed-forward dimension (2048)
-        dropout: Dropout rate
-        activation: Activation function
-        
-        # Predictor params
-        predictor_type: Type of predictor ('transformer' or 'mlp')
-        predictor_num_layers: Number of layers in predictor (4)
-        predictor_num_heads: Number of heads in predictor (8)
-        predictor_d_ff: Feed-forward dim in predictor (2048)
-        
-        # Decoder params (for finetuning)
-        decoder_type: Type of decoder ('linear', 'mlp', 'attentive')
-        
-        # EMA params
-        ema_tau_base: Base EMA momentum (0.996)
-        ema_tau_end: Final EMA momentum (1.0)
-        
-        # RevIN params
-        use_revin: Whether to use RevIN normalization
-        affine: Whether RevIN uses affine transformation
-        subtract_last: Alternative normalization (subtract last value)
+            Context [B, L_ctx, C] → RevIN → Patching → Encoder → Predictor → Decoder → Forecast
+            Loss: MSE(Forecast, Ground Truth)
     """
 
     def __init__(
         self,
         # Data params
-        input_length: int = 512,
+        input_length: int = 384,
         prediction_length: int = 96,
         num_features: int = 1,
         
@@ -95,21 +48,21 @@ class JEPATST(nn.Module):
         stride: int = 8,
         
         # Encoder
-        d_model: int = 512,
-        num_layers: int = 24,
-        num_heads: int = 8,
-        d_ff: int = 2048,
+        d_model: int = 128,
+        num_layers: int = 3,
+        num_heads: int = 4,
+        d_ff: int = 512,
         dropout: float = 0.1,
         activation: str = 'gelu',
         
         # Predictor
         predictor_type: Literal['transformer', 'mlp'] = 'transformer',
-        predictor_num_layers: int = 4,
-        predictor_num_heads: int = 8,
-        predictor_d_ff: int = 2048,
+        predictor_num_layers: int = 2,
+        predictor_num_heads: int = 4,
+        predictor_d_ff: int = 512,
         
         # Decoder
-        decoder_type: Literal['linear', 'mlp', 'attentive'] = 'linear',
+        decoder_type: Literal['linear', 'mlp', 'attentive'] = 'attentive',
         
         # EMA
         ema_tau_base: float = 0.996,
@@ -128,10 +81,11 @@ class JEPATST(nn.Module):
         self.patch_size = patch_size
         self.stride = stride
         self.d_model = d_model
-        self.predictor_type = predictor_type
-        self.decoder_type = decoder_type
         self.use_revin = use_revin
+        
+        # Calculate number of patches for context and target
         self.num_patches = (input_length - patch_size) // stride + 1
+        self.num_target_patches = (prediction_length - patch_size) // stride + 1
         
         # ===== RevIN Normalization =====
         if use_revin:
@@ -143,12 +97,12 @@ class JEPATST(nn.Module):
         else:
             self.revin = None
         
-        # ===== Patching Layer =====
+        # ===== Patching Layer (shared for context and target) =====
         self.patching = Patching(
             patch_size=patch_size,
             stride=stride,
             d_model=d_model,
-            num_features=num_features  # 🔥 Ajouter ce paramètre
+            num_features=num_features
         )
         
         # ===== Online Encoder =====
@@ -164,7 +118,8 @@ class JEPATST(nn.Module):
         # ===== Target Encoder (EMA of online encoder) =====
         self.target_encoder = TargetEncoder(
             encoder=self.online_encoder,
-            ema_decay=ema_tau_base
+            ema_decay=ema_tau_base,
+            ema_decay_end=ema_tau_end
         )
         
         # ===== Predictor =====
@@ -199,6 +154,10 @@ class JEPATST(nn.Module):
         # Model state
         self._pretrain_mode = True
         
+        print(f"JEPATST initialized:")
+        print(f"  Context: {input_length} tp → {self.num_patches} patches")
+        print(f"  Target: {prediction_length} tp → {self.num_target_patches} patches")
+        
     def set_pretrain_mode(self, mode: bool = True):
         """Set whether model is in pretrain or finetune mode."""
         self._pretrain_mode = mode
@@ -209,209 +168,158 @@ class JEPATST(nn.Module):
 
     def forward_pretrain(
         self,
-        x: torch.Tensor,
-        context_mask: torch.Tensor,
-        target_mask: torch.Tensor,
+        context: torch.Tensor,
+        target: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass for JEPA pretraining.
+        Forward pass for JEPA pretraining with TRUE forecasting objective.
+        
+        The model learns to predict representations of FUTURE timesteps,
+        not masked patches within the same context window.
         
         Args:
-            x: Input time series [B, L, C]
-            context_mask: Boolean mask for context patches [B, num_patches]
-                         True = keep, False = mask out
-            target_mask: Boolean mask for target patches [B, num_patches]
-                        True = predict this patch
+            context: Past time series [B, context_length, C] (e.g., [B, 384, 1])
+            target: Future time series [B, prediction_length, C] (e.g., [B, 96, 1])
         
         Returns:
             Dictionary with:
-                - 'predictions': Predicted representations [B, N_target, d_model]
-                - 'targets': Target representations [B, N_target, d_model]
-                - 'context_embeddings': Context embeddings [B, N_context, d_model]
+                - 'predictions': Predicted future representations [B, num_target_patches, d_model]
+                - 'targets': Target encoder representations [B, num_target_patches, d_model]
+                - 'context_embeddings': Context embeddings [B, num_context_patches, d_model]
         """
-        batch_size = x.shape[0]
-        
         # 1. RevIN normalization
+        # IMPORTANT: Normalize target with SAME statistics as context
         if self.revin is not None:
-            x = self.revin(x, mode='norm')
+            context_norm = self.revin(context, mode='norm')
+            # Apply same normalization to target (using stored mean/std from context)
+            target_norm = (target - self.revin.mean) / self.revin.std
+        else:
+            context_norm = context
+            target_norm = target
         
-        # 2. Patching
-        patches = self.patching(x)  # [B, num_patches, d_model]
+        # 2. Patch context and target
+        context_patches = self.patching(context_norm)  # [B, num_patches, d_model]
+        target_patches = self.patching(target_norm)    # [B, num_target_patches, d_model]
         
-        # 3. Apply context mask to get context patches
-        # We zero out the masked patches (could also remove them)
-        context_patches = patches.clone()
-        context_patches[~context_mask] = 0  # Mask out non-context patches
+        num_target_patches = target_patches.shape[1]
         
-        # 4. Encode context with online encoder
+        # 3. Encode context with online encoder (gets gradients)
         context_embeddings = self.online_encoder(context_patches)
-        # [B, num_patches, d_model] but only context positions are meaningful
+        # [B, num_patches, d_model]
         
-        # Extract only context positions
-        # We need to gather the valid context embeddings
-        num_context = context_mask.sum(dim=1).max().item()  # Max context length in batch
-        context_indices = torch.where(context_mask)
-        context_emb_list = []
-        for b in range(batch_size):
-            b_mask = context_mask[b]
-            b_context = context_embeddings[b][b_mask]  # [N_context_b, d_model]
-            # Pad to num_context if needed
-            if b_context.shape[0] < num_context:
-                padding = torch.zeros(
-                    num_context - b_context.shape[0],
-                    self.d_model,
-                    device=b_context.device,
-                    dtype=b_context.dtype
-                )
-                b_context = torch.cat([b_context, padding], dim=0)
-            context_emb_list.append(b_context)
-        context_emb_clean = torch.stack(context_emb_list, dim=0)
-        # [B, num_context, d_model]
-        
-        # 5. Get target patches (full patches, no masking)
-        target_patches = patches  # Use full patches for target encoder
-        
-        # 6. Encode target with target encoder (no gradients)
+        # 4. Encode target with target encoder (NO gradients - EMA updated)
         with torch.no_grad():
             target_embeddings = self.target_encoder(target_patches)
-            # [B, num_patches, d_model]
+            # [B, num_target_patches, d_model]
         
-        # Extract only target positions
-        num_targets = target_mask.sum(dim=1).max().item()
-        target_emb_list = []
-        for b in range(batch_size):
-            b_mask = target_mask[b]
-            b_target = target_embeddings[b][b_mask]  # [N_target_b, d_model]
-            # Pad to num_targets
-            if b_target.shape[0] < num_targets:
-                padding = torch.zeros(
-                    num_targets - b_target.shape[0],
-                    self.d_model,
-                    device=b_target.device,
-                    dtype=b_target.dtype
-                )
-                b_target = torch.cat([b_target, padding], dim=0)
-            target_emb_list.append(b_target)
-        target_emb_clean = torch.stack(target_emb_list, dim=0)
-        # [B, num_targets, d_model]
-        
-        # 7. Predict target representations from context
+        # 5. Predict target representations from context embeddings
         predictions = self.predictor.forward_simple(
-            context_embeddings=context_emb_clean,
-            num_targets=num_targets
+            context_embeddings=context_embeddings,
+            num_targets=num_target_patches
         )
-        # [B, num_targets, d_model]
+        # [B, num_target_patches, d_model]
         
         return {
             'predictions': predictions,
-            'targets': target_emb_clean.detach(),
-            'context_embeddings': context_emb_clean,
+            'targets': target_embeddings.detach(),
+            'context_embeddings': context_embeddings,
         }
 
     def forward_finetune(
         self,
-        x: torch.Tensor,
-        context_mask: torch.Tensor,
+        context: torch.Tensor,
         return_representations: bool = False
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass for supervised finetuning (forecasting).
         
-        Flow: Context → Encoder → Predictor (predict future repr) → Decoder
+        Uses the learned encoder and predictor to generate future representations,
+        then decodes them to actual forecast values.
+        
+        Args:
+            context: Past time series [B, context_length, C]
+            return_representations: If True, also return intermediate representations
+        
+        Returns:
+            Dictionary with 'forecast' and 'forecast_denorm'
         """
-        batch_size = x.shape[0]
-
         # 1. RevIN normalization
         if self.revin is not None:
-            x_norm = self.revin(x, mode='norm')
+            context_norm = self.revin(context, mode='norm')
         else:
-            x_norm = x
+            context_norm = context
         
-        # 2. Patching
-        patches = self.patching(x_norm)  # [B, num_patches, d_model]
+        # 2. Patch context
+        context_patches = self.patching(context_norm)  # [B, num_patches, d_model]
         
         # 3. Encode context with online encoder
-        context_patches = patches.clone()
-        context_patches[~context_mask] = 0  # Mask out non-context patches
-        # [B, num_patches, d_model]
-
-        # 4. Encode context with online encoder
         context_embeddings = self.online_encoder(context_patches)
+        # [B, num_patches, d_model]
         
-        # Extract only context positions
-        # We need to gather the valid context embeddings
-        num_context = context_mask.sum(dim=1).max().item()  # Max context length in batch
-        context_indices = torch.where(context_mask)
-        context_emb_list = []
-        for b in range(batch_size):
-            b_mask = context_mask[b]
-            b_context = context_embeddings[b][b_mask]  # [N_context_b, d_model]
-            # Pad to num_context if needed
-            if b_context.shape[0] < num_context:
-                padding = torch.zeros(
-                    num_context - b_context.shape[0],
-                    self.d_model,
-                    device=b_context.device,
-                    dtype=b_context.dtype
-                )
-                b_context = torch.cat([b_context, padding], dim=0)
-            context_emb_list.append(b_context)
-        context_emb_clean = torch.stack(context_emb_list, dim=0)
-        # [B, num_context, d_model]
-        
-        num_target_patches = (self.prediction_length) // self.patch_size
-
-        # 7. Predict target representations from context
+        # 4. Predict future representations
         predictions = self.predictor.forward_simple(
-            context_embeddings=context_emb_clean,
-            num_targets=num_target_patches
+            context_embeddings=context_embeddings,
+            num_targets=self.num_target_patches
         )
-
-        # [B, num_targets, d_model]
-        # 5. Decode to forecasts, RevIN denorm handled in decoder
-        forecast, forecast_denorm = self.decoder(
-            predictions
-        )
+        # [B, num_target_patches, d_model]
         
-        result = {'forecast': forecast, 'forecast_denorm': forecast_denorm}
+        # 5. Decode to forecast values
+        forecast, forecast_denorm = self.decoder(predictions)
+        # forecast: [B, prediction_length, C] (normalized)
+        # forecast_denorm: [B, prediction_length, C] (original scale)
+        
+        result = {
+            'forecast': forecast,
+            'forecast_denorm': forecast_denorm
+        }
+        
         if return_representations:
-            result['representations'] = predictions
+            result['context_embeddings'] = context_embeddings
+            result['future_representations'] = predictions
         
         return result
 
-    def forecast(self, x: torch.Tensor, context_mask: torch.Tensor) -> torch.Tensor:
-        """Convenience wrapper for FinetuneModule."""
-       
-        result = self.forward_finetune(x, context_mask)
-        return result
+    def forecast(
+        self, 
+        context: torch.Tensor,
+        return_representations: bool = False
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Convenience wrapper for forecasting (used by FinetuneModule).
+        
+        Args:
+            context: Past time series [B, context_length, C]
+            
+        Returns:
+            Dictionary with forecast and denormalized forecast
+        """
+        return self.forward_finetune(context, return_representations=return_representations)
 
     def forward(
         self,
-        x: torch.Tensor,
-        context_mask: Optional[torch.Tensor] = None,
-        target_mask: Optional[torch.Tensor] = None,
+        context: torch.Tensor,
+        target: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
         """
         Unified forward pass (dispatches to pretrain or finetune).
         
         Args:
-            x: Input time series
-            context_mask: Context mask (for pretrain mode)
-            target_mask: Target mask (for pretrain mode)
+            context: Past time series [B, context_length, C]
+            target: Future time series [B, prediction_length, C] (required for pretrain)
         
         Returns:
             Output dictionary (depends on mode)
         """
         if self._pretrain_mode:
-            if context_mask is None or target_mask is None:
-                raise ValueError(
-                    "context_mask and target_mask required in pretrain mode"
-                )
-            return self.forward_pretrain(x, context_mask, target_mask)
+            if target is None:
+                raise ValueError("target is required in pretrain mode")
+            return self.forward_pretrain(context, target)
         else:
-            return self.forward_finetune(x, context_mask, **kwargs)
+            return self.forward_finetune(context, **kwargs)
 
+    # ===== Freezing/Unfreezing methods (unchanged) =====
+    
     def freeze_encoder(self):
         """Freeze encoder parameters (for finetuning)."""
         for param in self.online_encoder.parameters():
@@ -428,34 +336,36 @@ class JEPATST(nn.Module):
             param.requires_grad = False
 
     def freeze_predictor(self):
-        """Freeze predictor for finetuning"""
+        """Freeze predictor for finetuning."""
         for param in self.predictor.parameters():
             param.requires_grad = False
 
     def unfreeze_predictor(self):
-        """Unfreeze the predictor"""
+        """Unfreeze the predictor."""
         for param in self.predictor.parameters():
             param.requires_grad = True
 
     def freeze_patching(self):
-        """Freeze patching layers for finetuning (only decoder should be unfrozen)"""
+        """Freeze patching layers."""
         for param in self.patching.parameters():
             param.requires_grad = False
     
     def unfreeze_patching(self):
-        """Unfreeze patching layer"""
+        """Unfreeze patching layer."""
         for param in self.patching.parameters():
             param.requires_grad = True
 
     def freeze_revin(self):
-        """Freeze revin layers for finetuning"""
-        for param in self.revin.parameters():
-            param.requires_grad = False
+        """Freeze revin layers."""
+        if self.revin is not None:
+            for param in self.revin.parameters():
+                param.requires_grad = False
 
     def unfreeze_revin(self):
-        """Unfreeze revin layers"""
-        for param in self.revin.parameters():
-            param.requires_grad = True
+        """Unfreeze revin layers."""
+        if self.revin is not None:
+            for param in self.revin.parameters():
+                param.requires_grad = True
 
     def get_num_params(self) -> Dict[str, int]:
         """Get parameter counts for each component."""
@@ -464,6 +374,7 @@ class JEPATST(nn.Module):
             'target_encoder': sum(p.numel() for p in self.target_encoder.parameters()),
             'predictor': sum(p.numel() for p in self.predictor.parameters()),
             'decoder': sum(p.numel() for p in self.decoder.parameters()),
+            'patching': sum(p.numel() for p in self.patching.parameters()),
             'total': sum(p.numel() for p in self.parameters()),
             'trainable': sum(p.numel() for p in self.parameters() if p.requires_grad),
         }
@@ -474,10 +385,16 @@ class JEPATST(nn.Module):
         self.target_encoder.update(self.online_encoder, step, max_steps)
 
     def save_pretrained_encoder(self, save_path: str):
-        """Save encoder weights only."""
-        encoder_state = {
-            f'online_encoder.{k}': v
-            for k, v in self.online_encoder.state_dict().items()
+        """Save encoder and predictor weights for finetuning."""
+        state = {
+            'online_encoder': self.online_encoder.state_dict(),
+            'predictor': self.predictor.state_dict(),
+            'patching': self.patching.state_dict(),
         }
-        torch.save(encoder_state, save_path)
-        print(f"✅ Saved pretrained encoder to {save_path}")
+        if self.revin is not None:
+            state['revin'] = {
+                k: v for k, v in self.revin.state_dict().items()
+                if not k.endswith('.mean') and not k.endswith('.std')
+            }
+        torch.save(state, save_path)
+        print(f"✅ Saved pretrained encoder + predictor to {save_path}")

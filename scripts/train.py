@@ -127,16 +127,6 @@ def main(cfg: DictConfig):
         pl_module = JEPAPretrainModule(
             model=model,
             
-            # Masking
-            masking_strategy=cfg.training.masking.strategy,
-            context_ratio=cfg.training.masking.context_ratio,
-            masking_kwargs={
-                'n_context_blocks': cfg.training.masking.get('n_context_blocks', 4),
-                'context_block_length': cfg.training.masking.get('context_block_length', 3),
-                'n_target_blocks': cfg.training.masking.get('n_target_blocks', 2),
-                'target_block_length': cfg.training.masking.get('target_block_length', 3),
-            },
-            
             # Loss
             loss_type=cfg.training.loss.type,
             

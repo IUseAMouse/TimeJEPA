@@ -36,7 +36,7 @@ class TargetEncoder(nn.Module):
     
     Args:
         encoder: The online encoder to create target from (any nn.Module)
-        ema_decay: Base EMA decay rate (default: 0.996)
+        ema_decay: Base EMA decay rate (default: 0.998)
         ema_decay_end: Final EMA decay rate (default: 1.0)
     """
     
