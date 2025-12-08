@@ -359,10 +359,12 @@ class JEPATST(nn.Module):
         context_emb_clean = torch.stack(context_emb_list, dim=0)
         # [B, num_context, d_model]
         
+        num_target_patches = (self.prediction_length) // self.patch_size
+
         # 7. Predict target representations from context
         predictions = self.predictor.forward_simple(
             context_embeddings=context_emb_clean,
-            num_targets=self.prediction_length
+            num_targets=num_target_patches
         )
 
         # [B, num_targets, d_model]
