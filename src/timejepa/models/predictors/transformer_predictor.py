@@ -149,11 +149,11 @@ class TransformerPredictor(nn.Module):
         """
         batch_size = context_embeddings.shape[0]
         
-        # Create mask tokens
-        mask_tokens = self.mask_token.expand(batch_size, num_targets, -1)
+        future_queries = self.future_position_embedding[:, :num_targets, :]
+        future_queries = future_queries.expand(batch_size, -1, -1)
         
         # Concat
-        x = torch.cat([context_embeddings, mask_tokens], dim=1)
+        x = torch.cat([context_embeddings, future_queries], dim=1)
         
         # Transform
         for block in self.transformer_blocks:
