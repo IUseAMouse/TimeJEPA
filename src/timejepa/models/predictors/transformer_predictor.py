@@ -48,7 +48,7 @@ class TransformerPredictor(nn.Module):
         d_ff: int = 2048,
         dropout: float = 0.1,
         activation: str = 'gelu',
-        max_seq_len: int = 2048
+        max_target_patches: int = 16
     ):
         super().__init__()
         
@@ -57,9 +57,9 @@ class TransformerPredictor(nn.Module):
         self.num_heads = num_heads
         self.d_ff = d_ff
         
-        # Learnable mask tokens for target positions
-        # These are initialized randomly and learned during training
-        self.mask_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.future_position_embedding = nn.Parameter(
+            torch.randn(1, max_target_patches, d_model) * 0.02
+        )
         
         # Transformer blocks
         self.transformer_blocks = nn.ModuleList([
@@ -106,13 +106,13 @@ class TransformerPredictor(nn.Module):
         batch_size = context_embeddings.shape[0]
         num_targets = target_positions.shape[1]
         
-        # Create mask tokens for target positions
-        mask_tokens = self.mask_token.expand(batch_size, num_targets, -1)
+        future_queries = self.future_position_embedding[:, :num_targets, :]
+        future_queries = future_queries.expand(batch_size, -1, -1)
         
         # Concatenate context and mask tokens
         # We need to properly interleave them based on target_positions
         # For simplicity, we append mask tokens and use positional info
-        x = torch.cat([context_embeddings, mask_tokens], dim=1)
+        x = torch.cat([context_embeddings, future_queries], dim=1)
         # x: [B, N_context + N_target, d_model]
         
         # Pass through transformer blocks
