@@ -55,7 +55,7 @@ training:
   # Loss configuration
   loss:
     type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
-    finetune_type: "mae"
+    finetune_type: "huber"
     smooth_l1_beta: 1.0
     variance_loss_weight: 0.0
     covariance_loss_weight: 0.0
@@ -101,7 +101,7 @@ data:
   datasets_finetune: ["traffic"]
   combine_mode: "concatenate"
   batch_size: 256
-  stride: 1
+  stride: 32
   normalize_mode: "global"
   normalizer_type: "identity"
   train_val_test_split: [0.96, 0.02, 0.02]
