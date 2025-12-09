@@ -102,8 +102,8 @@ data:
   combine_mode: "concatenate"
   batch_size: 256
   stride: 1
-  normalize_mode: "per_series"
-  normalizer_type: "standard"
+  normalize_mode: "global"
+  normalizer_type: "identity"
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
