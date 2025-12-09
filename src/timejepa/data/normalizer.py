@@ -139,6 +139,8 @@ class StandardScaler(Normalizer):
             # Single mean/std for all data
             axis = None
             keepdims = False
+
+        print(data.shape)
         
         self.mean = np.mean(data, axis=axis, keepdims=keepdims)
         self.std = np.std(data, axis=axis, keepdims=keepdims)
