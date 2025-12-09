@@ -97,61 +97,25 @@ train-resume: ## Resume training from checkpoint (usage: make train-resume CONFI
 
 ##@ Finetuning
 
-finetune-linear: ## Linear Probe: Freeze encoder, train decoder only
+finetune: ## Linear Probe: Freeze encoder, train decoder only
 	@if [ -z "$(CHECKPOINT)" ]; then \
 		echo "❌ Error: CHECKPOINT is not set."; \
-		echo "Usage: make finetune-linear CHECKPOINT=checkpoints/model.ckpt [CONFIG=tiny] [EPOCHS=20] [LR=1e-3]"; \
+		echo "Usage: make finetune-linear CHECKPOINT=checkpoints/model.ckpt [CONFIG=tiny] [STRIDE=48] [EPOCHS=40] [LR=1e-4]"; \
 		exit 1; \
 	fi
 	@echo "🧊 Starting Linear Probe (encoder frozen)"
 	@echo "   Checkpoint: $(CHECKPOINT)"
 	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
-		training.mode="finetune" \
-		+training.finetune_mode="linear_probe" \
-		+training.pretrained_encoder_path="$(CHECKPOINT)" \
-		model.decoder.type="linear" \
-		training.max_epochs=$(or $(EPOCHS),20) \
-		training.optimizer.learning_rate=$(or $(LR),1e-3) \
-		wandb.run_name="linear-probe-$(shell date +%Y%m%d-%H%M)" \
-		$(ARGS)
+        training.mode=finetune \
+        +training.finetune_mode=$(or $(MODE),full_finetune) \
+        +training.pretrained_encoder_path="$(CHECKPOINT)" \
+        model.decoder.type=$(or $(DECODER),linear) \
+        training.max_epochs=$(or $(EPOCHS),20) \
+        training.optimizer.learning_rate=$(or $(LR),1e-4) \
+        wandb.run_name=linear-probe-$(shell date +%Y%m%d-%H%M) \
+        data.stride=$(or $(STRIDE),48) \
+        $(ARGS)
 
-finetune-full: ## Full Finetune: Train encoder + decoder with lower encoder LR
-	@if [ -z "$(CHECKPOINT)" ]; then \
-		echo "❌ Error: CHECKPOINT is not set."; \
-		echo "Usage: make finetune-full CHECKPOINT=checkpoints/model.ckpt [CONFIG=tiny] [EPOCHS=50] [LR=1e-4]"; \
-		exit 1; \
-	fi
-	@echo "🔥 Starting Full Finetune (encoder + decoder)"
-	@echo "   Checkpoint: $(CHECKPOINT)"
-	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
-		training.mode="finetune" \
-		+training.finetune_mode="full_finetune" \
-		+training.pretrained_encoder_path="$(CHECKPOINT)" \
-		model.decoder.type="mlp" \
-		training.max_epochs=$(or $(EPOCHS),50) \
-		training.optimizer.learning_rate=$(or $(LR),1e-4) \
-		training.optimizer.encoder_lr_multiplier=0.1 \
-		wandb.run_name="full-finetune-$(shell date +%Y%m%d-%H%M)" \
-		$(ARGS)
-
-finetune-attentive: ## Attentive Finetune: Use attentive decoder (best quality)
-	@if [ -z "$(CHECKPOINT)" ]; then \
-		echo "❌ Error: CHECKPOINT is not set."; \
-		echo "Usage: make finetune-attentive CHECKPOINT=checkpoints/model.ckpt"; \
-		exit 1; \
-	fi
-	@echo "🎯 Starting Attentive Finetune (best quality)"
-	@echo "   Checkpoint: $(CHECKPOINT)"
-	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
-		training.mode="finetune" \
-		+training.finetune_mode="full_finetune" \
-		+training.pretrained_encoder_path="$(CHECKPOINT)" \
-		model.decoder.type="attentive" \
-		training.max_epochs=$(or $(EPOCHS),50) \
-		training.optimizer.learning_rate=$(or $(LR),1e-4) \
-		training.optimizer.encoder_lr_multiplier=0.1 \
-		wandb.run_name="attentive-finetune-$(shell date +%Y%m%d-%H%M)" \
-		$(ARGS)
 
 ##@ Evaluation
 

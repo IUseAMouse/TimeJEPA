@@ -353,10 +353,10 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         
         # Filter by requested datasets
         if self.datasets is None or self.datasets == []:
-            # Use all found datasets
+            logger.warning("Use all found datasets")
             self.dataset_files = {f.stem: f for f in all_files}
         elif isinstance(self.datasets, str):
-            # Single dataset
+            logger.warning(f"Loading datasets : {self.datasets}")
             target_file = self.data_dir / f"{self.datasets}.npy"
             if not target_file.exists():
                 raise FileNotFoundError(f"Dataset not found: {target_file}")

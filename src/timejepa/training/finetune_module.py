@@ -133,7 +133,7 @@ class FinetuneModule(pl.LightningModule):
         missing, unexpected = self.model.load_state_dict(cleaned_state_dict, strict=False)
         
         # Check for critical missing keys
-        expected_missing = {'decoder', 'target_encoder'}
+        expected_missing = {'decoder', 'target_encoder', 'revin'}
         critical_missing = [k for k in missing if not any(exp in k for exp in expected_missing)]
         
         if critical_missing:
@@ -147,11 +147,11 @@ class FinetuneModule(pl.LightningModule):
         """Apply freezing strategy based on finetune mode."""
         if mode == 'linear_probe':
             self.model.freeze_encoder()
-            self.model.freeze_predictor()
+            self.model.unfreeze_predictor()
             self.model.freeze_patching()
-            self.model.freeze_revin()
+            self.model.unfreeze_revin()
             self.model.freeze_target_encoder()
-            logger.info("✓ LINEAR PROBE: encoder+predictor frozen, decoder trainable")
+            logger.info("✓ LINEAR PROBE: encoder frozen, predictor + decoder trainable")
         
         elif mode == 'full_finetune':
             self.model.unfreeze_encoder()
@@ -203,13 +203,13 @@ class FinetuneModule(pl.LightningModule):
         # Forward pass
         results = self.model.forecast(context)
         predictions_norm = results['forecast']
-        
+
         # Normalize target with same stats
         if self.model.revin is not None:
             target_norm = (target - self.model.revin.mean) / self.model.revin.std
         else:
             target_norm = target
-        
+
         # Compute loss
         loss = self.compute_loss(predictions_norm, target_norm)
         

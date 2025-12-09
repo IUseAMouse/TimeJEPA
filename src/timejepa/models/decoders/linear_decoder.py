@@ -30,6 +30,7 @@ class LinearDecoder(nn.Module):
     Args:
         d_model: Model dimension (512)
         patch_size: Size of each patch (16)
+        stride: Gap between patches (8)
         prediction_length: Length of prediction horizon
         num_features: Number of output features/channels (1 for univariate)
         use_unpatching: Whether to use UnPatching layer
@@ -39,6 +40,7 @@ class LinearDecoder(nn.Module):
         self,
         d_model: int = 512,
         patch_size: int = 16,
+        stride: int = 8,
         prediction_length: int = 96,
         num_features: int = 1,
         use_unpatching: bool = True
@@ -47,6 +49,7 @@ class LinearDecoder(nn.Module):
         
         self.d_model = d_model
         self.patch_size = patch_size
+        self.stride = stride
         self.prediction_length = prediction_length
         self.num_features = num_features
         self.use_unpatching = use_unpatching
@@ -55,6 +58,7 @@ class LinearDecoder(nn.Module):
             # Use proper unpatching with overlap handling
             self.unpatching = UnPatching(
                 patch_size=patch_size,
+                stride=stride,
                 d_model=d_model,
                 num_features=num_features
             )
@@ -100,26 +104,11 @@ class LinearDecoder(nn.Module):
 
 
 class MLPDecoder(nn.Module):
-    """
-    MLP-based decoder for more expressive decoding.
-    
-    Uses a small MLP instead of just linear projection.
-    Can capture non-linear relationships between representations and values.
-    
-    Args:
-        d_model: Model dimension
-        patch_size: Patch size
-        prediction_length: Prediction horizon
-        num_features: Number of output features
-        hidden_dim: Hidden dimension for MLP
-        num_layers: Number of MLP layers
-        dropout: Dropout rate
-    """
-    
     def __init__(
         self,
         d_model: int = 512,
         patch_size: int = 16,
+        stride: int = 8,
         prediction_length: int = 96,
         num_features: int = 1,
         hidden_dim: Optional[int] = None,
@@ -130,16 +119,17 @@ class MLPDecoder(nn.Module):
         
         self.d_model = d_model
         self.patch_size = patch_size
+        self.stride = stride
         self.prediction_length = prediction_length
         self.num_features = num_features
         
         hidden_dim = hidden_dim or d_model
         
-        # Build MLP
+        # MLP projette vers d_model (pas directement vers patch_size * C)
         layers = []
         for i in range(num_layers):
             in_dim = d_model if i == 0 else hidden_dim
-            out_dim = patch_size * num_features if i == num_layers - 1 else hidden_dim
+            out_dim = d_model if i == num_layers - 1 else hidden_dim
             
             layers.append(nn.Linear(in_dim, out_dim))
             if i < num_layers - 1:
@@ -147,35 +137,28 @@ class MLPDecoder(nn.Module):
                 layers.append(nn.Dropout(dropout))
         
         self.mlp = nn.Sequential(*layers)
+        
+        # UnPatching gère la projection finale + overlap
+        self.unpatching = UnPatching(
+            patch_size=patch_size,
+            stride=stride,
+            d_model=d_model,
+            num_features=num_features
+        )
     
     def forward(
         self,
         x: torch.Tensor,
         target_length: Optional[int] = None
     ) -> torch.Tensor:
-        """
-        Decode with MLP.
-        
-        Args:
-            x: Patch representations [B, num_patches, d_model]
-            target_length: Target length
-            
-        Returns:
-            Predictions [B, L_pred, C]
-        """
         if target_length is None:
             target_length = self.prediction_length
         
-        batch_size, num_patches, _ = x.shape
+        # MLP enrichit les représentations
+        x = self.mlp(x)  # [B, num_patches, d_model]
         
-        # Apply MLP to each patch
-        x = self.mlp(x)  # [B, num_patches, patch_size * C]
-        
-        # Reshape
-        x = x.reshape(batch_size, num_patches * self.patch_size, self.num_features)
-        
-        # Trim to target length
-        output = x[:, :target_length, :]
+        # UnPatching gère le reste proprement
+        output = self.unpatching(x, target_len=target_length)
         
         return output
 
@@ -287,6 +270,7 @@ class ForecastingHead(nn.Module):
         self,
         d_model: int = 512,
         patch_size: int = 16,
+        stride: int = 8,
         prediction_length: int = 96,
         num_features: int = 1,
         decoder_type: str = 'linear',
@@ -304,6 +288,7 @@ class ForecastingHead(nn.Module):
             self.decoder = LinearDecoder(
                 d_model=d_model,
                 patch_size=patch_size,
+                stride=stride,
                 prediction_length=prediction_length,
                 num_features=num_features
             )
@@ -311,6 +296,7 @@ class ForecastingHead(nn.Module):
             self.decoder = MLPDecoder(
                 d_model=d_model,
                 patch_size=patch_size,
+                stride=stride,
                 prediction_length=prediction_length,
                 num_features=num_features
             )

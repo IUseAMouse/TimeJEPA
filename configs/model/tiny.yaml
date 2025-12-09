@@ -27,17 +27,17 @@ model:
     type: "transformer"  # transformer | mlp
     d_model: 128
     n_heads: 4
-    n_layers: 2
+    n_layers: 3
     d_ff: 512
     dropout: 0.1
     activation: "gelu"
   
   # Decoder architecture
   decoder:
-    type: "attentive"  # linear | mlp | attentive
+    type: "mlp"  # linear | mlp | attentive
     d_model: 128
     hidden_dim: 256
-    n_layers: 2
+    n_layers: 4
     dropout: 0.1
   
   # Target encoder (EMA)
@@ -54,7 +54,8 @@ training:
   
   # Loss configuration
   loss:
-    type: "mse"  # mse | smooth_l1 | cosine
+    type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
+    finetune_type: "mae"
     smooth_l1_beta: 1.0
     variance_loss_weight: 0.0
     covariance_loss_weight: 0.0
@@ -75,7 +76,7 @@ training:
     min_lr: 1.0e-6
   
   # Training duration
-  max_epochs: 20
+  max_epochs: 40
   
   # EMA configuration
   ema:
@@ -97,6 +98,7 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: [] # This load alls
+  datasets_finetune: ["traffic"]
   combine_mode: "concatenate"
   batch_size: 256
   stride: 1

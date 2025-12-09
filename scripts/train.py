@@ -94,11 +94,12 @@ def main(cfg: DictConfig):
     
     # Create data module
     logger.info("Creating data module...")
+    is_pretrain = cfg.training.mode == "pretrain"
     datamodule = MultiDatasetMonashDataModule(
         data_dir=cfg.data.data_dir,
         context_length=cfg.model.seq_length,
         prediction_length=cfg.model.prediction_length,
-        datasets=cfg.data.get('datasets'),
+        datasets=cfg.data.get('datasets') if is_pretrain else cfg.data.get('datasets_finetune'),
         dataset_pattern=cfg.data.get('dataset_pattern', '*.npy'),
         combine_mode=cfg.data.get('combine_mode', 'concatenate'),
         batch_size=cfg.data.batch_size,
@@ -117,7 +118,7 @@ def main(cfg: DictConfig):
     model = create_model_from_config(cfg)
     
     # Create Lightning Module (Training Logic)
-    is_pretrain = cfg.training.mode == "pretrain"
+    
     
     if is_pretrain:
         logger.info("Creating JEPA model...")
@@ -152,9 +153,10 @@ def main(cfg: DictConfig):
         model.decoder = ForecastingHead(
             d_model=cfg.model.decoder.d_model,
             patch_size=cfg.model.patch_length,
+            stride=cfg.model.stride,
             prediction_length=cfg.model.prediction_length,
             num_features=cfg.model.num_channels,
-            decoder_type="attentive",
+            decoder_type=cfg.model.decoder.type,
             revin=model.revin
         )
         
@@ -166,7 +168,7 @@ def main(cfg: DictConfig):
             finetune_mode=cfg.training.get('finetune_mode', 'linear_probe'),
             
             # Loss
-            loss_type=cfg.training.loss.type,
+            loss_type=cfg.training.loss.finetune_type,
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,

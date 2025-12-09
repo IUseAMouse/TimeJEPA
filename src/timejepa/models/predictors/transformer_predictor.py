@@ -109,9 +109,6 @@ class TransformerPredictor(nn.Module):
         future_queries = self.future_position_embedding[:, :num_targets, :]
         future_queries = future_queries.expand(batch_size, -1, -1)
         
-        # Concatenate context and mask tokens
-        # We need to properly interleave them based on target_positions
-        # For simplicity, we append mask tokens and use positional info
         x = torch.cat([context_embeddings, future_queries], dim=1)
         # x: [B, N_context + N_target, d_model]
         
