@@ -129,7 +129,7 @@ trainer:
   max_epochs: ${training.max_epochs}  # Reference from training section
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
   accumulate_grad_batches: 6  # Gradient accumulation steps
-  val_check_interval: 0.3  # Validate every epoch (1.0) or every N steps (int)
+  val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
   deterministic: false  # Set to true for reproducibility (slower)
   enable_progress_bar: true
