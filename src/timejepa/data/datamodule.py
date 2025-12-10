@@ -33,6 +33,7 @@ class MonashDataModule(pl.LightningDataModule):
         normalize_mode: Literal["per_series", "global"] = "per_series",
         normalizer_type: str = "identity",
         clip_outliers: bool = True,
+        clip_sigma: float = 5.0,
         train_val_test_split: tuple = (0.7, 0.15, 0.15),
         num_workers: int = 4,
         pin_memory: bool = True,
