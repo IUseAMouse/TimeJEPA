@@ -104,6 +104,7 @@ data:
   stride: 1
   normalize_mode: "global"
   normalizer_type: "identity"
+  clip_outliers: true
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 

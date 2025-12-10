@@ -32,6 +32,7 @@ class MonashDataModule(pl.LightningDataModule):
         stride: int = 1,
         normalize_mode: Literal["per_series", "global"] = "per_series",
         normalizer_type: str = "identity",
+        clip_outliers: bool = True,
         train_val_test_split: tuple = (0.7, 0.15, 0.15),
         num_workers: int = 4,
         pin_memory: bool = True,
@@ -67,6 +68,7 @@ class MonashDataModule(pl.LightningDataModule):
         self.stride = stride
         self.normalize_mode = normalize_mode
         self.normalizer_type = normalizer_type
+        self.clip_outliers = clip_outliers
         self.train_val_test_split = train_val_test_split
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -102,7 +104,7 @@ class MonashDataModule(pl.LightningDataModule):
         """
         if stage == "fit" or stage is None:
             # 🔥 FIX: Créer le normalizer AVANT le dataset
-            normalizer = get_normalizer(self.normalizer_type)
+            normalizer = get_normalizer(self.normalizer_type, clip_outliers=self.clip_outliers)
             
             # Create full dataset
             full_dataset = TimeSeriesDataset(
@@ -286,6 +288,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         stride: int = 1,
         normalize_mode: Literal["per_series", "global"] = "per_series",
         normalizer_type: str = "identity",
+        clip_outliers: bool = True,
         train_val_test_split: tuple = (0.7, 0.15, 0.15),
         num_workers: int = 4,
         pin_memory: bool = True,
@@ -319,6 +322,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.stride = stride
         self.normalize_mode = normalize_mode
         self.normalizer_type = normalizer_type
+        self.clip_outliers = clip_outliers
         self.train_val_test_split = train_val_test_split
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -400,6 +404,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     stride=self.stride,
                     normalize_mode=self.normalize_mode,
                     normalizer_type=self.normalizer_type,
+                    clip_outliers=self.clip_outliers,
                     train_val_test_split=self.train_val_test_split,
                     num_workers=self.num_workers,
                     pin_memory=self.pin_memory,
