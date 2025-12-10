@@ -56,7 +56,6 @@ def create_model_from_config(cfg) -> JEPATST:
         
         # Decoder (for finetuning)
         decoder_type=cfg.model.decoder.type,
-        # Note: JEPATST gère la création du décodeur en interne selon ce type
         
         # EMA
         ema_tau_base=cfg.model.target_encoder.momentum_base,
@@ -106,6 +105,8 @@ def main(cfg: DictConfig):
         stride=cfg.data.stride,
         normalize_mode=cfg.data.normalize_mode,
         normalizer_type=cfg.data.normalizer_type,
+        clip_outliers=cfg.data.clip_outliers,
+        clip_sigma=cfg.data.clip_sigma,
         train_val_test_split=cfg.data.train_val_test_split,
         seed=cfg.data.seed,
         num_workers=8
@@ -193,7 +194,7 @@ def main(cfg: DictConfig):
     callbacks = []
     
     # Checkpointing
-    checkpoint_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name
+    checkpoint_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name / f"pretrain:{is_pretrain}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     
     callbacks.append(ModelCheckpoint(

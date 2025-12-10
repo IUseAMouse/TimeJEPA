@@ -69,6 +69,7 @@ class MonashDataModule(pl.LightningDataModule):
         self.normalize_mode = normalize_mode
         self.normalizer_type = normalizer_type
         self.clip_outliers = clip_outliers
+        self.clip_sigma = clip_sigma
         self.train_val_test_split = train_val_test_split
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -103,8 +104,11 @@ class MonashDataModule(pl.LightningDataModule):
             stage: 'fit', 'validate', 'test', or 'predict'
         """
         if stage == "fit" or stage is None:
-            # 🔥 FIX: Créer le normalizer AVANT le dataset
-            normalizer = get_normalizer(self.normalizer_type, clip_outliers=self.clip_outliers)
+            normalizer = get_normalizer(
+                self.normalizer_type, 
+                clip_outliers=self.clip_outliers,
+                clip_sigma=self.clip_sigma
+            )
             
             # Create full dataset
             full_dataset = TimeSeriesDataset(
@@ -112,7 +116,7 @@ class MonashDataModule(pl.LightningDataModule):
                 context_length=self.context_length,
                 prediction_length=self.prediction_length,
                 stride=self.stride,
-                normalizer=normalizer,  # 🔥 FIX: Passer le normalizer créé
+                normalizer=normalizer, 
                 normalize_mode=self.normalize_mode,
                 return_tensor=True,
                 max_series=self.max_series,
@@ -289,6 +293,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         normalize_mode: Literal["per_series", "global"] = "per_series",
         normalizer_type: str = "identity",
         clip_outliers: bool = True,
+        clip_sigma: float = 5.0,
         train_val_test_split: tuple = (0.7, 0.15, 0.15),
         num_workers: int = 4,
         pin_memory: bool = True,
@@ -405,6 +410,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     normalize_mode=self.normalize_mode,
                     normalizer_type=self.normalizer_type,
                     clip_outliers=self.clip_outliers,
+                    clip_sigma=self.clip_sigma,
                     train_val_test_split=self.train_val_test_split,
                     num_workers=self.num_workers,
                     pin_memory=self.pin_memory,
