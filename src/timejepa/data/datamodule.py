@@ -328,6 +328,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.normalize_mode = normalize_mode
         self.normalizer_type = normalizer_type
         self.clip_outliers = clip_outliers
+        self.clip_sigma = clip_sigma
         self.train_val_test_split = train_val_test_split
         self.num_workers = num_workers
         self.pin_memory = pin_memory
