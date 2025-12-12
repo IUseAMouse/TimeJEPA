@@ -12,7 +12,7 @@ def vicreg_loss(
     predictions: torch.Tensor,
     targets: torch.Tensor,
     invariance_weight: float = 25.0,
-    variance_weight: float = 30.0,
+    variance_weight: float = 25.0,
     covariance_weight: float = 1.0,
     variance_target: float = 1.0,
 ) -> Dict[str, torch.Tensor]:

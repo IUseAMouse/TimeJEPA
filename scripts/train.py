@@ -195,7 +195,7 @@ def main(cfg: DictConfig):
     callbacks = []
     
     # Checkpointing
-    checkpoint_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name / f"pretrain:{is_pretrain}"
+    checkpoint_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name / f"pretrain_{is_pretrain}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     
     callbacks.append(ModelCheckpoint(
