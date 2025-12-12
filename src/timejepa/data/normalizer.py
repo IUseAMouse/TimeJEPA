@@ -174,8 +174,10 @@ class IdentityNormalizer(Normalizer):
     def transform(self, data: DataType) -> DataType:
         """Return data unchanged (or clipped if clip_outliers=True)."""
         if self.clip_outliers:
-            "clipping"
+            print("clipping")
             return robust_clip_dataset(data, self.clip_sigma)
+        else:
+            print("no clipping")
         return data
     
     def inverse_transform(self, data: DataType) -> DataType:

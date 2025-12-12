@@ -8,13 +8,11 @@ import torch.nn.functional as F
 from typing import Dict, Optional
 
 
-# src/timejepa/training/utils/metrics.py
-
 def vicreg_loss(
     predictions: torch.Tensor,
     targets: torch.Tensor,
     invariance_weight: float = 25.0,
-    variance_weight: float = 25.0,
+    variance_weight: float = 30.0,
     covariance_weight: float = 1.0,
     variance_target: float = 1.0,
 ) -> Dict[str, torch.Tensor]:
@@ -245,12 +243,12 @@ def rmse(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     return torch.sqrt(mse(predictions, targets))
 
 
-def mape(predictions: torch.Tensor, targets: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
+def mape(predictions: torch.Tensor, targets: torch.Tensor, epsilon: float = 1e-4) -> torch.Tensor:
     """Mean Absolute Percentage Error."""
     return torch.mean(torch.abs((targets - predictions) / (targets + epsilon))) * 100
 
 
-def smape(predictions: torch.Tensor, targets: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
+def smape(predictions: torch.Tensor, targets: torch.Tensor, epsilon: float = 1e-4) -> torch.Tensor:
     """Symmetric Mean Absolute Percentage Error."""
     numerator = torch.abs(predictions - targets)
     denominator = (torch.abs(predictions) + torch.abs(targets)) / 2 + epsilon

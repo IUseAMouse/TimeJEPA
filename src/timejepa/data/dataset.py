@@ -4,13 +4,14 @@ PyTorch Dataset for time series with sliding windows for JEPA training.
 """
 import logging
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any, List, Union
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from .normalizer import Normalizer, get_normalizer
+from .augmentations import TimeSeriesAugmentations, AugmentationConfig, FinetuneAugmentations
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,9 @@ class TimeSeriesDataset(Dataset):
     - context: Past window (to be encoded by main encoder)
     - target: Future window(s) (to be encoded by target encoder)
     - metadata: Series ID, timestamps, etc.
+    
+    Note: Augmentations are NOT applied here. Use AugmentedSubset wrapper
+    for train/val/test splits with controlled augmentation.
     """
     
     def __init__(
@@ -35,7 +39,8 @@ class TimeSeriesDataset(Dataset):
         normalize_mode: str = "per_series",
         return_tensor: bool = True,
         max_series: Optional[int] = None,
-        min_series_length: Optional[int] = None
+        min_series_length: Optional[int] = None,
+        augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]] = None,
     ):
         """
         Args:
@@ -49,6 +54,7 @@ class TimeSeriesDataset(Dataset):
             return_tensor: If True, return torch tensors, else numpy
             max_series: Limit number of series (for debugging)
             min_series_length: Filter out series shorter than this
+            augmentations: Augmentation config (used by AugmentedSubset, not here)
         """
         self.data_path = Path(data_path)
         self.context_length = context_length
@@ -56,7 +62,9 @@ class TimeSeriesDataset(Dataset):
         self.stride = stride
         self.return_tensor = return_tensor
         self.normalize_mode = normalize_mode
-        
+        # Stocker les augmentations pour que AugmentedSubset y accède
+        self.augmentations = self._setup_augmentations(augmentations)
+
         # Load data
         logger.info(f"Loading data from {self.data_path}")
         data = np.load(self.data_path, allow_pickle=True)
@@ -64,13 +72,9 @@ class TimeSeriesDataset(Dataset):
         # Handle object arrays (variable length series)
         if data.dtype == object:
             logger.warning("Data contains variable-length series")
-            # Filter by min length
             min_len = context_length + prediction_length
             data = [s for s in data if len(s) >= min_len]
-            
-            # 🔥 FIX: Reconvertir en array numpy object
             data = np.array(data, dtype=object)
-            
             logger.info(f"Kept {len(data)} series with length >= {min_len}")
 
         # Limit number of series if requested
@@ -81,19 +85,15 @@ class TimeSeriesDataset(Dataset):
         # Filter by minimum length
         if min_series_length is not None:
             if isinstance(data, np.ndarray) and data.dtype == object:
-                # 🔥 FIX: Filtrer puis reconvertir
                 data = [s for s in data if len(s) >= min_series_length]
                 data = np.array(data, dtype=object)
             elif isinstance(data, np.ndarray):
-                # Homogeneous array
                 mask = np.array([s.shape[-1] >= min_series_length for s in data])
                 data = data[mask]
-            
             logger.info(f"After length filter: {len(data)} series")
 
         # Convert to array if homogeneous
         if isinstance(data, np.ndarray) and data.dtype == object:
-            # Check if all same length
             lengths = [s.shape[-1] for s in data]
             if len(set(lengths)) == 1:
                 data = np.stack(data)
@@ -107,54 +107,83 @@ class TimeSeriesDataset(Dataset):
         
         # Fit or use provided normalizer
         if normalizer is None:
-            logger.info("No normalizer provided, using IdentityNormalizer (data will be raw)")
+            logger.info("No normalizer provided, using IdentityNormalizer")
             self.normalizer = get_normalizer("identity")
         else:
             logger.info(f"Using provided normalizer: {normalizer.__class__.__name__}")
             self.normalizer = normalizer
         
-        # Si Identity, pas besoin de fit
         if not self.normalizer.is_fitted:
             self.normalizer.fit(self.data)
         
-        # Normaliser (ou pas si Identity)
         self.normalized_data = self.normalizer.transform(self.data)
-        
-        # Generate window indices
         self.window_indices = self._generate_window_indices()
+
+        # Log augmentation config (sera utilisé par AugmentedSubset)
+        if self.augmentations is not None:
+            logger.info(f"✓ Augmentations configured (applied via AugmentedSubset)")
+            self._log_augmentation_config()
         
         logger.info(f"Created dataset with {len(self)} windows")
-    
-    def _generate_window_indices(self) -> List[Tuple[int, int]]:
-        """
-        Generate (series_idx, start_idx) pairs for all valid windows.
+
+    def _setup_augmentations(
+        self, 
+        augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]]
+    ) -> Optional[TimeSeriesAugmentations]:
+        """Setup augmentations from various input formats."""
+        if augmentations is None:
+            return None
         
-        Returns:
-            List of (series_id, window_start) tuples
-        """
+        if isinstance(augmentations, TimeSeriesAugmentations):
+            return augmentations
+        
+        if isinstance(augmentations, AugmentationConfig):
+            return TimeSeriesAugmentations(augmentations)
+        
+        if isinstance(augmentations, dict):
+            return TimeSeriesAugmentations.from_dict(augmentations)
+        
+        raise ValueError(f"Unknown augmentation type: {type(augmentations)}")
+
+    def _log_augmentation_config(self):
+        """Log which augmentations are enabled."""
+        if self.augmentations is None:
+            return
+        
+        cfg = self.augmentations.config
+        enabled = []
+        if cfg.scale_enabled:
+            enabled.append(f"scale({cfg.scale_range}, p={cfg.p_scale})")
+        if cfg.jitter_enabled:
+            enabled.append(f"jitter(std={cfg.jitter_std}, p={cfg.p_jitter})")
+        if cfg.magnitude_warp_enabled:
+            enabled.append(f"mag_warp(σ={cfg.magnitude_warp_sigma}, p={cfg.p_magnitude_warp})")
+        if cfg.drs_enabled:
+            enabled.append(f"DRS({cfg.drs_factors}, p={cfg.p_drs})")
+        if cfg.trend_enabled:
+            enabled.append(f"trend(mag={cfg.trend_magnitude}, p={cfg.p_trend})")
+        
+        logger.info(f"  Active augmentations: {', '.join(enabled) if enabled else 'none'}")
+
+    def _generate_window_indices(self) -> List[Tuple[int, int]]:
+        """Generate (series_idx, start_idx) pairs for all valid windows."""
         indices = []
         min_length = self.context_length + self.prediction_length
         
         if self.data.dtype == object:
-            # Variable length series
             for series_idx, series in enumerate(self.normalized_data):
                 seq_length = series.shape[-1]
                 if seq_length < min_length:
                     continue
-                
-                # Generate sliding windows
                 for start_idx in range(0, seq_length - min_length + 1, self.stride):
                     indices.append((series_idx, start_idx))
         else:
-            # Homogeneous length
             seq_length = self.normalized_data.shape[-1]
-            
             if seq_length < min_length:
                 raise ValueError(
                     f"Series too short: {seq_length} < {min_length} "
                     f"(context={self.context_length} + pred={self.prediction_length})"
                 )
-            
             for series_idx in range(len(self.normalized_data)):
                 for start_idx in range(0, seq_length - min_length + 1, self.stride):
                     indices.append((series_idx, start_idx))
@@ -166,14 +195,9 @@ class TimeSeriesDataset(Dataset):
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """
-        Get a single sample.
+        Get a single sample (WITHOUT augmentation).
         
-        Returns:
-            Dictionary with keys:
-            - 'context': Context window (past), shape (context_length,) or (C, context_length)
-            - 'target': Target window (future), shape (prediction_length,) or (C, prediction_length)
-            - 'series_id': Index of the time series
-            - 'start_idx': Start index of the context window
+        Use AugmentedSubset for controlled augmentation in train/val/test.
         """
         series_idx, start_idx = self.window_indices[idx]
         
@@ -182,23 +206,21 @@ class TimeSeriesDataset(Dataset):
         else:
             series = self.normalized_data[series_idx]
         
-        # Extract windows
         context_end = start_idx + self.context_length
         target_end = context_end + self.prediction_length
         
         if self.is_multivariate:
-            # Shape: (num_channels, seq_length)
             context = series[:, start_idx:context_end]
             target = series[:, context_end:target_end]
         else:
-            # Shape: (seq_length,)
             context = series[start_idx:context_end]
             target = series[context_end:target_end]
         
-        # Convert to tensor if requested
         if self.return_tensor:
             context = torch.from_numpy(context).float()
             target = torch.from_numpy(target).float()
+        
+        # ❌ PAS d'augmentation ici — géré par AugmentedSubset
         
         return {
             'context': context,
@@ -208,45 +230,86 @@ class TimeSeriesDataset(Dataset):
         }
     
     def get_normalizer(self) -> Normalizer:
-        """Get the fitted normalizer for evaluation/inference."""
         return self.normalizer
     
     def get_raw_series(self, series_id: int) -> np.ndarray:
-        """Get raw (unnormalized) series by ID."""
         if self.data.dtype == object:
             return self.data[series_id]
         return self.data[series_id]
 
 
-class MultiHorizonDataset(TimeSeriesDataset):
+class AugmentedSubset(Dataset):
     """
-    Extended dataset that returns multiple future horizons.
+    Thread-safe subset with explicit augmentation control.
     
-    Useful for training models to predict at multiple time scales.
+    Each instance has its own apply_augmentation flag,
+    making it safe for multi-worker DataLoaders.
     """
+    
+    def __init__(
+        self, 
+        dataset: TimeSeriesDataset, 
+        indices: List[int], 
+        apply_augmentation: bool = True
+    ):
+        self.dataset = dataset
+        self.indices = indices
+        self.apply_augmentation = apply_augmentation
+    
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """Direct data access with controlled augmentation.
+        
+        Returns:
+
+            Dictionary with keys:
+
+            - 'context': Context window (past), shape (context_length,) or (C, context_length)
+
+            - 'target': Target window (future), shape (prediction_length,) or (C, prediction_length)
+
+            - 'series_id': Index of the time series
+
+            - 'start_idx': Start index of the context window
+        """
+        real_idx = self.indices[idx]
+        
+        # On peut maintenant utiliser le __getitem__ parent (sans augmentation)
+        # puis appliquer l'augmentation si nécessaire
+        item = self.dataset[real_idx]
+        
+        # Augmentation contrôlée par CETTE instance
+        if self.apply_augmentation and self.dataset.augmentations is not None:
+            item['context'], item['target'] = self.dataset.augmentations(
+                item['context'], item['target']
+            )
+        
+        return item
+    
+    def __len__(self) -> int:
+        return len(self.indices)
+
+
+class MultiHorizonDataset(TimeSeriesDataset):
+    """Extended dataset that returns multiple future horizons."""
     
     def __init__(
         self,
         data_path: Path,
         context_length: int,
-        prediction_lengths: List[int],  # Multiple horizons
+        prediction_lengths: List[int],
         stride: int = 1,
         normalizer: Optional[Normalizer] = None,
         normalize_mode: str = "per_series",
         return_tensor: bool = True,
         max_series: Optional[int] = None
     ):
-        """
-        Args:
-            prediction_lengths: List of prediction horizons (e.g., [30, 60, 120])
-        """
         self.prediction_lengths = sorted(prediction_lengths)
         max_pred_len = max(prediction_lengths)
         
         super().__init__(
             data_path=data_path,
             context_length=context_length,
-            prediction_length=max_pred_len,  # Use max for window generation
+            prediction_length=max_pred_len,
             stride=stride,
             normalizer=normalizer,
             normalize_mode=normalize_mode,
@@ -255,14 +318,6 @@ class MultiHorizonDataset(TimeSeriesDataset):
         )
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """
-        Returns:
-            Dictionary with:
-            - 'context': Context window
-            - 'targets': Dict of {horizon: target_window}
-            - 'series_id': Series index
-            - 'start_idx': Start index
-        """
         series_idx, start_idx = self.window_indices[idx]
         
         if self.data.dtype == object:
@@ -270,7 +325,6 @@ class MultiHorizonDataset(TimeSeriesDataset):
         else:
             series = self.normalized_data[series_idx]
         
-        # Extract context
         context_end = start_idx + self.context_length
         
         if self.is_multivariate:
@@ -278,19 +332,15 @@ class MultiHorizonDataset(TimeSeriesDataset):
         else:
             context = series[start_idx:context_end]
         
-        # Extract multiple targets
         targets = {}
         for pred_len in self.prediction_lengths:
             target_end = context_end + pred_len
-            
             if self.is_multivariate:
                 target = series[:, context_end:target_end]
             else:
                 target = series[context_end:target_end]
-            
             if self.return_tensor:
                 target = torch.from_numpy(target).float()
-            
             targets[pred_len] = target
         
         if self.return_tensor:

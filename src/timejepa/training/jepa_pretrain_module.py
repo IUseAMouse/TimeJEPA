@@ -130,7 +130,7 @@ class JEPAPretrainModule(pl.LightningModule):
         loss = jepa_loss(predictions, targets, loss_type=self.loss_type, reduction='mean')
         
         # Logging
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
         # Additional metrics every N steps
         if batch_idx % self.log_every_n_steps == 0:
@@ -141,7 +141,7 @@ class JEPAPretrainModule(pl.LightningModule):
                     context_embeddings=outputs.get('context_embeddings')
                 )
                 for key, value in metrics.items():
-                    self.log(f'train_{key}', value, on_step=True, prog_bar=False, logger=True)
+                    self.log(f'train_{key}', value, on_step=True, prog_bar=False, logger=True, sync_dist=True)
         
         return loss
     
@@ -165,7 +165,7 @@ class JEPAPretrainModule(pl.LightningModule):
         loss = jepa_loss(predictions, targets, loss_type=self.loss_type, reduction='mean')
         
         # Logging
-        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
         # Compute metrics
         metrics = compute_pretrain_metrics(
@@ -174,7 +174,7 @@ class JEPAPretrainModule(pl.LightningModule):
             context_embeddings=outputs.get('context_embeddings')
         )
         for key, value in metrics.items():
-            self.log(f'val_{key}', value, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+            self.log(f'val_{key}', value, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         
         return loss
     
@@ -182,7 +182,7 @@ class JEPAPretrainModule(pl.LightningModule):
         """Configure optimizer and learning rate scheduler."""
         # AdamW optimizer
         optimizer = torch.optim.AdamW(
-            self.model.parameters(),
+            self.parameters(),
             lr=self.learning_rate,
             betas=self.betas,
             weight_decay=self.weight_decay
@@ -260,7 +260,7 @@ class JEPAPretrainModule(pl.LightningModule):
         """Log learning rate at epoch end."""
         optimizer = self.optimizers()
         current_lr = optimizer.param_groups[0]['lr']
-        self.log('lr', current_lr, on_epoch=True, prog_bar=True)
+        self.log('lr', current_lr, on_epoch=True, prog_bar=True, sync_dist=True)
     
     def save_pretrained(self, save_path: Path):
         """Save pretrained encoder for finetuning."""

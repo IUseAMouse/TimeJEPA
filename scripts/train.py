@@ -166,7 +166,8 @@ def main(cfg: DictConfig):
             
             # Pretrained weights & Strategy
             pretrained_encoder_path=cfg.training.get('pretrained_encoder_path'),
-            finetune_mode=cfg.training.get('finetune_mode', 'linear_probe'),
+            finetune_mode=cfg.training.get('finetune_mode', 'gradual_unfreeze'),
+            unfreeze_after_epoch=cfg.training.unfreeze_after_epoch,
             
             # Loss
             loss_type=cfg.training.loss.finetune_type,
@@ -236,8 +237,6 @@ def main(cfg: DictConfig):
         config=OmegaConf.to_container(cfg, resolve=True),
         log_model=cfg.wandb.log_model
     )
-
-    wandb_logger.watch(model)
     
     # Trainer
     trainer = pl.Trainer(
@@ -252,7 +251,8 @@ def main(cfg: DictConfig):
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         callbacks=callbacks,
         default_root_dir=cfg.data.output_dir,
-        deterministic=cfg.trainer.get('deterministic', False),
+        deterministic=cfg.trainer.deterministic,
+        strategy=cfg.trainer.strategy
     )
 
     print(f"🔍 DEBUG Model:")

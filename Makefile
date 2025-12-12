@@ -107,7 +107,7 @@ finetune: ## Linear Probe: Freeze encoder, train decoder only
 	@echo "   Checkpoint: $(CHECKPOINT)"
 	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
         training.mode=finetune \
-        +training.finetune_mode=$(or $(MODE),full_finetune) \
+        training.finetune_mode=$(or $(MODE),full_finetune) \
         +training.pretrained_encoder_path="$(CHECKPOINT)" \
         model.decoder.type=$(or $(DECODER),linear) \
         training.max_epochs=$(or $(EPOCHS),20) \

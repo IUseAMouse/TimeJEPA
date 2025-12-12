@@ -27,7 +27,7 @@ model:
     type: "transformer"  # transformer | mlp
     d_model: 128
     n_heads: 4
-    n_layers: 3
+    n_layers: 2
     d_ff: 512
     dropout: 0.1
     activation: "gelu"
@@ -51,6 +51,8 @@ model:
 
 training:
   mode: "pretrain"
+  finetune_mode: "gradual_unfreeze"
+  unfreeze_after_epoch: 3
   
   # Loss configuration
   loss:
@@ -63,7 +65,7 @@ training:
   # Optimization
   optimizer:
     name: "adamw"
-    learning_rate: 1.0e-4
+    learning_rate: 1.0e-3
     weight_decay: 0.02
     betas: [0.9, 0.95]
     eps: 1.0e-8
@@ -98,23 +100,68 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: [] # This load alls
-  datasets_finetune: ["traffic"]
+  datasets_finetune: ["electricity"]
   combine_mode: "concatenate"
   batch_size: 256
   stride: 1
   normalize_mode: "global"
   normalizer_type: "identity"
-  clip_outliers: true
-  clip_sigma: 4.0
+  clip_outliers: false
+  clip_sigma: 5.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
+
+augmentations:
+  # Pretraining augmentations
+  pretrain:
+    enabled: true
+    
+    # Random scaling - CRUCIAL for MAPE
+    scale_enabled: true
+    scale_range: [0.5, 2.0]
+    scale_log_uniform: true
+    p_scale: 0.5
+    
+    # Gaussian jitter (context only)
+    jitter_enabled: true
+    jitter_std: 0.03
+    jitter_relative: true
+    p_jitter: 0.3
+    
+    # Magnitude warping
+    magnitude_warp_enabled: true
+    magnitude_warp_sigma: 0.2
+    magnitude_warp_knots: 4
+    p_magnitude_warp: 0.3
+    
+    # TTM-style DRS
+    drs_enabled: true
+    drs_factors: [2, 3, 4]
+    drs_interpolation: "linear"
+    p_drs: 0.15
+    
+    # Optional extras
+    trend_enabled: true
+  
+  # Finetuning augmentations (lighter)
+  finetune:
+    enabled: true
+    scale_enabled: true
+    scale_range: [0.8, 1.25]
+    p_scale: 0.3
+    jitter_enabled: true
+    jitter_std: 0.01
+    p_jitter: 0.2
+    magnitude_warp_enabled: false
+    drs_enabled: false
+    trend_enabled: false
 
 checkpoint:
   monitor: "val_loss"
   mode: "min"
   save_top_k: 3
   save_last: true
-  filename: "epoch_{epoch:02d}-val_loss_{val_loss:.4f}"
+  filename: "epoch{epoch:02d}_val_loss{val_loss:.4f}"
   auto_insert_metric_name: false
 
 early_stopping:
@@ -126,7 +173,7 @@ early_stopping:
 
 trainer:
   accelerator: "auto"  # auto | cpu | gpu | tpu
-  devices: 1  # Number of devices to use
+  devices: -1  # Number of devices to use
   precision: "bf16-mixed"  # 32-true | 16-mixed | bf16-mixed
   max_epochs: ${training.max_epochs}  # Reference from training section
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
@@ -134,6 +181,7 @@ trainer:
   val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
   deterministic: false  # Set to true for reproducibility (slower)
+  strategy: "ddp" # Distributed data parallelism
   enable_progress_bar: true
   enable_model_summary: true
 

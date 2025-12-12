@@ -147,9 +147,8 @@ class FinetuneModule(pl.LightningModule):
         """Apply freezing strategy based on finetune mode."""
         if mode == 'linear_probe':
             self.model.freeze_encoder()
-            self.model.unfreeze_predictor()
+            self.model.freeze_predictor()
             self.model.freeze_patching()
-            self.model.unfreeze_revin()
             self.model.freeze_target_encoder()
             logger.info("✓ LINEAR PROBE: encoder frozen, predictor + decoder trainable")
         
@@ -162,6 +161,7 @@ class FinetuneModule(pl.LightningModule):
         elif mode == 'gradual_unfreeze':
             self.model.freeze_encoder()
             self.model.freeze_predictor()
+            self.model.freeze_patching()
             logger.info(f"✓ GRADUAL UNFREEZE: frozen, will unfreeze at epoch {self.unfreeze_after_epoch}")
         
         else:
@@ -172,7 +172,6 @@ class FinetuneModule(pl.LightningModule):
         if self.finetune_mode == 'gradual_unfreeze':
             if self.current_epoch == self.unfreeze_after_epoch:
                 logger.info(f"Epoch {self.current_epoch}: Unfreezing encoder and predictor")
-                self.model.unfreeze_encoder()
                 self.model.unfreeze_predictor()
     
     def forward(self, context: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -202,25 +201,25 @@ class FinetuneModule(pl.LightningModule):
         
         # Forward pass
         results = self.model.forecast(context)
-        predictions_norm = results['forecast']
+        predictions_denorm = results['forecast_denorm']
 
         # Normalize target with same stats
-        if self.model.revin is not None:
-            target_norm = (target - self.model.revin.mean) / self.model.revin.std
-        else:
-            target_norm = target
+        # if self.model.revin is not None:
+        #     target_norm = (target - self.model.revin.mean) / self.model.revin.std
+        # else:
+        #     target_norm = target
 
         # Compute loss
-        loss = self.compute_loss(predictions_norm, target_norm)
+        loss = self.compute_loss(predictions_denorm, target)
         
         # Logging
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
         if batch_idx % self.log_every_n_steps == 0:
             with torch.no_grad():
-                metrics = compute_forecasting_metrics(predictions_norm, target_norm)
+                metrics = compute_forecasting_metrics(predictions_denorm, target)
                 for key, value in metrics.items():
-                    self.log(f'train_{key}', value, on_step=True, prog_bar=False, logger=True)
+                    self.log(f'train_{key}', value, on_step=True, prog_bar=False, logger=True, sync_dist=True)
         
         return loss
     
@@ -235,20 +234,20 @@ class FinetuneModule(pl.LightningModule):
             target = target.unsqueeze(-1)
         
         results = self.model.forecast(context)
-        predictions_norm = results['forecast']
+        predictions_denorm = results['forecast_denorm']
         
-        if self.model.revin is not None:
-            target_norm = (target - self.model.revin.mean) / self.model.revin.std
-        else:
-            target_norm = target
+        # if self.model.revin is not None:
+        #     target_norm = (target - self.model.revin.mean) / self.model.revin.std
+        # else:
+        #     target_norm = target
         
-        loss = self.compute_loss(predictions_norm, target_norm)
+        loss = self.compute_loss(predictions_denorm, target)
         
-        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
-        metrics = compute_forecasting_metrics(predictions_norm, target_norm)
+        metrics = compute_forecasting_metrics(predictions_denorm, target)
         for key, value in metrics.items():
-            self.log(f'val_{key}', value, on_step=False, on_epoch=True, logger=True)
+            self.log(f'val_{key}', value, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         
         return loss
     
@@ -271,13 +270,13 @@ class FinetuneModule(pl.LightningModule):
         else:
             target_norm = target
         
-        loss = self.compute_loss(predictions_norm, target_norm)
+        loss = self.compute_loss(predictions_denorm, target)
         
-        self.log('test_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log('test_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
-        metrics = compute_forecasting_metrics(predictions_norm, target_norm)
+        metrics = compute_forecasting_metrics(predictions_norm, target)
         for key, value in metrics.items():
-            self.log(f'test_{key}', value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+            self.log(f'test_{key}', value, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
         return {
             'loss': loss,
@@ -361,4 +360,4 @@ class FinetuneModule(pl.LightningModule):
         optimizer = self.optimizers()
         for i, param_group in enumerate(optimizer.param_groups):
             group_name = param_group.get('name', f'group_{i}')
-            self.log(f'lr_{group_name}', param_group['lr'], on_epoch=True, prog_bar=True)
+            self.log(f'lr_{group_name}', param_group['lr'], on_epoch=True, prog_bar=True, sync_dist=True)
