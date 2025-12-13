@@ -57,7 +57,7 @@ training:
   # Loss configuration
   loss:
     type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
-    finetune_type: "huber"
+    finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
     variance_loss_weight: 0.0
     covariance_loss_weight: 0.0
@@ -100,8 +100,8 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: [] # This load alls
-  datasets_finetune: ["electricity"]
-  datasets_eval: ["electricity"]
+  datasets_finetune: []
+  datasets_eval: []
   combine_mode: "concatenate"
   batch_size: 256
   stride: 1
