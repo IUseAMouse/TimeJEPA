@@ -424,7 +424,21 @@ def evaluate_dataset(
             target = target.unsqueeze(-1)
         
         # Forward pass through the model
-        predictions = model(context)
+        output = model(context)
+        
+        # Handle dict output from JEPATST
+        # In finetune mode, model returns {'forecast': ..., 'forecast_denorm': ...}
+        if isinstance(output, dict):
+            # Use denormalized forecast for evaluation (original scale matches targets)
+            if 'forecast_denorm' in output:
+                predictions = output['forecast_denorm']
+            elif 'forecast' in output:
+                # Fallback to normalized forecast if denorm not available
+                predictions = output['forecast']
+            else:
+                raise ValueError(f"Expected 'forecast_denorm' or 'forecast' in output, got keys: {list(output.keys())}")
+        else:
+            predictions = output
         
         # Remove channel dim if univariate
         if context.shape[-1] == 1:
