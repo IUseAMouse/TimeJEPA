@@ -166,7 +166,7 @@ checkpoint:
   auto_insert_metric_name: false
 
 early_stopping:
-  enabled: false
+  enabled: true
   monitor: "val_loss"
   patience: 15
   mode: "min"
