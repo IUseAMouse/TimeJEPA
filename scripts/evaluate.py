@@ -539,41 +539,8 @@ def main(cfg: DictConfig):
     logger.info("Creating model...")
     model = create_model_from_config(cfg)
     
-    # Load checkpoint
-    model = load_checkpoint(model, checkpoint_path, device)
-    
-    # Load checkpoint
-    logger.info(f"Loading checkpoint: {checkpoint_path}")
-    
-    try:
-        # Try loading as FinetuneModule
-        pl_module = FinetuneModule.load_from_checkpoint(
-            checkpoint_path,
-            model=model,
-            map_location=device,
-            strict=False
-        )
-        pl_module = pl_module.to(device)
-        pl_module.eval()
-        eval_model = pl_module
-        
-    except Exception as e:
-        logger.warning(f"Could not load as FinetuneModule: {e}")
-        logger.info("Attempting to load state dict directly...")
-        
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        state_dict = checkpoint.get('state_dict', checkpoint)
-        
-        # Remove 'model.' prefix if present
-        cleaned_state_dict = {}
-        for k, v in state_dict.items():
-            new_key = k.replace('model.', '') if k.startswith('model.') else k
-            cleaned_state_dict[new_key] = v
-        
-        model.load_state_dict(cleaned_state_dict, strict=False)
-        model = model.to(device)
-        model.eval()
-        eval_model = model
+    # Load checkpoint (utilise la nouvelle fonction unifiée)
+    eval_model = load_checkpoint(model, checkpoint_path, device)
     
     # Get datasets to evaluate
     datasets_eval = cfg.data.get('datasets_eval', [])
