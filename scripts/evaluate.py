@@ -1,0 +1,650 @@
+# scripts/evaluate.py
+"""
+Evaluation script for finetuned TimeJEPA model.
+
+Usage:
+    python scripts/evaluate.py +checkpoint_path=path/to/checkpoint.ckpt
+    python scripts/evaluate.py +checkpoint_path=path/to/checkpoint.ckpt data.datasets_eval=[traffic,electricity]
+"""
+
+import logging
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional
+import json
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
+import torch
+import pytorch_lightning as pl
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+from tqdm import tqdm
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from timejepa.data.datamodule import MonashDataModule
+from timejepa.training.finetune_module import FinetuneModule
+from timejepa.training.utils.metrics import (
+    compute_forecasting_metrics_extended,
+    compute_per_horizon_metrics
+)
+from timejepa.models import JEPATST
+from timejepa.models.decoders import ForecastingHead
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# VISUALIZATION
+# =============================================================================
+
+def plot_forecasts(
+    contexts: torch.Tensor,
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    dataset_name: str,
+    output_dir: Path,
+    num_samples: int = 9,
+    seed: int = 42
+):
+    """Plot sample forecasts in a grid."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    np.random.seed(seed)
+    
+    n = min(num_samples, len(predictions))
+    
+    # Sélectionner des exemples variés (bons et mauvais)
+    errors = torch.mean((predictions - targets) ** 2, dim=-1).numpy()
+    
+    # Mix: quelques bons, quelques moyens, quelques mauvais
+    sorted_idx = np.argsort(errors)
+    n_per_group = max(1, n // 3)
+    good_idx = sorted_idx[:n_per_group]
+    bad_idx = sorted_idx[-n_per_group:]
+    mid_start = len(sorted_idx) // 2 - n_per_group // 2
+    mid_idx = sorted_idx[mid_start:mid_start + n_per_group]
+    
+    # Combiner et mélanger
+    selected_indices = np.concatenate([good_idx, mid_idx, bad_idx])
+    np.random.shuffle(selected_indices)
+    indices = selected_indices[:n]
+    
+    # Grid layout
+    nrows = int(np.ceil(np.sqrt(n)))
+    ncols = int(np.ceil(n / nrows))
+    
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows))
+    if n == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    for i, idx in enumerate(indices):
+        ax = axes[i]
+        
+        ctx = contexts[idx].cpu().numpy()
+        pred = predictions[idx].cpu().numpy()
+        targ = targets[idx].cpu().numpy()
+        
+        # Handle multivariate (plot first channel)
+        if ctx.ndim > 1:
+            ctx = ctx[..., 0] if ctx.shape[-1] < ctx.shape[0] else ctx[0]
+            pred = pred[..., 0] if pred.shape[-1] < pred.shape[0] else pred[0]
+            targ = targ[..., 0] if targ.shape[-1] < targ.shape[0] else targ[0]
+        
+        ctx_len = len(ctx)
+        pred_len = len(pred)
+        
+        # Time axis
+        t_ctx = np.arange(ctx_len)
+        t_pred = np.arange(ctx_len, ctx_len + pred_len)
+        
+        # Plot
+        ax.plot(t_ctx, ctx, 'b-', label='Context', alpha=0.7, linewidth=1.5)
+        ax.plot(t_pred, targ, 'g-', label='Ground Truth', linewidth=2)
+        ax.plot(t_pred, pred, 'r--', label='Prediction', linewidth=2, alpha=0.8)
+        
+        # Fill between for error visualization
+        ax.fill_between(t_pred, pred, targ, alpha=0.2, color='red')
+        
+        # Boundary line
+        ax.axvline(x=ctx_len, color='gray', linestyle=':', alpha=0.5)
+        
+        # Metrics for this sample
+        sample_mae = np.mean(np.abs(pred - targ))
+        sample_rmse = np.sqrt(np.mean((pred - targ) ** 2))
+        
+        ax.set_title(f'Sample {idx} | MAE: {sample_mae:.2f} | RMSE: {sample_rmse:.2f}', fontsize=10)
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlabel('Time Step')
+        ax.set_ylabel('Value')
+    
+    # Hide unused subplots
+    for i in range(n, len(axes)):
+        axes[i].set_visible(False)
+    
+    plt.suptitle(f'{dataset_name} - Forecast Examples', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    save_path = output_dir / f'{dataset_name}_forecasts.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"  📊 Saved forecast plots to {save_path}")
+
+
+def plot_error_analysis(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    dataset_name: str,
+    output_dir: Path
+):
+    """Plot comprehensive error analysis."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    errors = (predictions - targets).flatten().cpu().numpy()
+    preds_flat = predictions.flatten().cpu().numpy()
+    targs_flat = targets.flatten().cpu().numpy()
+    
+    fig = plt.figure(figsize=(16, 10))
+    gs = GridSpec(2, 3, figure=fig)
+    
+    # 1. Error histogram
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.hist(errors, bins=50, edgecolor='black', alpha=0.7, color='steelblue')
+    ax1.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Zero')
+    ax1.axvline(x=np.mean(errors), color='orange', linestyle='-', linewidth=2, 
+                label=f'Mean: {np.mean(errors):.3f}')
+    ax1.set_xlabel('Prediction Error')
+    ax1.set_ylabel('Frequency')
+    ax1.set_title('Error Distribution')
+    ax1.legend()
+    
+    # 2. Predicted vs Actual scatter
+    ax2 = fig.add_subplot(gs[0, 1])
+    
+    # Subsample for scatter
+    if len(preds_flat) > 10000:
+        idx = np.random.choice(len(preds_flat), 10000, replace=False)
+        p_sample, t_sample = preds_flat[idx], targs_flat[idx]
+    else:
+        p_sample, t_sample = preds_flat, targs_flat
+    
+    ax2.scatter(t_sample, p_sample, alpha=0.2, s=2, c='steelblue')
+    
+    min_val = min(t_sample.min(), p_sample.min())
+    max_val = max(t_sample.max(), p_sample.max())
+    ax2.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect')
+    
+    ax2.set_xlabel('Actual Values')
+    ax2.set_ylabel('Predicted Values')
+    ax2.set_title('Predicted vs Actual')
+    ax2.legend()
+    ax2.set_aspect('equal', adjustable='box')
+    
+    # 3. Absolute error by actual value
+    ax3 = fig.add_subplot(gs[0, 2])
+    abs_errors = np.abs(errors)
+    
+    # Bin by actual values
+    bins = np.percentile(targs_flat, np.linspace(0, 100, 11))
+    bin_indices = np.digitize(targs_flat, bins)
+    
+    bin_means = []
+    bin_centers = []
+    for i in range(1, len(bins)):
+        mask = bin_indices == i
+        if mask.sum() > 0:
+            bin_means.append(np.mean(abs_errors[mask]))
+            bin_centers.append((bins[i-1] + bins[i]) / 2)
+    
+    ax3.bar(range(len(bin_means)), bin_means, color='coral', edgecolor='black')
+    ax3.set_xticks(range(len(bin_means)))
+    ax3.set_xticklabels([f'{c:.1f}' for c in bin_centers], rotation=45)
+    ax3.set_xlabel('Actual Value Range')
+    ax3.set_ylabel('Mean Absolute Error')
+    ax3.set_title('Error by Value Range')
+    
+    # 4. Error over horizon (using metrics.py function)
+    ax4 = fig.add_subplot(gs[1, 0])
+    horizon_metrics = compute_per_horizon_metrics(predictions, targets)
+    horizon_mae = [horizon_metrics[h]['mae'] for h in sorted(horizon_metrics.keys())]
+    pred_len = len(horizon_mae)
+    
+    ax4.plot(range(pred_len), horizon_mae, 'o-', color='steelblue', linewidth=2, markersize=4)
+    ax4.fill_between(range(pred_len), horizon_mae, alpha=0.3)
+    ax4.set_xlabel('Horizon Step')
+    ax4.set_ylabel('MAE')
+    ax4.set_title('Error vs Prediction Horizon')
+    ax4.grid(True, alpha=0.3)
+    
+    # 5. Q-Q plot
+    ax5 = fig.add_subplot(gs[1, 1])
+    from scipy import stats
+    stats.probplot(errors, dist="norm", plot=ax5)
+    ax5.set_title('Q-Q Plot (vs Normal)')
+    
+    # 6. Box plot of errors per horizon quartile
+    ax6 = fig.add_subplot(gs[1, 2])
+    quartile_size = pred_len // 4 if pred_len >= 4 else 1
+    quartile_errors = []
+    quartile_labels = []
+    
+    for q in range(4):
+        start = q * quartile_size
+        end = (q + 1) * quartile_size if q < 3 else pred_len
+        q_errors = (predictions[:, start:end] - targets[:, start:end]).flatten().cpu().numpy()
+        quartile_errors.append(q_errors)
+        quartile_labels.append(f'H{start+1}-{end}')
+    
+    bp = ax6.boxplot(quartile_errors, labels=quartile_labels, patch_artist=True)
+    colors = ['lightblue', 'lightgreen', 'lightyellow', 'lightcoral']
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+    ax6.set_xlabel('Horizon Quartile')
+    ax6.set_ylabel('Error')
+    ax6.set_title('Error Distribution by Horizon')
+    ax6.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+    
+    plt.suptitle(f'{dataset_name} - Error Analysis', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    save_path = output_dir / f'{dataset_name}_error_analysis.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"  📊 Saved error analysis to {save_path}")
+
+
+def plot_summary_comparison(
+    all_results: Dict[str, Dict[str, float]],
+    output_dir: Path
+):
+    """Plot comparison of metrics across all datasets."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    if len(all_results) < 1:
+        return
+    
+    datasets = list(all_results.keys())
+    metrics_to_plot = ['rmse', 'mae', 'smape', 'r2']
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
+    
+    colors = plt.cm.Set2(np.linspace(0, 1, len(datasets)))
+    
+    for ax, metric in zip(axes, metrics_to_plot):
+        values = [all_results[d].get(metric, 0) for d in datasets]
+        bars = ax.bar(datasets, values, color=colors, edgecolor='black')
+        
+        # Add value labels
+        for bar, val in zip(bars, values):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{val:.2f}', ha='center', va='bottom', fontsize=9)
+        
+        ax.set_ylabel(metric.upper())
+        ax.set_title(f'{metric.upper()} by Dataset')
+        ax.tick_params(axis='x', rotation=45)
+        ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.suptitle('Metrics Comparison Across Datasets', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    save_path = output_dir / 'summary_comparison.png'
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"📊 Saved summary comparison to {save_path}")
+
+
+# =============================================================================
+# EVALUATION LOGIC
+# =============================================================================
+
+@torch.no_grad()
+def evaluate_dataset(
+    model: torch.nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    device: torch.device
+) -> Dict[str, torch.Tensor]:
+    """Run evaluation on a single dataset."""
+    model.eval()
+    
+    all_contexts = []
+    all_predictions = []
+    all_targets = []
+    
+    for batch in tqdm(dataloader, desc="  Inference", leave=False):
+        context = batch['context'].to(device)
+        target = batch['target'].to(device)
+        
+        # Add channel dim if needed (univariate)
+        if context.ndim == 2:
+            context = context.unsqueeze(-1)
+        if target.ndim == 2:
+            target = target.unsqueeze(-1)
+        
+        # Forward pass through the model
+        predictions = model(context)
+        
+        # Remove channel dim if univariate
+        if context.shape[-1] == 1:
+            context = context.squeeze(-1)
+            predictions = predictions.squeeze(-1)
+            target = target.squeeze(-1)
+        
+        all_contexts.append(context.cpu())
+        all_predictions.append(predictions.cpu())
+        all_targets.append(target.cpu())
+    
+    return {
+        'contexts': torch.cat(all_contexts, dim=0),
+        'predictions': torch.cat(all_predictions, dim=0),
+        'targets': torch.cat(all_targets, dim=0)
+    }
+
+
+def create_model_from_config(cfg: DictConfig) -> JEPATST:
+    """Create JEPA-TST model from Hydra config."""
+    model = JEPATST(
+        input_length=cfg.model.seq_length,
+        prediction_length=cfg.model.prediction_length,
+        num_features=cfg.model.num_channels,
+        patch_size=cfg.model.patch_length,
+        stride=cfg.model.stride,
+        d_model=cfg.model.encoder.d_model,
+        num_layers=cfg.model.encoder.n_layers,
+        num_heads=cfg.model.encoder.n_heads,
+        d_ff=cfg.model.encoder.d_ff,
+        dropout=cfg.model.encoder.dropout,
+        activation=cfg.model.encoder.activation,
+        predictor_type=cfg.model.predictor.type,
+        predictor_num_layers=cfg.model.predictor.n_layers,
+        predictor_num_heads=cfg.model.predictor.n_heads,
+        predictor_d_ff=cfg.model.predictor.d_ff,
+        decoder_type=cfg.model.decoder.type,
+        ema_tau_base=cfg.model.target_encoder.momentum_base,
+        ema_tau_end=cfg.model.target_encoder.momentum_final,
+        use_revin=cfg.model.encoder.use_revin,
+    )
+    
+    # Add forecasting decoder
+    model.decoder = ForecastingHead(
+        d_model=cfg.model.decoder.d_model,
+        patch_size=cfg.model.patch_length,
+        stride=cfg.model.stride,
+        prediction_length=cfg.model.prediction_length,
+        num_features=cfg.model.num_channels,
+        decoder_type=cfg.model.decoder.type,
+        revin=model.revin
+    )
+    
+    return model
+
+
+def find_best_checkpoint(cfg: DictConfig) -> Optional[str]:
+    """Find the best checkpoint from the checkpoint directory."""
+    ckpt_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name / "pretrain_False"
+    
+    if not ckpt_dir.exists():
+        return None
+    
+    # Look for 'best' or 'last' checkpoint first
+    for pattern in ['*best*.ckpt', '*last*.ckpt', '*.ckpt']:
+        ckpts = list(ckpt_dir.glob(pattern))
+        if ckpts:
+            # Sort by modification time (most recent first)
+            ckpts = sorted(ckpts, key=lambda x: x.stat().st_mtime, reverse=True)
+            return str(ckpts[0])
+    
+    return None
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+@hydra.main(version_base=None, config_path="../configs/model", config_name="tiny")
+def main(cfg: DictConfig):
+    """Main evaluation function."""
+    
+    print("=" * 80)
+    print("🔍 TIMEJEPA EVALUATION")
+    print("=" * 80)
+    
+    # Get checkpoint path
+    checkpoint_path = cfg.get('checkpoint_path')
+    
+    if checkpoint_path is None:
+        checkpoint_path = find_best_checkpoint(cfg)
+        if checkpoint_path:
+            logger.info(f"Found checkpoint: {checkpoint_path}")
+        else:
+            raise ValueError(
+                "No checkpoint found. Specify with: +checkpoint_path=path/to/checkpoint.ckpt"
+            )
+    
+    # Validate checkpoint exists
+    if not Path(checkpoint_path).exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    
+    # Output directory
+    output_dir = Path(cfg.data.output_dir) / "evaluation" / cfg.model.name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Device: {device}")
+    
+    # Create model architecture
+    logger.info("Creating model...")
+    model = create_model_from_config(cfg)
+    
+    # Load checkpoint
+    logger.info(f"Loading checkpoint: {checkpoint_path}")
+    
+    try:
+        # Try loading as FinetuneModule
+        pl_module = FinetuneModule.load_from_checkpoint(
+            checkpoint_path,
+            model=model,
+            map_location=device,
+            strict=False
+        )
+        pl_module = pl_module.to(device)
+        pl_module.eval()
+        eval_model = pl_module
+        
+    except Exception as e:
+        logger.warning(f"Could not load as FinetuneModule: {e}")
+        logger.info("Attempting to load state dict directly...")
+        
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        state_dict = checkpoint.get('state_dict', checkpoint)
+        
+        # Remove 'model.' prefix if present
+        cleaned_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k.replace('model.', '') if k.startswith('model.') else k
+            cleaned_state_dict[new_key] = v
+        
+        model.load_state_dict(cleaned_state_dict, strict=False)
+        model = model.to(device)
+        model.eval()
+        eval_model = model
+    
+    # Get datasets to evaluate
+    datasets_eval = cfg.data.get('datasets_eval', [])
+    
+    if not datasets_eval:
+        data_dir = Path(cfg.data.data_dir)
+        datasets_eval = [f.stem for f in data_dir.glob("*.npy")]
+        logger.info(f"Evaluating on all datasets: {datasets_eval}")
+    else:
+        logger.info(f"Evaluating on specified datasets: {datasets_eval}")
+    
+    if not datasets_eval:
+        raise ValueError(f"No datasets found in {cfg.data.data_dir}")
+    
+    # Results storage
+    all_results = {}
+    all_horizon_metrics = {}
+    
+    # Evaluate each dataset
+    for dataset_name in datasets_eval:
+        print("\n" + "=" * 60)
+        print(f"📈 Evaluating: {dataset_name}")
+        print("=" * 60)
+        
+        data_path = Path(cfg.data.data_dir) / f"{dataset_name}.npy"
+        
+        if not data_path.exists():
+            logger.warning(f"  ⚠️ Dataset not found: {data_path}, skipping...")
+            continue
+        
+        try:
+            # Create datamodule
+            dm = MonashDataModule(
+                data_path=data_path,
+                context_length=cfg.model.seq_length,
+                prediction_length=cfg.model.prediction_length,
+                batch_size=cfg.data.batch_size,
+                stride=cfg.data.stride,
+                normalize_mode=cfg.data.normalize_mode,
+                normalizer_type=cfg.data.normalizer_type,
+                clip_outliers=cfg.data.clip_outliers,
+                clip_sigma=cfg.data.clip_sigma,
+                train_val_test_split=cfg.data.train_val_test_split,
+                num_workers=4,
+                seed=cfg.data.seed
+            )
+            dm.prepare_data()
+            dm.setup()
+            
+            logger.info(f"  Test samples: {len(dm.test_dataset)}")
+            
+            # Evaluate on test set
+            test_loader = dm.test_dataloader()
+            results = evaluate_dataset(eval_model, test_loader, device)
+            
+            # Compute metrics using metrics.py
+            metrics = compute_forecasting_metrics_extended(
+                results['predictions'], 
+                results['targets']
+            )
+            all_results[dataset_name] = metrics
+            
+            # Compute per-horizon metrics
+            horizon_metrics = compute_per_horizon_metrics(
+                results['predictions'],
+                results['targets']
+            )
+            all_horizon_metrics[dataset_name] = horizon_metrics
+            
+            # Print metrics
+            print(f"\n  📊 Results:")
+            print(f"     RMSE:        {metrics['rmse']:.4f}")
+            print(f"     MAE:         {metrics['mae']:.4f}")
+            print(f"     SMAPE:       {metrics['smape']:.2f}%")
+            print(f"     MAPE:        {metrics['mape']:.2f}%")
+            print(f"     Huber:       {metrics['huber']:.4f}")
+            print(f"     R²:          {metrics['r2']:.4f}")
+            print(f"     Correlation: {metrics['correlation']:.4f}")
+            
+            # Generate plots
+            plots_dir = output_dir / "plots"
+            
+            plot_forecasts(
+                results['contexts'],
+                results['predictions'],
+                results['targets'],
+                dataset_name,
+                plots_dir,
+                num_samples=9
+            )
+            
+            plot_error_analysis(
+                results['predictions'],
+                results['targets'],
+                dataset_name,
+                plots_dir
+            )
+            
+        except Exception as e:
+            logger.error(f"  ❌ Error evaluating {dataset_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # ==========================================================================
+    # SUMMARY
+    # ==========================================================================
+    
+    print("\n" + "=" * 80)
+    print("📋 EVALUATION SUMMARY")
+    print("=" * 80)
+    
+    if not all_results:
+        logger.error("No datasets were successfully evaluated!")
+        return
+    
+    # Create summary table
+    df = pd.DataFrame(all_results).T
+    df.index.name = 'Dataset'
+    
+    # Print formatted table
+    print("\n" + df.to_string())
+    
+    # Compute averages
+    print("\n" + "-" * 60)
+    avg_row = df.mean()
+    print(f"{'AVERAGE':<20}", end="")
+    for col in df.columns:
+        print(f" {col}: {avg_row[col]:.4f}", end=" |")
+    print()
+    
+    # Save results
+    results_json_path = output_dir / "results.json"
+    with open(results_json_path, 'w') as f:
+        json.dump(all_results, f, indent=2)
+    
+    results_csv_path = output_dir / "results.csv"
+    df.to_csv(results_csv_path)
+    
+    # Save horizon metrics
+    horizon_json_path = output_dir / "horizon_metrics.json"
+    with open(horizon_json_path, 'w') as f:
+        # Convert int keys to strings for JSON
+        serializable = {
+            ds: {str(h): m for h, m in hm.items()} 
+            for ds, hm in all_horizon_metrics.items()
+        }
+        json.dump(serializable, f, indent=2)
+    
+    # Plot summary comparison
+    plot_summary_comparison(all_results, output_dir / "plots")
+    
+    # Save config used for evaluation
+    config_path = output_dir / "eval_config.yaml"
+    with open(config_path, 'w') as f:
+        OmegaConf.save(cfg, f)
+    
+    print("\n" + "=" * 80)
+    print("✅ EVALUATION COMPLETE")
+    print("=" * 80)
+    print(f"  📁 Results saved to: {output_dir}")
+    print(f"     - results.json / results.csv")
+    print(f"     - horizon_metrics.json")
+    print(f"     - plots/")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()

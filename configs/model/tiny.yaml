@@ -101,6 +101,7 @@ data:
   output_dir: "lightning/"
   datasets: [] # This load alls
   datasets_finetune: ["electricity"]
+  datasets_eval: ["electricity"]
   combine_mode: "concatenate"
   batch_size: 256
   stride: 1

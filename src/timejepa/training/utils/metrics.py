@@ -276,3 +276,91 @@ def compute_forecasting_metrics(
         'mape': mape(predictions, targets).item(),
         'smape': smape(predictions, targets).item(),
     }
+
+# =============================================================================
+# ADDITIONAL EVALUATION METRICS
+# =============================================================================
+
+def huber(predictions: torch.Tensor, targets: torch.Tensor, delta: float = 1.0) -> torch.Tensor:
+    """Huber Loss (smooth L1)."""
+    return F.huber_loss(predictions, targets, reduction='mean', delta=delta)
+
+
+def r2_score(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """R² (coefficient of determination)."""
+    ss_res = torch.sum((targets - predictions) ** 2)
+    ss_tot = torch.sum((targets - torch.mean(targets)) ** 2)
+    return 1 - ss_res / (ss_tot + 1e-8)
+
+
+def correlation(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """Pearson correlation coefficient."""
+    preds_flat = predictions.flatten()
+    targs_flat = targets.flatten()
+    
+    corr_matrix = torch.corrcoef(torch.stack([preds_flat, targs_flat]))
+    corr_val = corr_matrix[0, 1]
+    
+    # Handle NaN (constant predictions/targets)
+    if torch.isnan(corr_val):
+        return torch.tensor(0.0, device=predictions.device)
+    return corr_val
+
+
+def compute_forecasting_metrics_extended(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+) -> Dict[str, float]:
+    """
+    Compute comprehensive forecasting metrics for evaluation.
+    
+    Args:
+        predictions: [B, L] or [B, L, C]
+        targets: [B, L] or [B, L, C]
+    
+    Returns:
+        Dictionary of metrics
+    """
+    # Flatten for global metrics
+    preds = predictions.float()
+    targs = targets.float()
+    
+    return {
+        'mse': mse(preds, targs).item(),
+        'mae': mae(preds, targs).item(),
+        'rmse': rmse(preds, targs).item(),
+        'mape': mape(preds, targs).item(),
+        'smape': smape(preds, targs).item(),
+        'huber': huber(preds, targs).item(),
+        'r2': r2_score(preds, targs).item(),
+        'correlation': correlation(preds, targs).item(),
+    }
+
+
+def compute_per_horizon_metrics(
+    predictions: torch.Tensor, 
+    targets: torch.Tensor
+) -> Dict[int, Dict[str, float]]:
+    """
+    Compute metrics per prediction horizon step.
+    
+    Args:
+        predictions: [B, pred_len] or [B, pred_len, C]
+        targets: [B, pred_len] or [B, pred_len, C]
+    
+    Returns:
+        Dictionary mapping horizon index to metrics dict
+    """
+    pred_len = predictions.shape[1]
+    horizon_metrics = {}
+    
+    for h in range(pred_len):
+        pred_h = predictions[:, h]
+        targ_h = targets[:, h]
+        horizon_metrics[h] = {
+            'mae': mae(pred_h, targ_h).item(),
+            'rmse': rmse(pred_h, targ_h).item(),
+            'smape': smape(pred_h, targ_h).item(),
+        }
+    
+    return horizon_metrics
