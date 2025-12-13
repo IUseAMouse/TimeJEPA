@@ -541,7 +541,7 @@ def main(cfg: DictConfig):
     
     # Load checkpoint (utilise la nouvelle fonction unifiée)
     eval_model = load_checkpoint(model, checkpoint_path, device)
-    eval_model.pretrain = False
+    eval_model.set_pretrain_mode(mode=False)
     logger.info("  ✓ Switched model to inference mode (pretrain=False)")
     
     # Get datasets to evaluate
