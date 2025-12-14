@@ -100,8 +100,8 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: [] # This load alls
-  datasets_finetune: []
-  datasets_eval: []
+  datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "bitcoin", "australian_electricity_demand"]
+  datasets_eval: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "bitcoin", "weather", "m4_hourly", "australian_electricity_demand"]
   combine_mode: "concatenate"
   batch_size: 256
   stride: 1
