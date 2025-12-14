@@ -255,7 +255,8 @@ def main(cfg: DictConfig):
         callbacks=callbacks,
         default_root_dir=cfg.data.output_dir,
         deterministic=cfg.trainer.deterministic,
-        strategy=cfg.trainer.strategy
+        strategy=cfg.trainer.strategy,
+        use_distributed_sampler=cfg.trainer_use_distributed_sampler
     )
 
     print(f"🔍 DEBUG Model:")
