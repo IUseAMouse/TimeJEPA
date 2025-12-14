@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Literal, Dict, Any
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Sampler
@@ -20,19 +21,15 @@ class TemperatureSampler(Sampler):
     """
     Temperature-based sampling for imbalanced multi-dataset training.
     
-    Inspired by mT5/PaLM: instead of uniform sampling (which over-samples small
-    datasets) or proportional sampling (which ignores small datasets), we use
-    temperature-smoothed probabilities.
+    Memory-efficient implementation: generates indices on-the-fly instead of
+    materializing 500M+ indices in memory.
     
     With temperature T:
-        p_i ∝ n_i^(1/T)
+        p_i ∝ n_i^T
     
     - T=1.0: proportional to size (large datasets dominate)
     - T=0.5: square-root sampling (balanced compromise)  
-    - T→∞: uniform across datasets (small datasets repeated many times)
-    
-    Additionally, max_oversample_ratio caps how many times a small dataset
-    can be repeated per epoch, preventing severe overfitting.
+    - T→0: uniform across datasets
     """
     
     def __init__(
@@ -52,7 +49,10 @@ class TemperatureSampler(Sampler):
         Args:
             dataset_sizes: Size of each dataset in the ConcatDataset
             batch_size: Total batch size
-            temperature: Sampling temperature (0.5 = sqrt, 1.0 = proportional)
+            temperature: Sampling temperature
+                - T=1.0: proportional (large datasets dominate)
+                - T=0.5: sqrt sampling (balanced)
+                - T=0.25: more uniform
             max_oversample_ratio: Max times a small dataset can be repeated per epoch
             num_batches_per_epoch: Override number of batches (None = auto)
             drop_last: Drop incomplete batches
@@ -83,25 +83,31 @@ class TemperatureSampler(Sampler):
             self.world_size = world_size
         
         # Compute temperature-smoothed sampling probabilities
+        # FIXED: sizes^T (not sizes^(1/T))
+        # T=0.5 → sqrt, T→0 → uniform, T=1 → proportional
         sizes = torch.tensor(dataset_sizes, dtype=torch.float32)
         
-        if temperature == float('inf'):
+        if temperature == 0:
+            # Uniform across datasets
             self.sampling_probs = torch.ones(self.num_datasets) / self.num_datasets
         else:
-            smoothed = sizes ** (1.0 / temperature)
+            smoothed = sizes ** temperature
             self.sampling_probs = smoothed / smoothed.sum()
         
+        # Calculate samples per dataset per batch
         self.samples_per_dataset = (self.sampling_probs * batch_size).floor().int()
         self.samples_per_dataset = torch.clamp(self.samples_per_dataset, min=1)
         
+        # Distribute remainder to highest-probability datasets
         remainder = batch_size - self.samples_per_dataset.sum().item()
         if remainder > 0:
             top_k_count = min(remainder, self.num_datasets)
-            top_k = torch.topk(sizes, top_k_count).indices
+            top_k = torch.topk(self.sampling_probs, top_k_count).indices
             for idx in top_k[:remainder]:
                 self.samples_per_dataset[idx] += 1
         elif remainder < 0:
-            sorted_indices = torch.argsort(sizes)
+            # Remove from lowest-probability datasets
+            sorted_indices = torch.argsort(self.sampling_probs)
             idx = 0
             while self.samples_per_dataset.sum() > batch_size and idx < self.num_datasets:
                 min_idx = sorted_indices[idx].item()
@@ -113,25 +119,21 @@ class TemperatureSampler(Sampler):
         self.samples_per_dataset = self.samples_per_dataset.tolist()
         self.actual_batch_size = sum(self.samples_per_dataset)
         
+        # Store offsets only - NOT all indices (memory efficient!)
         self.dataset_offsets = [0]
         for size in dataset_sizes[:-1]:
             self.dataset_offsets.append(self.dataset_offsets[-1] + size)
-        
-        self.dataset_indices = []
-        for i, size in enumerate(dataset_sizes):
-            start = self.dataset_offsets[i]
-            self.dataset_indices.append(list(range(start, start + size)))
         
         self._compute_epoch_plan()
         
         if num_batches_per_epoch is not None:
             self._num_batches = num_batches_per_epoch
         
-        # Only log from rank 0
         if self.rank == 0:
             self._log_sampling_info()
     
     def _compute_epoch_plan(self):
+        """Compute number of batches and effective sampling ratios."""
         max_size = max(self.dataset_sizes)
         largest_idx = self.dataset_sizes.index(max_size)
         samples_for_largest = self.samples_per_dataset[largest_idx]
@@ -188,54 +190,42 @@ class TemperatureSampler(Sampler):
             )
     
     def __iter__(self):
-        # DDP: different seed per rank but deterministic
-        g = torch.Generator()
-        g.manual_seed(self.seed + self.epoch * 1000 + self.rank)
+        """
+        Memory-efficient iterator using on-the-fly random sampling.
         
-        if self.shuffle:
-            shuffled_indices = []
-            for indices in self.dataset_indices:
-                perm = torch.randperm(len(indices), generator=g).tolist()
-                shuffled_indices.append([indices[i] for i in perm])
-        else:
-            shuffled_indices = [list(indices) for indices in self.dataset_indices]
+        Instead of materializing 500M indices (~14GB+), we generate
+        random indices per batch using numpy RNG (~few KB).
+        """
+        # Deterministic seed: reproducible across restarts, varies by epoch/rank
+        rng = np.random.default_rng(self.seed + self.epoch * 1000 + self.rank)
         
-        positions = [0] * self.num_datasets
-        cycle_counts = [0] * self.num_datasets
-        
-        # DDP: offset starting position based on rank
-        for i in range(self.num_datasets):
-            positions[i] = (self.rank * len(shuffled_indices[i]) // self.world_size) % len(shuffled_indices[i])
+        # Track samples drawn per dataset for max_oversample enforcement
+        samples_drawn = [0] * self.num_datasets
+        max_samples = [int(size * self.max_oversample_ratio) for size in self.dataset_sizes]
         
         for batch_idx in range(self._num_batches):
             batch = []
             
-            for i, indices in enumerate(shuffled_indices):
+            for i in range(self.num_datasets):
                 n_samples = self.samples_per_dataset[i]
-                dataset_size = len(indices)
+                dataset_size = self.dataset_sizes[i]
+                offset = self.dataset_offsets[i]
                 
-                for _ in range(n_samples):
-                    if cycle_counts[i] >= self.max_oversample_ratio:
-                        continue
-                    
-                    if positions[i] >= dataset_size:
-                        positions[i] = 0
-                        cycle_counts[i] += 1
-                        
-                        if self.shuffle:
-                            perm = torch.randperm(dataset_size, generator=g).tolist()
-                            shuffled_indices[i] = [self.dataset_indices[i][j] for j in perm]
-                        
-                        if cycle_counts[i] >= self.max_oversample_ratio:
-                            continue
-                    
-                    batch.append(shuffled_indices[i][positions[i]])
-                    positions[i] += 1
+                # Enforce max_oversample_ratio
+                remaining = max_samples[i] - samples_drawn[i]
+                if remaining <= 0:
+                    continue
+                
+                actual_samples = min(n_samples, remaining)
+                
+                # Generate random indices on-the-fly (NOT stored!)
+                local_indices = rng.integers(0, dataset_size, size=actual_samples)
+                batch.extend((offset + local_indices).tolist())
+                samples_drawn[i] += actual_samples
             
             if len(batch) > 0:
                 if self.shuffle:
-                    perm = torch.randperm(len(batch), generator=g).tolist()
-                    batch = [batch[j] for j in perm]
+                    rng.shuffle(batch)
                 yield batch
         
         self.epoch += 1
@@ -570,7 +560,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             sampling_temperature: Temperature for sampling distribution
                 - T=1.0: proportional to size (large datasets dominate)
                 - T=0.5: square-root sampling (balanced compromise) [default]
-                - T=2.0+: more uniform (small datasets over-represented)
+                - T=0.25: more uniform (small datasets better represented)
             max_oversample_ratio: Max times a dataset can repeat per epoch
             ... (autres params identiques à MonashDataModule)
             dataset_overrides: Per-dataset config overrides
@@ -746,8 +736,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         seed=self.seed
                     )
                     
-                    # Val sampler: use T=1.0 (proportional) for fair evaluation
-                    # or same temperature for consistency
+                    # Val sampler: T=1.0 (proportional) for fair evaluation
                     self._val_sampler = TemperatureSampler(
                         dataset_sizes=self.val_dataset_sizes,
                         batch_size=self.batch_size,
