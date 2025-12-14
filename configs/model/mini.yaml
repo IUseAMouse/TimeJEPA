@@ -4,11 +4,11 @@
 model:
   name: "timejepa_mini"
   
-  seq_length: 384
+  seq_length: 512
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 96
+  prediction_length: 128
   
   encoder:
     d_model: 192
@@ -87,11 +87,11 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: []
-  datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "bitcoin", "australian_electricity_demand"]
+  datasets_finetune: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "weather", "m4_hourly", "australian_electricity_demand", "us_births", "solar-power-4-seconds", "solar-10-minutes-dataset", "nn5-daily", "melbourne-pedestrian-count"]
   datasets_eval: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "bitcoin", "weather", "m4_hourly", "australian_electricity_demand"]
   combine_mode: "concatenate"
-  batch_size: 512
-  stride: 1
+  batch_size: 1024
+  stride: 48
   normalize_mode: "global"
   normalizer_type: "identity"
   clip_outliers: false
