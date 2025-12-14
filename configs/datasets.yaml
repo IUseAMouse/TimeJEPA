@@ -24,12 +24,6 @@ datasets:
     description: "M4 competition hourly - 414 series"
     expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
-
-  m4_quarterly:
-    url: "https://zenodo.org/records/4656410/files/m4_quarterly_dataset.zip?download=1"
-    descripion: "M4 competition quarterly - 24000 series"
-    expected_files: ["*.tsf"]
-    frequency: ["quarterly"]
     
   australian-electricity-demand:
     url: "https://zenodo.org/records/4659727/files/australian_electricity_demand_dataset.zip?download=1"
