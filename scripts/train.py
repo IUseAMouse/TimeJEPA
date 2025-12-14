@@ -256,7 +256,7 @@ def main(cfg: DictConfig):
         default_root_dir=cfg.data.output_dir,
         deterministic=cfg.trainer.deterministic,
         strategy=cfg.trainer.strategy,
-        use_distributed_sampler=cfg.trainer_use_distributed_sampler
+        use_distributed_sampler=cfg.trainer.use_distributed_sampler
     )
 
     print(f"🔍 DEBUG Model:")
