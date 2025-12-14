@@ -109,6 +109,9 @@ data:
   normalizer_type: "identity"
   clip_outliers: false
   clip_sigma: 5.0
+  balanced_sampling: true
+  sampling_temperature: 0.7
+  max_oversample_ratio: 10.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 

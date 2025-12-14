@@ -24,6 +24,10 @@ datasets:
     description: "M4 competition hourly - 414 series"
     expected_files: ["*.ts", "*.tsf"]
     frequency: "hourly"
+
+  m4_quarterly:
+    url: "https://zenodo.org/records/4656410/files/m4_quarterly_dataset.zip?download=1"
+    descripion: "M4 competition quarterly - 24000 series"
     
   australian-electricity-demand:
     url: "https://zenodo.org/records/4659727/files/australian_electricity_demand_dataset.zip?download=1"
@@ -86,6 +90,29 @@ datasets:
     description: "Daily cash withdrawals - 111 series"
     expected_files: ["*.tsf"]
     frequency: "daily"
+
+  cif-2016:
+    url: "https://zenodo.org/records/4656042/files/cif_2016_dataset.zip?download=1"
+    description: "Real-time banking data - 72 series"
+    expected_files: ["*.tsf"]
+
+  melbourne-pedestrian-count:
+    url: "https://zenodo.org/records/4656626/files/pedestrian_counts_dataset.zip?download=1"
+    description: "Pedestrian counts through sensors in Melbourne since 2009 - 66 series"
+    expected_files: ["*.tsf"]
+    frequency: ["hourly"]
+
+  wikipedia-web-traffic-extended:
+    url: "https://zenodo.org/records/7371038/files/web_traffic_extended_dataset_without_missing_values.zip?download=1"
+    description: "Number of hits or web traffic for a set of Wikipedia pages from 2015-07-01 to 2022-06-30 - 145063 series"
+    expected_files: ["*.tsf"]
+    frequency: ["hourly"]
+
+  london-smart-meters:
+    url: "https://zenodo.org/records/4656091/files/london_smart_meters_dataset_without_missing_values.zip?download=1"
+    description: "Half hourly time series that represent the energy consumption readings of London households in kilowatt hour (kWh) from November 2011 to February 2014 - 5560 series"
+    expected_files: ["*.tsf"]
+    frequency: ["half-hourly"]
 
 download:
   chunk_size: 8192

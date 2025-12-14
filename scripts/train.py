@@ -101,6 +101,9 @@ def main(cfg: DictConfig):
         datasets=cfg.data.get('datasets') if is_pretrain else cfg.data.get('datasets_finetune'),
         dataset_pattern=cfg.data.get('dataset_pattern', '*.npy'),
         combine_mode=cfg.data.get('combine_mode', 'concatenate'),
+        balanced_sampling=cfg.data.balanced_sampling,
+        sampling_temperature=cfg.data.sampling_temperature,
+        max_oversample_ratio=cfg.data.max_oversample_ratio,
         batch_size=cfg.data.batch_size,
         stride=cfg.data.stride,
         normalize_mode=cfg.data.normalize_mode,
@@ -267,13 +270,6 @@ def main(cfg: DictConfig):
     logger.info("=" * 80)
     
     trainer.fit(pl_module, datamodule=datamodule)
-    
-    # Test best model
-    if trainer.checkpoint_callback.best_model_path:
-        logger.info("=" * 80)
-        logger.info("TESTING BEST MODEL")
-        logger.info("=" * 80)
-        trainer.test(pl_module, datamodule=datamodule, ckpt_path='best')
     
     logger.info("=" * 80)
     logger.info("TRAINING COMPLETE")
