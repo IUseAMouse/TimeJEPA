@@ -104,7 +104,7 @@ def jepa_loss(
         result = vicreg_loss(
             predictions, targets,
             invariance_weight=weights.get('invariance', 25.0),
-            variance_weight=weights.get('variance', 35.0),
+            variance_weight=weights.get('variance', 25.0),
             covariance_weight=weights.get('covariance', 1.0)
         )
         return result['loss']

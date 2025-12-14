@@ -91,7 +91,7 @@ data:
   datasets_eval: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "bitcoin", "weather", "m4_hourly", "australian_electricity_demand"]
   combine_mode: "concatenate"
   batch_size: 1024
-  stride: 48
+  stride: 16
   normalize_mode: "global"
   normalizer_type: "identity"
   clip_outliers: false
