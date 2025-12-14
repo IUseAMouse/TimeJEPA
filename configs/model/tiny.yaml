@@ -103,15 +103,15 @@ data:
   datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "bitcoin", "australian_electricity_demand"]
   datasets_eval: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "bitcoin", "weather", "m4_hourly", "australian_electricity_demand"]
   combine_mode: "concatenate"
-  batch_size: 256
+  batch_size: 1024
   stride: 1
   normalize_mode: "global"
   normalizer_type: "identity"
   clip_outliers: false
   clip_sigma: 5.0
   balanced_sampling: true
-  sampling_temperature: 0.7
-  max_oversample_ratio: 10.0
+  sampling_temperature: 0.25
+  max_oversample_ratio: 6.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
@@ -188,6 +188,7 @@ trainer:
   strategy: "ddp_find_unused_parameters_true" # Distributed data parallelism
   enable_progress_bar: true
   enable_model_summary: true
+  use_distributed_sampler: false # Don't do this because my own sampler handles this
 
 wandb:
   project: "TimeJEPA"
