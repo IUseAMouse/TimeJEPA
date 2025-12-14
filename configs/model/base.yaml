@@ -91,7 +91,7 @@ data:
   datasets_eval: []
   combine_mode: "concatenate"
   batch_size: 384  # Réduit pour VRAM
-  stride: 16
+  stride: 8
   normalize_mode: "global"
   normalizer_type: "identity"
   clip_outliers: false
