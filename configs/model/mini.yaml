@@ -1,157 +1,179 @@
 # @package _global_
+# configs/model/timejepa_mini.yaml
 
 model:
   name: "timejepa_mini"
   
-  # Input configuration
-  seq_length: 512
+  seq_length: 384
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 128
+  prediction_length: 96
   
-  # Encoder architecture
   encoder:
-    d_model: 256
-    n_heads: 4
-    n_layers: 5
-    d_ff: 512
+    d_model: 192
+    n_heads: 6
+    n_layers: 4
+    d_ff: 768
     dropout: 0.1
     activation: "gelu"
     use_revin: true
     use_rope: true
     norm_first: true
   
-  # Predictor architecture
   predictor:
-    type: "transformer"  # transformer | mlp
-    d_model: 256
-    n_heads: 4
-    n_layers: 4
-    d_ff: 512
+    type: "transformer"
+    d_model: 192
+    n_heads: 6
+    n_layers: 3
+    d_ff: 768
     dropout: 0.1
     activation: "gelu"
   
-  # Decoder architecture
   decoder:
-    type: "attentive"  # linear | mlp | attentive
-    d_model: 256
-    hidden_dim: 128
-    n_layers: 2
+    type: "mlp"
+    d_model: 192
+    hidden_dim: 384
+    n_layers: 4
     dropout: 0.1
   
-  # Target encoder (EMA)
   target_encoder:
     momentum_schedule: "cosine"
     momentum_base: 0.996
     momentum_final: 1.0
   
-  # Model size stats
-  params_millions: ~1.6  # Approximate
+  params_millions: ~6
 
 training:
   mode: "pretrain"
+  finetune_mode: "gradual_unfreeze"
+  unfreeze_after_epoch: 3
   
-  # Masking strategy
-  masking:
-    strategy: "temporal"  # random | block | temporal | random_temporal
-    context_ratio: 0.7
-    n_context_blocks: 4
-    context_block_length: 3
-    n_target_blocks: 2
-    target_block_length: 3
-    scale: [0.15, 0.25]  # Min/max scale for random masking
-  
-  # Loss configuration
   loss:
-    type: "mse"  # mse | smooth_l1 | cosine
+    type: "vicreg"
+    finetune_type: "huber"
     smooth_l1_beta: 1.0
     variance_loss_weight: 0.0
     covariance_loss_weight: 0.0
   
-  # Optimization
   optimizer:
     name: "adamw"
-    learning_rate: 1.0e-3
-    weight_decay: 0.02
+    learning_rate: 8.0e-4  # Légèrement réduit
+    weight_decay: 0.03
     betas: [0.9, 0.95]
     eps: 1.0e-8
-    encoder_lr_multiplier: 1.00
+    encoder_lr_multiplier: 1.0
   
-  # Learning rate schedule
   lr_scheduler:
-    type: "cosine"  # cosine | linear | constant
+    type: "cosine"
     warmup_epochs: 0.1
     min_lr: 1.0e-6
   
-  # Training duration
-  max_epochs: 40
+  max_epochs: 30
   
-  # EMA configuration
   ema:
     enabled: true
-    momentum_base: 0.996
+    momentum_base: 0.998
     momentum_final: 1.0
     schedule: "cosine"
   
-  # Regularization
   dropout: 0.05
   gradient_clip_val: 1.0
-  
-  # Logging
   log_every_n_steps: 50
-  log_histograms: false  # Log weight histograms (expensive)
+  log_histograms: false
 
 data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: [] # This load alls
+  datasets: []
+  datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "bitcoin", "australian_electricity_demand"]
+  datasets_eval: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "bitcoin", "weather", "m4_hourly", "australian_electricity_demand"]
   combine_mode: "concatenate"
-  batch_size: 256
+  batch_size: 512
   stride: 1
   normalize_mode: "global"
   normalizer_type: "identity"
-  train_val_test_split: [0.9, 0.05, 0.05]
+  clip_outliers: false
+  clip_sigma: 5.0
+  balanced_sampling: true
+  sampling_temperature: 0.5
+  max_oversample_ratio: 8.0
+  train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
+
+augmentations:
+  pretrain:
+    enabled: true
+    scale_enabled: true
+    scale_range: [0.5, 2.0]
+    scale_log_uniform: true
+    p_scale: 0.5
+    jitter_enabled: true
+    jitter_std: 0.03
+    jitter_relative: true
+    p_jitter: 0.3
+    magnitude_warp_enabled: true
+    magnitude_warp_sigma: 0.2
+    magnitude_warp_knots: 4
+    p_magnitude_warp: 0.3
+    drs_enabled: true
+    drs_factors: [2, 3, 4]
+    drs_interpolation: "linear"
+    p_drs: 0.15
+    trend_enabled: true
+  
+  finetune:
+    enabled: true
+    scale_enabled: true
+    scale_range: [0.8, 1.25]
+    p_scale: 0.3
+    jitter_enabled: true
+    jitter_std: 0.01
+    p_jitter: 0.2
+    magnitude_warp_enabled: false
+    drs_enabled: false
+    trend_enabled: false
 
 checkpoint:
   monitor: "val_loss"
   mode: "min"
   save_top_k: 3
   save_last: true
-  filename: "epoch={epoch:02d}-val_loss={val_loss:.4f}"
+  filename: "epoch{epoch:02d}_val_loss{val_loss:.4f}"
   auto_insert_metric_name: false
 
 early_stopping:
-  enabled: false
+  enabled: true
   monitor: "val_loss"
-  patience: 15
+  patience: 12
   mode: "min"
   min_delta: 0.0001
 
 trainer:
-  accelerator: "auto"  # auto | cpu | gpu | tpu
-  devices: 1  # Number of devices to use
-  precision: "bf16-mixed"  # 32-true | 16-mixed | bf16-mixed
-  max_epochs: ${training.max_epochs}  # Reference from training section
-  gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
-  accumulate_grad_batches: 6  # Gradient accumulation steps
-  val_check_interval: 0.2  # Validate every epoch (1.0) or every N steps (int)
-  log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
-  deterministic: false  # Set to true for reproducibility (slower)
+  accelerator: "auto"
+  devices: -1
+  precision: "bf16-mixed"
+  max_epochs: ${training.max_epochs}
+  gradient_clip_val: ${training.gradient_clip_val}
+  accumulate_grad_batches: 4
+  val_check_interval: 0.05
+  log_every_n_steps: ${training.log_every_n_steps}
+  deterministic: false
+  strategy: "ddp_find_unused_parameters_true"
   enable_progress_bar: true
   enable_model_summary: true
+  use_distributed_sampler: false
 
 wandb:
   project: "TimeJEPA"
   entity: "iuseamouse"
-  run_name: null  # Auto-generated
+  run_name: null
   tags:
     - "mini"
-    - "timejepa_mini"
+    - "jepa_tst"
     - "v1"
     - "pytorch-lightning"
-  log_model: true  # Log checkpoints
-  log_gradients: false  # Log gradients (expensive)
-  log_freq: 100  # Gradient logging frequency
+  log_model: true
+  log_gradients: false
+  log_freq: 100

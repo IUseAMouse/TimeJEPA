@@ -355,30 +355,21 @@ class MonashDataModule(pl.LightningDataModule):
             test_len = total_len - train_len - val_len
             
             logger.info(f"Splitting {total_len} windows: "
-                       f"train={train_len}, val={val_len}, test={test_len}")
+                    f"train={train_len}, val={val_len}, test={test_len}")
             
-            # Générer les indices mélangés
-            generator = torch.Generator().manual_seed(self.seed)
-            indices = torch.randperm(total_len, generator=generator).tolist()
-            
-            train_indices = indices[:train_len]
-            val_indices = indices[train_len:train_len + val_len]
-            test_indices = indices[train_len + val_len:]
-            
-            # Créer les AugmentedSubset
             self.train_dataset = AugmentedSubset(
                 self._full_dataset, 
-                train_indices, 
+                range(0, train_len),
                 apply_augmentation=True
             )
             self.val_dataset = AugmentedSubset(
                 self._full_dataset, 
-                val_indices, 
+                range(train_len, train_len + val_len),
                 apply_augmentation=False
             )
             self.test_dataset = AugmentedSubset(
                 self._full_dataset, 
-                test_indices, 
+                range(train_len + val_len, total_len),
                 apply_augmentation=False
             )
             
