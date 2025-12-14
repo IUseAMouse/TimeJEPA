@@ -28,6 +28,8 @@ datasets:
   m4_quarterly:
     url: "https://zenodo.org/records/4656410/files/m4_quarterly_dataset.zip?download=1"
     descripion: "M4 competition quarterly - 24000 series"
+    expected_files: ["*.tsf"]
+    frequency: ["quarterly"]
     
   australian-electricity-demand:
     url: "https://zenodo.org/records/4659727/files/australian_electricity_demand_dataset.zip?download=1"
@@ -90,11 +92,6 @@ datasets:
     description: "Daily cash withdrawals - 111 series"
     expected_files: ["*.tsf"]
     frequency: "daily"
-
-  cif-2016:
-    url: "https://zenodo.org/records/4656042/files/cif_2016_dataset.zip?download=1"
-    description: "Real-time banking data - 72 series"
-    expected_files: ["*.tsf"]
 
   melbourne-pedestrian-count:
     url: "https://zenodo.org/records/4656626/files/pedestrian_counts_dataset.zip?download=1"
