@@ -31,7 +31,7 @@ model:
     activation: "gelu"
   
   decoder:
-    type: "mlp"
+    type: "attentive"
     d_model: 192
     hidden_dim: 384
     n_layers: 4
@@ -90,7 +90,7 @@ data:
   datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "australian-electricity-demand", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minutes-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-extended", "london-smart-meters"]
   datasets_eval: []
   combine_mode: "concatenate"
-  batch_size: 1024
+  batch_size: 768
   stride: 8
   normalize_mode: "global"
   normalizer_type: "identity"
@@ -98,7 +98,7 @@ data:
   clip_sigma: 5.0
   balanced_sampling: true
   sampling_temperature: 0.5
-  max_oversample_ratio: 8.0
+  max_oversample_ratio: 6.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
