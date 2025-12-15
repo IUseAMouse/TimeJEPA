@@ -1,3 +1,4 @@
+# src/timejepa/data/dataset.py
 """
 PyTorch Dataset for time series with sliding windows for JEPA training.
 """
@@ -39,7 +40,6 @@ class TimeSeriesDataset(Dataset):
         return_tensor: bool = True,
         max_series: Optional[int] = None,
         min_series_length: Optional[int] = None,
-        series_subset: Optional[List[int]] = None,  # NOUVEAU: pour split par séries
         augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]] = None,
     ):
         """
@@ -54,7 +54,6 @@ class TimeSeriesDataset(Dataset):
             return_tensor: If True, return torch tensors, else numpy
             max_series: Limit number of series (for debugging)
             min_series_length: Filter out series shorter than this
-            series_subset: List of series indices to include (for train/val/test splits)
             augmentations: Augmentation config (used by AugmentedSubset, not here)
         """
         self.data_path = Path(data_path)
@@ -92,17 +91,6 @@ class TimeSeriesDataset(Dataset):
                 mask = np.array([s.shape[-1] >= min_series_length for s in data])
                 data = data[mask]
             logger.info(f"After length filter: {len(data)} series")
-
-        # NOUVEAU: Apply series subset filter (pour split par séries)
-        if series_subset is not None:
-            if data.dtype == object:
-                data = np.array([data[i] for i in series_subset], dtype=object)
-            else:
-                data = data[series_subset]
-            self._original_series_ids = list(series_subset)
-            logger.info(f"Using series subset: {len(series_subset)} series")
-        else:
-            self._original_series_ids = list(range(len(data)))
 
         # Convert to array if homogeneous
         if isinstance(data, np.ndarray) and data.dtype == object:
@@ -237,7 +225,7 @@ class TimeSeriesDataset(Dataset):
         return {
             'context': context,
             'target': target,
-            'series_id': self._original_series_ids[series_idx],  # MODIFIÉ: retourne l'ID original
+            'series_id': series_idx,
             'start_idx': start_idx
         }
     
@@ -265,7 +253,7 @@ class AugmentedSubset(Dataset):
         apply_augmentation: bool = True
     ):
         self.dataset = dataset
-        self.indices = list(indices) if not isinstance(indices, list) else indices
+        self.indices = indices
         self.apply_augmentation = apply_augmentation
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
@@ -313,9 +301,7 @@ class MultiHorizonDataset(TimeSeriesDataset):
         normalizer: Optional[Normalizer] = None,
         normalize_mode: str = "per_series",
         return_tensor: bool = True,
-        max_series: Optional[int] = None,
-        min_series_length: Optional[int] = None,
-        series_subset: Optional[List[int]] = None,  # NOUVEAU
+        max_series: Optional[int] = None
     ):
         self.prediction_lengths = sorted(prediction_lengths)
         max_pred_len = max(prediction_lengths)
@@ -328,9 +314,7 @@ class MultiHorizonDataset(TimeSeriesDataset):
             normalizer=normalizer,
             normalize_mode=normalize_mode,
             return_tensor=return_tensor,
-            max_series=max_series,
-            min_series_length=min_series_length,
-            series_subset=series_subset,
+            max_series=max_series
         )
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
@@ -365,6 +349,6 @@ class MultiHorizonDataset(TimeSeriesDataset):
         return {
             'context': context,
             'targets': targets,
-            'series_id': self._original_series_ids[series_idx],  # MODIFIÉ
+            'series_id': series_idx,
             'start_idx': start_idx
         }
