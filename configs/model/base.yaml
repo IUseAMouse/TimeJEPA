@@ -4,7 +4,7 @@
 model:
   name: "timejepa_base"
   
-  seq_length: 768
+  seq_length: 512
   patch_length: 16
   stride: 8
   num_channels: 1

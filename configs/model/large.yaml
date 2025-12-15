@@ -4,11 +4,11 @@
 model:
   name: "timejepa_large"
   
-  seq_length: 1024
+  seq_length: 512
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 256
+  prediction_length: 192
   
   encoder:
     d_model: 512
@@ -31,7 +31,7 @@ model:
     activation: "gelu"
   
   decoder:
-    type: "mlp"
+    type: "attentive"
     d_model: 512
     hidden_dim: 1024
     n_layers: 4
