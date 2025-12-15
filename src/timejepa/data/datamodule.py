@@ -1,4 +1,3 @@
-# src/timejepa/data/datamodule.py
 """
 PyTorch Lightning DataModule for time series datasets.
 """
@@ -241,7 +240,7 @@ class MonashDataModule(pl.LightningDataModule):
     """
     Lightning DataModule for Monash time series datasets.
     
-    Handles train/val/test splits, normalization, and DataLoader configuration.
+    Handles train/val/test splits BY SERIES (not by windows) to prevent data leakage.
     """
     
     def __init__(
@@ -306,9 +305,6 @@ class MonashDataModule(pl.LightningDataModule):
         self.train_dataset: Optional[AugmentedSubset] = None
         self.val_dataset: Optional[AugmentedSubset] = None
         self.test_dataset: Optional[AugmentedSubset] = None
-        
-        # Garder une référence au dataset complet
-        self._full_dataset: Optional[TimeSeriesDataset] = None
     
     def prepare_data(self):
         if not self.data_path.exists():
@@ -318,62 +314,136 @@ class MonashDataModule(pl.LightningDataModule):
             )
         logger.info(f"Data file found: {self.data_path}")
     
+    def _get_valid_series_indices(self, data: np.ndarray) -> List[int]:
+        """Get indices of series that meet length requirements."""
+        min_len = self.context_length + self.prediction_length
+        
+        if data.dtype == object:
+            valid_indices = []
+            for i, s in enumerate(data):
+                series_len = len(s) if s.ndim == 1 else s.shape[-1]
+                if series_len >= min_len:
+                    if self.min_series_length is None or series_len >= self.min_series_length:
+                        valid_indices.append(i)
+        else:
+            series_len = data.shape[-1]
+            if series_len >= min_len:
+                if self.min_series_length is None or series_len >= self.min_series_length:
+                    valid_indices = list(range(len(data)))
+                else:
+                    valid_indices = []
+            else:
+                valid_indices = []
+        
+        return valid_indices
+    
+    def _split_series_indices(self, num_series: int) -> tuple:
+        """Split series indices into train/val/test."""
+        generator = torch.Generator().manual_seed(self.seed)
+        perm = torch.randperm(num_series, generator=generator).tolist()
+        
+        train_frac, val_frac, _ = self.train_val_test_split
+        train_end = int(num_series * train_frac)
+        val_end = int(num_series * (train_frac + val_frac))
+        
+        return perm[:train_end], perm[train_end:val_end], perm[val_end:]
+    
     def setup(self, stage: Optional[str] = None):
         """
-        Args:
-            stage: 'fit', 'validate', 'test', or 'predict'
+        Setup datasets with split BY SERIES to prevent data leakage.
         """
         if stage == "fit" or stage is None:
+            # Charger les données pour identifier les séries valides
+            data = np.load(self.data_path, allow_pickle=True)
+            valid_indices = self._get_valid_series_indices(data)
+            
+            # Appliquer max_series si demandé
+            if self.max_series is not None and len(valid_indices) > self.max_series:
+                valid_indices = valid_indices[:self.max_series]
+            
+            num_series = len(valid_indices)
+            
+            # Split par SÉRIES (pas par fenêtres!)
+            train_perm, val_perm, test_perm = self._split_series_indices(num_series)
+            
+            train_series = [valid_indices[i] for i in train_perm]
+            val_series = [valid_indices[i] for i in val_perm]
+            test_series = [valid_indices[i] for i in test_perm]
+            
+            logger.info(f"Split {num_series} SERIES: train={len(train_series)}, "
+                       f"val={len(val_series)}, test={len(test_series)}")
+            
+            # Créer le normalizer (sera fit sur train uniquement)
             normalizer = get_normalizer(
                 self.normalizer_type, 
                 clip_outliers=self.clip_outliers,
                 clip_sigma=self.clip_sigma
             )
             
-            # Créer le dataset complet
-            self._full_dataset = TimeSeriesDataset(
+            # Créer le dataset TRAIN (fit le normalizer sur train seulement)
+            train_ds = TimeSeriesDataset(
                 data_path=self.data_path,
                 context_length=self.context_length,
                 prediction_length=self.prediction_length,
                 stride=self.stride,
-                normalizer=normalizer, 
+                normalizer=normalizer,
                 normalize_mode=self.normalize_mode,
                 return_tensor=True,
-                max_series=self.max_series,
-                min_series_length=self.min_series_length,
+                series_subset=train_series,
                 augmentations=self.augmentation_config,
             )
             
-            self.normalizer = self._full_dataset.get_normalizer()
+            # Récupérer le normalizer FITTÉ sur train
+            self.normalizer = train_ds.get_normalizer()
             
-            # Calculer les tailles
-            total_len = len(self._full_dataset)
-            train_frac, val_frac, test_frac = self.train_val_test_split
+            # Créer val dataset avec normalizer PRÉ-FITTÉ (pas d'augmentation)
+            val_ds = TimeSeriesDataset(
+                data_path=self.data_path,
+                context_length=self.context_length,
+                prediction_length=self.prediction_length,
+                stride=self.stride,
+                normalizer=self.normalizer,  # Pré-fitté sur train!
+                normalize_mode=self.normalize_mode,
+                return_tensor=True,
+                series_subset=val_series,
+                augmentations=None,  # Pas d'augmentation en val
+            )
             
-            train_len = int(total_len * train_frac)
-            val_len = int(total_len * val_frac)
-            test_len = total_len - train_len - val_len
+            # Créer test dataset avec normalizer PRÉ-FITTÉ (pas d'augmentation)
+            test_ds = TimeSeriesDataset(
+                data_path=self.data_path,
+                context_length=self.context_length,
+                prediction_length=self.prediction_length,
+                stride=self.stride,
+                normalizer=self.normalizer,  # Pré-fitté sur train!
+                normalize_mode=self.normalize_mode,
+                return_tensor=True,
+                series_subset=test_series,
+                augmentations=None,  # Pas d'augmentation en test
+            )
             
-            logger.info(f"Splitting {total_len} windows: "
-                    f"train={train_len}, val={val_len}, test={test_len}")
-            
+            # Wrapper avec AugmentedSubset (comme avant)
             self.train_dataset = AugmentedSubset(
-                self._full_dataset, 
-                range(0, train_len),
+                train_ds, 
+                indices=list(range(len(train_ds))),
                 apply_augmentation=True
             )
             self.val_dataset = AugmentedSubset(
-                self._full_dataset, 
-                range(train_len, train_len + val_len),
+                val_ds, 
+                indices=list(range(len(val_ds))),
                 apply_augmentation=False
             )
             self.test_dataset = AugmentedSubset(
-                self._full_dataset, 
-                range(train_len + val_len, total_len),
+                test_ds, 
+                indices=list(range(len(test_ds))),
                 apply_augmentation=False
             )
             
-            logger.info(f"✓ Setup complete with {self.normalizer.__class__.__name__}")
+            logger.info(f"✓ Setup complete (split by SERIES, no leakage)")
+            logger.info(f"  Train: {len(self.train_dataset)} windows from {len(train_series)} series")
+            logger.info(f"  Val: {len(self.val_dataset)} windows from {len(val_series)} series")
+            logger.info(f"  Test: {len(self.test_dataset)} windows from {len(test_series)} series")
+            logger.info(f"  Normalizer: {self.normalizer.__class__.__name__} (fit on train only)")
             if self.augmentation_config:
                 logger.info(f"✓ Augmentations enabled for training only")
     
@@ -429,11 +499,14 @@ class MultiHorizonDataModule(MonashDataModule):
         stride: int = 1,
         normalize_mode: Literal["per_series", "global"] = "per_series",
         normalizer_type: str = "standard",
+        clip_outliers: bool = True,
+        clip_sigma: float = 5.0,
         train_val_test_split: tuple = (0.7, 0.15, 0.15),
         num_workers: int = 4,
         pin_memory: bool = True,
         persistent_workers: bool = True,
         max_series: Optional[int] = None,
+        min_series_length: Optional[int] = None,
         augmentation_config: Optional[Dict[str, Any]] = None,
         seed: int = 42
     ):
@@ -447,55 +520,92 @@ class MultiHorizonDataModule(MonashDataModule):
             stride=stride,
             normalize_mode=normalize_mode,
             normalizer_type=normalizer_type,
+            clip_outliers=clip_outliers,
+            clip_sigma=clip_sigma,
             train_val_test_split=train_val_test_split,
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=persistent_workers,
             max_series=max_series,
+            min_series_length=min_series_length,
             augmentation_config=augmentation_config,
             seed=seed
         )
     
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
-            self._full_dataset = MultiHorizonDataset(
+            # Charger les données pour identifier les séries valides
+            data = np.load(self.data_path, allow_pickle=True)
+            valid_indices = self._get_valid_series_indices(data)
+            
+            if self.max_series is not None and len(valid_indices) > self.max_series:
+                valid_indices = valid_indices[:self.max_series]
+            
+            num_series = len(valid_indices)
+            train_perm, val_perm, test_perm = self._split_series_indices(num_series)
+            
+            train_series = [valid_indices[i] for i in train_perm]
+            val_series = [valid_indices[i] for i in val_perm]
+            test_series = [valid_indices[i] for i in test_perm]
+            
+            logger.info(f"Split {num_series} SERIES: train={len(train_series)}, "
+                       f"val={len(val_series)}, test={len(test_series)}")
+            
+            normalizer = get_normalizer(
+                self.normalizer_type,
+                clip_outliers=self.clip_outliers,
+                clip_sigma=self.clip_sigma
+            )
+            
+            # Train dataset
+            train_ds = MultiHorizonDataset(
                 data_path=self.data_path,
                 context_length=self.context_length,
                 prediction_lengths=self.prediction_lengths,
                 stride=self.stride,
-                normalizer=None,
+                normalizer=normalizer,
                 normalize_mode=self.normalize_mode,
                 return_tensor=True,
-                max_series=self.max_series
+                series_subset=train_series,
             )
             
-            self.normalizer = self._full_dataset.get_normalizer()
+            self.normalizer = train_ds.get_normalizer()
             
-            total_len = len(self._full_dataset)
-            train_frac, val_frac, test_frac = self.train_val_test_split
+            # Val dataset
+            val_ds = MultiHorizonDataset(
+                data_path=self.data_path,
+                context_length=self.context_length,
+                prediction_lengths=self.prediction_lengths,
+                stride=self.stride,
+                normalizer=self.normalizer,
+                normalize_mode=self.normalize_mode,
+                return_tensor=True,
+                series_subset=val_series,
+            )
             
-            train_len = int(total_len * train_frac)
-            val_len = int(total_len * val_frac)
-            test_len = total_len - train_len - val_len
-            
-            generator = torch.Generator().manual_seed(self.seed)
-            indices = torch.randperm(total_len, generator=generator).tolist()
-            
-            train_indices = indices[:train_len]
-            val_indices = indices[train_len:train_len + val_len]
-            test_indices = indices[train_len + val_len:]
+            # Test dataset
+            test_ds = MultiHorizonDataset(
+                data_path=self.data_path,
+                context_length=self.context_length,
+                prediction_lengths=self.prediction_lengths,
+                stride=self.stride,
+                normalizer=self.normalizer,
+                normalize_mode=self.normalize_mode,
+                return_tensor=True,
+                series_subset=test_series,
+            )
             
             self.train_dataset = AugmentedSubset(
-                self._full_dataset, train_indices, apply_augmentation=True
+                train_ds, indices=list(range(len(train_ds))), apply_augmentation=True
             )
             self.val_dataset = AugmentedSubset(
-                self._full_dataset, val_indices, apply_augmentation=False
+                val_ds, indices=list(range(len(val_ds))), apply_augmentation=False
             )
             self.test_dataset = AugmentedSubset(
-                self._full_dataset, test_indices, apply_augmentation=False
+                test_ds, indices=list(range(len(test_ds))), apply_augmentation=False
             )
             
-            logger.info(f"✓ Setup complete for multi-horizon training "
+            logger.info(f"✓ Setup complete for multi-horizon (split by SERIES) "
                        f"with horizons: {self.prediction_lengths}")
 
 
@@ -755,6 +865,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             
             self.normalizer = list(self.datamodules.values())[0].normalizer
             
+            logger.info("✓ All sub-datasets split by SERIES (no cross-split leakage)")
             if self.augmentation_config:
                 logger.info(f"✓ Augmentations enabled for training across all datasets")
     
