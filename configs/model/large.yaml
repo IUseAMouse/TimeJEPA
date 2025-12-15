@@ -87,8 +87,8 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: []
-  datasets_finetune: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "weather", "m4_hourly", "australian_electricity_demand", "us_births", "solar-power-4-seconds", "solar-10-minutes-dataset", "nn5-daily", "melbourne-pedestrian-count"]
-  datasets_eval: ["saugeenday", "sunspot_daily", "windpower-4-seconds", "electricity", "traffic", "bitcoin", "weather", "m4_hourly", "australian_electricity_demand"]
+  datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "australian-electricity-demand", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minutes-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-extended", "london-smart-meters"]
+  datasets_eval: []
   combine_mode: "concatenate"
   batch_size: 256  # Réduit significativement pour VRAM
   stride: 8

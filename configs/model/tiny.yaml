@@ -100,7 +100,7 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: [] # This load alls
-  datasets_finetune: []
+  datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "australian-electricity-demand", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minutes-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-extended", "london-smart-meters"]
   datasets_eval: []
   combine_mode: "concatenate"
   batch_size: 1024
