@@ -52,7 +52,7 @@ model:
 training:
   mode: "pretrain"
   finetune_mode: "gradual_unfreeze"
-  unfreeze_after_epoch: 3
+  unfreeze_after_epoch: 1
   
   # Loss configuration
   loss:

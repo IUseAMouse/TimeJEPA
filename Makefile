@@ -78,22 +78,6 @@ train: ## Pretrain model (usage: make train CONFIG=base)
 	@echo "🚀 Starting pretraining with config: $(CONFIG)"
 	python scripts/train.py --config-name $(CONFIG) $(ARGS)
 
-train-tiny: ## Quick pretrain with tiny config (for debugging)
-	@$(MAKE) train CONFIG=tiny ARGS="training.max_epochs=5 $(ARGS)"
-
-train-base: ## Pretrain with base config (recommended for 60M points)
-	@$(MAKE) train CONFIG=base $(ARGS)
-
-train-resume: ## Resume training from checkpoint (usage: make train-resume CONFIG=base CHECKPOINT=path/to/ckpt)
-	@if [ -z "$(CHECKPOINT)" ]; then \
-		echo "❌ Error: CHECKPOINT is not set."; \
-		echo "Usage: make train-resume CONFIG=base CHECKPOINT=checkpoints/epoch=10.ckpt"; \
-		exit 1; \
-	fi
-	@echo "🔄 Resuming training from: $(CHECKPOINT)"
-	python scripts/train.py --config-name $(or $(CONFIG),base) \
-		+trainer.resume_from_checkpoint="$(CHECKPOINT)" \
-		$(ARGS)
 
 ##@ Finetuning
 
@@ -126,37 +110,9 @@ evaluate: ## Evaluate trained model (usage: make evaluate CHECKPOINT=path/to/ckp
 		exit 1; \
 	fi
 	python scripts/evaluate.py \
-		--checkpoint $(CHECKPOINT) \
-		$(if $(DATASET),--dataset $(DATASET),)
+		+checkpoint_path=$(CHECKPOINT) \
+		data.datasets_eval=$(or $(DATASETS), [])
 
-evaluate-all: ## Evaluate on all test datasets
-	@if [ -z "$(CHECKPOINT)" ]; then \
-		echo "❌ Error: CHECKPOINT is not set."; \
-		exit 1; \
-	fi
-	python scripts/evaluate.py --checkpoint $(CHECKPOINT) --all-datasets
-
-##@ Code Quality
-
-format: ## Format code with ruff
-	ruff format src/ scripts/
-	ruff check --fix src/ scripts/
-
-lint: ## Lint code with ruff
-	ruff check src/ scripts/
-
-typecheck: ## Type check with mypy
-	mypy src/
-
-check-all: format lint typecheck ## Run all code quality checks
-	@echo "✓ All checks passed!"
-
-##@ Cleanup
-
-clean: ## Remove build artifacts and caches
-	rm -rf build/ dist/ *.egg-info .pytest_cache/ .mypy_cache/ .ruff_cache/
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
 
 clean-data: ## Remove downloaded and processed data (WARNING: destructive)
 	rm -rf data/raw/ data/processed/
@@ -169,17 +125,3 @@ clean-checkpoints: ## Remove all checkpoints (WARNING: destructive)
 	@echo "✓ Checkpoints removed."
 
 clean-all: clean clean-data ## Remove all generated files (keeps checkpoints)
-
-##@ Utilities
-
-tensorboard: ## Launch TensorBoard
-	tensorboard --logdir lightning_logs/
-
-wandb-sync: ## Sync offline W&B runs
-	wandb sync --sync-all
-
-gpu-status: ## Show GPU status
-	@nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv
-
-watch-gpu: ## Watch GPU status (updates every 1s)
-	watch -n 1 nvidia-smi

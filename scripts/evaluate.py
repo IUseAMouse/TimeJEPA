@@ -542,7 +542,7 @@ def main(cfg: DictConfig):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
     # Output directory
-    output_dir = Path(cfg.data.output_dir) / "evaluation" / cfg.model.name
+    output_dir = Path(cfg.data.output_dir) / "evaluation" / cfg.model.name / checkpoint_path.split('/')[-1]
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Device
