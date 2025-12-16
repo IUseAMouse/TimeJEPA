@@ -5,10 +5,10 @@ model:
   name: "timejepa_base"
   
   seq_length: 512
-  patch_length: 16
-  stride: 8
+  patch_length: 4
+  stride: 4
   num_channels: 1
-  prediction_length: 192
+  prediction_length: 128
   
   encoder:
     d_model: 384
