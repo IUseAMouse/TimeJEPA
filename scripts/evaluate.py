@@ -1,10 +1,25 @@
 # scripts/evaluate.py
 """
-Evaluation script for finetuned TimeJEPA model.
+Unified evaluation script for finetuned TimeJEPA model.
+
+Supports:
+- Local Monash datasets (.npy files in data_dir)
+- Nixtla Long-Horizon benchmarks (auto-downloaded)
 
 Usage:
+    # Evaluate on local datasets
     python scripts/evaluate.py +checkpoint_path=path/to/checkpoint.ckpt
     python scripts/evaluate.py +checkpoint_path=path/to/checkpoint.ckpt data.datasets_eval=[traffic,electricity]
+    
+    # Evaluate on Nixtla benchmarks
+    python scripts/evaluate.py +checkpoint_path=path/to/ckpt +nixtla=[ettm1,ettm2,weather]
+    
+    # With specific horizons
+    python scripts/evaluate.py +checkpoint_path=path/to/ckpt +nixtla=[ettm2] +horizons=[96,192,336,720]
+    
+    # Both local and Nixtla
+    python scripts/evaluate.py +checkpoint_path=path/to/ckpt \
+        data.datasets_eval=[traffic] +nixtla=[ettm2,weather]
 """
 
 import logging
@@ -14,7 +29,7 @@ from typing import Dict, List, Optional
 import json
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, ListConfig
 import torch
 import pytorch_lightning as pl
 import numpy as np
@@ -34,9 +49,23 @@ from timejepa.training.utils.metrics import (
 from timejepa.models import JEPATST
 from timejepa.models.decoders import ForecastingHead
 
+# Nixtla imports (optional - graceful degradation if not installed)
+try:
+    from timejepa.data.nixtla import (
+        download_and_convert,
+        get_dataset_info,
+        get_benchmark_horizons,
+        get_available_datasets,
+        NIXTLA_REGISTRY,
+    )
+    NIXTLA_AVAILABLE = True
+except ImportError:
+    NIXTLA_AVAILABLE = False
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 
 # =============================================================================
 # CHECKPOINT LOADING
@@ -132,6 +161,74 @@ def load_checkpoint(
 
 
 # =============================================================================
+# MODEL CREATION
+# =============================================================================
+
+def create_model_from_config(cfg: DictConfig, prediction_length: Optional[int] = None) -> JEPATST:
+    """
+    Create JEPA-TST model from Hydra config.
+    
+    Args:
+        cfg: Hydra config
+        prediction_length: Override prediction length (for multi-horizon evaluation)
+    """
+    pred_len = prediction_length or cfg.model.prediction_length
+    
+    model = JEPATST(
+        input_length=cfg.model.seq_length,
+        prediction_length=pred_len,
+        num_features=cfg.model.num_channels,
+        patch_size=cfg.model.patch_length,
+        stride=cfg.model.stride,
+        d_model=cfg.model.encoder.d_model,
+        num_layers=cfg.model.encoder.n_layers,
+        num_heads=cfg.model.encoder.n_heads,
+        d_ff=cfg.model.encoder.d_ff,
+        dropout=cfg.model.encoder.dropout,
+        activation=cfg.model.encoder.activation,
+        predictor_type=cfg.model.predictor.type,
+        predictor_num_layers=cfg.model.predictor.n_layers,
+        predictor_num_heads=cfg.model.predictor.n_heads,
+        predictor_d_ff=cfg.model.predictor.d_ff,
+        decoder_type=cfg.model.decoder.type,
+        ema_tau_base=cfg.model.target_encoder.momentum_base,
+        ema_tau_end=cfg.model.target_encoder.momentum_final,
+        use_revin=cfg.model.encoder.use_revin,
+    )
+    
+    # Add forecasting decoder
+    model.decoder = ForecastingHead(
+        d_model=cfg.model.decoder.d_model,
+        patch_size=cfg.model.patch_length,
+        stride=cfg.model.stride,
+        prediction_length=pred_len,
+        num_features=cfg.model.num_channels,
+        decoder_type=cfg.model.decoder.type,
+        revin=model.revin
+    )
+    
+    return model
+
+
+def find_best_checkpoint(cfg: DictConfig) -> Optional[str]:
+    """Find the best checkpoint from the checkpoint directory."""
+    ckpt_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name / "pretrain_False"
+    
+    if not ckpt_dir.exists():
+        return None
+    
+    # Look for 'best' or 'last' checkpoint first
+    for pattern in ['*best*.ckpt', '*last*.ckpt', '*.ckpt']:
+        ckpts = list(ckpt_dir.glob(pattern))
+        if ckpts:
+            # Sort by modification time (most recent first)
+            ckpts = sorted(ckpts, key=lambda x: x.stat().st_mtime, reverse=True)
+            return str(ckpts[0])
+    
+    return None
+
+
+# =============================================================================
 # VISUALIZATION
 # =============================================================================
 
@@ -151,7 +248,10 @@ def plot_forecasts(
     n = min(num_samples, len(predictions))
     
     # Sélectionner des exemples variés (bons et mauvais)
-    errors = torch.mean((predictions - targets) ** 2, dim=-1).numpy()
+    errors = torch.mean((predictions - targets) ** 2, dim=-1)
+    if errors.ndim > 1:
+        errors = errors.mean(dim=-1)
+    errors = errors.numpy()
     
     # Mix: quelques bons, quelques moyens, quelques mauvais
     sorted_idx = np.argsort(errors)
@@ -404,14 +504,27 @@ def plot_summary_comparison(
 def evaluate_dataset(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
-    device: torch.device
+    device: torch.device,
+    max_samples: Optional[int] = None,
 ) -> Dict[str, torch.Tensor]:
-    """Run evaluation on a single dataset."""
+    """
+    Run evaluation on a single dataset.
+    
+    Args:
+        model: Model in eval mode
+        dataloader: Test dataloader
+        device: Device to run on
+        max_samples: Optional limit on number of samples (for large datasets)
+    
+    Returns:
+        Dictionary with 'contexts', 'predictions', 'targets' tensors
+    """
     model.eval()
     
     all_contexts = []
     all_predictions = []
     all_targets = []
+    total_samples = 0
     
     for batch in tqdm(dataloader, desc="  Inference", leave=False):
         context = batch['context'].to(device)
@@ -427,13 +540,10 @@ def evaluate_dataset(
         output = model(context)
         
         # Handle dict output from JEPATST
-        # In finetune mode, model returns {'forecast': ..., 'forecast_denorm': ...}
         if isinstance(output, dict):
-            # Use denormalized forecast for evaluation (original scale matches targets)
             if 'forecast_denorm' in output:
                 predictions = output['forecast_denorm']
             elif 'forecast' in output:
-                # Fallback to normalized forecast if denorm not available
                 predictions = output['forecast']
             else:
                 raise ValueError(f"Expected 'forecast_denorm' or 'forecast' in output, got keys: {list(output.keys())}")
@@ -449,6 +559,10 @@ def evaluate_dataset(
         all_contexts.append(context.cpu())
         all_predictions.append(predictions.cpu())
         all_targets.append(target.cpu())
+        
+        total_samples += len(context)
+        if max_samples and total_samples >= max_samples:
+            break
     
     return {
         'contexts': torch.cat(all_contexts, dim=0),
@@ -457,60 +571,154 @@ def evaluate_dataset(
     }
 
 
-def create_model_from_config(cfg: DictConfig) -> JEPATST:
-    """Create JEPA-TST model from Hydra config."""
-    model = JEPATST(
-        input_length=cfg.model.seq_length,
-        prediction_length=cfg.model.prediction_length,
-        num_features=cfg.model.num_channels,
-        patch_size=cfg.model.patch_length,
-        stride=cfg.model.stride,
-        d_model=cfg.model.encoder.d_model,
-        num_layers=cfg.model.encoder.n_layers,
-        num_heads=cfg.model.encoder.n_heads,
-        d_ff=cfg.model.encoder.d_ff,
-        dropout=cfg.model.encoder.dropout,
-        activation=cfg.model.encoder.activation,
-        predictor_type=cfg.model.predictor.type,
-        predictor_num_layers=cfg.model.predictor.n_layers,
-        predictor_num_heads=cfg.model.predictor.n_heads,
-        predictor_d_ff=cfg.model.predictor.d_ff,
-        decoder_type=cfg.model.decoder.type,
-        ema_tau_base=cfg.model.target_encoder.momentum_base,
-        ema_tau_end=cfg.model.target_encoder.momentum_final,
-        use_revin=cfg.model.encoder.use_revin,
-    )
+# =============================================================================
+# NIXTLA LONG-HORIZON BENCHMARK EVALUATION
+# =============================================================================
+
+def evaluate_nixtla_dataset(
+    cfg: DictConfig,
+    checkpoint_path: str,
+    dataset_name: str,
+    horizons: List[int],
+    device: torch.device,
+    output_dir: Path,
+    max_samples: int = 5000,
+) -> Dict[int, Dict[str, float]]:
+    """
+    Evaluate on a Nixtla dataset across multiple horizons.
     
-    # Add forecasting decoder
-    model.decoder = ForecastingHead(
-        d_model=cfg.model.decoder.d_model,
-        patch_size=cfg.model.patch_length,
-        stride=cfg.model.stride,
-        prediction_length=cfg.model.prediction_length,
-        num_features=cfg.model.num_channels,
-        decoder_type=cfg.model.decoder.type,
-        revin=model.revin
-    )
+    Uses existing MonashDataModule after converting Nixtla data to .npy.
     
-    return model
+    Args:
+        cfg: Hydra config
+        checkpoint_path: Path to model checkpoint
+        dataset_name: Name of Nixtla dataset (e.g., 'ettm2')
+        horizons: List of prediction horizons to evaluate
+        device: Torch device
+        output_dir: Where to save results
+        max_samples: Max samples per horizon (to limit memory/time)
+    
+    Returns:
+        Dictionary mapping horizon -> metrics dict
+    """
+    if not NIXTLA_AVAILABLE:
+        raise ImportError(
+            "Nixtla support requires datasetsforecast. "
+            "Install with: pip install datasetsforecast"
+        )
+    
+    results = {}
+    nixtla_cache = Path(cfg.data.data_dir) / 'nixtla'
+    
+    for horizon in horizons:
+        logger.info(f"\n  📏 Horizon: {horizon}")
+        
+        # Download/convert to .npy (cached after first download)
+        data_path = download_and_convert(
+            dataset_name=dataset_name,
+            output_dir=nixtla_cache,
+            split='test',
+        )
+        
+        # Create model with this specific horizon
+        model = create_model_from_config(cfg, prediction_length=horizon)
+        model = load_checkpoint(model, checkpoint_path, device)
+        model.set_pretrain_mode(mode=False)
+        
+        # Use existing MonashDataModule
+        # Nixtla data is pre-normalized, so use identity normalizer
+        dm = MonashDataModule(
+            data_path=data_path,
+            context_length=cfg.model.seq_length,
+            prediction_length=horizon,
+            batch_size=cfg.data.batch_size,
+            stride=horizon,  # Non-overlapping for fair evaluation
+            normalize_mode='per_series',
+            normalizer_type='identity',  # Data already normalized by Nixtla
+            clip_outliers=False,
+            train_val_test_split=(0.0, 0.0, 1.0),  # All data is test
+            num_workers=4,
+        )
+        dm.prepare_data()
+        dm.setup('fit')
+        
+        logger.info(f"     Samples: {len(dm.test_dataset)}")
+        
+        # Evaluate
+        result = evaluate_dataset(model, dm.test_dataloader(), device, max_samples)
+        metrics = compute_forecasting_metrics_extended(result['predictions'], result['targets'])
+        results[horizon] = metrics
+        
+        logger.info(f"     MSE: {metrics['mse']:.4f} | MAE: {metrics['mae']:.4f}")
+        
+        # Plot for first horizon only (to avoid too many plots)
+        if horizon == horizons[0]:
+            plot_forecasts(
+                result['contexts'], 
+                result['predictions'], 
+                result['targets'],
+                f"{dataset_name}_h{horizon}", 
+                output_dir / "plots",
+                num_samples=6
+            )
+    
+    return results
 
 
-def find_best_checkpoint(cfg: DictConfig) -> Optional[str]:
-    """Find the best checkpoint from the checkpoint directory."""
-    ckpt_dir = Path(cfg.data.checkpoint_dir) / cfg.model.name / "pretrain_False"
+def create_nixtla_benchmark_table(
+    all_results: Dict[str, Dict[int, Dict[str, float]]],
+    output_dir: Path,
+) -> pd.DataFrame:
+    """
+    Create benchmark results table in standard format (like PatchTST/iTransformer papers).
     
-    if not ckpt_dir.exists():
-        return None
+    Args:
+        all_results: Dict of dataset_name -> {horizon -> metrics}
+        output_dir: Where to save CSV files
     
-    # Look for 'best' or 'last' checkpoint first
-    for pattern in ['*best*.ckpt', '*last*.ckpt', '*.ckpt']:
-        ckpts = list(ckpt_dir.glob(pattern))
-        if ckpts:
-            # Sort by modification time (most recent first)
-            ckpts = sorted(ckpts, key=lambda x: x.stat().st_mtime, reverse=True)
-            return str(ckpts[0])
+    Returns:
+        Long-format DataFrame with all results
+    """
+    rows = []
+    for dataset, horizon_results in all_results.items():
+        for horizon, metrics in sorted(horizon_results.items()):
+            rows.append({
+                'Dataset': dataset,
+                'Horizon': horizon,
+                'MSE': metrics['mse'],
+                'MAE': metrics['mae'],
+                'RMSE': metrics['rmse'],
+                'SMAPE': metrics['smape'],
+            })
     
-    return None
+    df = pd.DataFrame(rows)
+    
+    # Create pivot tables (standard benchmark format)
+    mse_pivot = df.pivot(index='Dataset', columns='Horizon', values='MSE')
+    mae_pivot = df.pivot(index='Dataset', columns='Horizon', values='MAE')
+    
+    # Add average column
+    mse_pivot['Avg'] = mse_pivot.mean(axis=1)
+    mae_pivot['Avg'] = mae_pivot.mean(axis=1)
+    
+    # Save all formats
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_dir / 'nixtla_results_long.csv', index=False)
+    mse_pivot.to_csv(output_dir / 'nixtla_mse.csv')
+    mae_pivot.to_csv(output_dir / 'nixtla_mae.csv')
+    
+    # Print tables
+    print("\n" + "=" * 70)
+    print("📊 NIXTLA BENCHMARK RESULTS - MSE")
+    print("=" * 70)
+    print(mse_pivot.round(4).to_string())
+    
+    print("\n" + "=" * 70)
+    print("📊 NIXTLA BENCHMARK RESULTS - MAE")
+    print("=" * 70)
+    print(mae_pivot.round(4).to_string())
+    
+    return df
 
 
 # =============================================================================
@@ -542,124 +750,202 @@ def main(cfg: DictConfig):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
     # Output directory
-    output_dir = Path(cfg.data.output_dir) / "evaluation" / cfg.model.name / checkpoint_path.split('/')[-1]
+    ckpt_name = Path(checkpoint_path).stem
+    output_dir = Path(cfg.data.output_dir) / "evaluation" / cfg.model.name / ckpt_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
     
-    # Create model architecture
-    logger.info("Creating model...")
-    model = create_model_from_config(cfg)
+    # =========================================================================
+    # NIXTLA LONG-HORIZON BENCHMARKS
+    # =========================================================================
     
-    # Load checkpoint (utilise la nouvelle fonction unifiée)
-    eval_model = load_checkpoint(model, checkpoint_path, device)
-    eval_model.set_pretrain_mode(mode=False)
-    logger.info("  ✓ Switched model to inference mode (pretrain=False)")
+    nixtla_datasets = cfg.get('nixtla', None)
+    nixtla_results = {}
     
-    # Get datasets to evaluate
+    if nixtla_datasets:
+        if not NIXTLA_AVAILABLE:
+            logger.error(
+                "❌ Nixtla evaluation requested but datasetsforecast not installed.\n"
+                "   Install with: pip install datasetsforecast"
+            )
+        else:
+            # Convert ListConfig to list
+            if isinstance(nixtla_datasets, ListConfig):
+                nixtla_datasets = list(nixtla_datasets)
+            
+            logger.info(f"\n📦 Nixtla Long-Horizon Benchmarks: {nixtla_datasets}")
+            
+            # Get horizons (from config or default)
+            horizons = cfg.get('horizons', None)
+            if horizons:
+                horizons = list(horizons) if isinstance(horizons, ListConfig) else horizons
+            else:
+                horizons = [96, 192, 336, 720]  # Standard benchmark horizons
+            
+            logger.info(f"   Horizons: {horizons}")
+            
+            for name in nixtla_datasets:
+                print("\n" + "=" * 60)
+                print(f"📈 {name.upper()}")
+                print("=" * 60)
+                
+                # Validate dataset name
+                if name.lower() not in NIXTLA_REGISTRY:
+                    logger.warning(
+                        f"Unknown dataset: {name}. "
+                        f"Available: {get_available_datasets()}"
+                    )
+                    continue
+                
+                try:
+                    # ILI uses different horizons
+                    ds_horizons = horizons
+                    if name.lower() == 'ili':
+                        ds_horizons = [h for h in [24, 36, 48, 60] if h in horizons]
+                        if not ds_horizons:
+                            ds_horizons = [24, 36, 48, 60]
+                    
+                    results = evaluate_nixtla_dataset(
+                        cfg=cfg,
+                        checkpoint_path=checkpoint_path,
+                        dataset_name=name,
+                        horizons=ds_horizons,
+                        device=device,
+                        output_dir=output_dir,
+                    )
+                    nixtla_results[name] = results
+                    
+                except Exception as e:
+                    logger.error(f"Error evaluating {name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Create benchmark summary tables
+            if nixtla_results:
+                create_nixtla_benchmark_table(nixtla_results, output_dir)
+                
+                # Save as JSON
+                json_results = {
+                    ds: {str(h): m for h, m in hr.items()}
+                    for ds, hr in nixtla_results.items()
+                }
+                with open(output_dir / 'nixtla_results.json', 'w') as f:
+                    json.dump(json_results, f, indent=2)
+    
+    # =========================================================================
+    # LOCAL DATASET EVALUATION
+    # =========================================================================
+    
     datasets_eval = cfg.data.get('datasets_eval', [])
     
-    if not datasets_eval:
+    if not datasets_eval and not nixtla_datasets:
+        # If no datasets specified, evaluate on all local .npy files
         data_dir = Path(cfg.data.data_dir)
-        datasets_eval = [f.stem for f in data_dir.glob("*.npy")]
-        logger.info(f"Evaluating on all datasets: {datasets_eval}")
-    else:
-        logger.info(f"Evaluating on specified datasets: {datasets_eval}")
+        datasets_eval = [f.stem for f in data_dir.glob("*.npy") if not f.stem.startswith('nixtla_')]
+        if datasets_eval:
+            logger.info(f"Evaluating on all local datasets: {datasets_eval}")
     
-    if not datasets_eval:
-        raise ValueError(f"No datasets found in {cfg.data.data_dir}")
-    
-    # Results storage
     all_results = {}
     all_horizon_metrics = {}
     
-    # Evaluate each dataset
-    for dataset_name in datasets_eval:
-        print("\n" + "=" * 60)
-        print(f"📈 Evaluating: {dataset_name}")
-        print("=" * 60)
+    if datasets_eval:
+        logger.info(f"\n📦 Local datasets: {datasets_eval}")
         
-        data_path = Path(cfg.data.data_dir) / f"{dataset_name}.npy"
+        # Create model (single instance for local evaluation)
+        logger.info("Creating model...")
+        model = create_model_from_config(cfg)
+        eval_model = load_checkpoint(model, checkpoint_path, device)
+        eval_model.set_pretrain_mode(mode=False)
+        logger.info("  ✓ Switched model to inference mode (pretrain=False)")
         
-        if not data_path.exists():
-            logger.warning(f"  ⚠️ Dataset not found: {data_path}, skipping...")
-            continue
-        
-        try:
-            # Create datamodule
-            dm = MonashDataModule(
-                data_path=data_path,
-                context_length=cfg.model.seq_length,
-                prediction_length=cfg.model.prediction_length,
-                batch_size=cfg.data.batch_size,
-                stride=cfg.data.stride,
-                normalize_mode=cfg.data.normalize_mode,
-                normalizer_type=cfg.data.normalizer_type,
-                clip_outliers=cfg.data.clip_outliers,
-                clip_sigma=cfg.data.clip_sigma,
-                train_val_test_split=cfg.data.train_val_test_split,
-                num_workers=4,
-                seed=cfg.data.seed
-            )
-            dm.prepare_data()
-            dm.setup()
+        # Evaluate each dataset
+        for dataset_name in datasets_eval:
+            print("\n" + "=" * 60)
+            print(f"📈 Evaluating: {dataset_name}")
+            print("=" * 60)
             
-            logger.info(f"  Test samples: {len(dm.test_dataset)}")
+            data_path = Path(cfg.data.data_dir) / f"{dataset_name}.npy"
             
-            # Evaluate on test set
-            test_loader = dm.test_dataloader()
-            results = evaluate_dataset(eval_model, test_loader, device)
+            if not data_path.exists():
+                logger.warning(f"  ⚠️ Dataset not found: {data_path}, skipping...")
+                continue
             
-            # Compute metrics using metrics.py
-            metrics = compute_forecasting_metrics_extended(
-                results['predictions'], 
-                results['targets']
-            )
-            all_results[dataset_name] = metrics
-            
-            # Compute per-horizon metrics
-            horizon_metrics = compute_per_horizon_metrics(
-                results['predictions'],
-                results['targets']
-            )
-            all_horizon_metrics[dataset_name] = horizon_metrics
-            
-            # Print metrics
-            print(f"\n  📊 Results:")
-            print(f"     RMSE:        {metrics['rmse']:.4f}")
-            print(f"     MAE:         {metrics['mae']:.4f}")
-            print(f"     SMAPE:       {metrics['smape']:.2f}%")
-            print(f"     MAPE:        {metrics['mape']:.2f}%")
-            print(f"     Huber:       {metrics['huber']:.4f}")
-            print(f"     R²:          {metrics['r2']:.4f}")
-            print(f"     Correlation: {metrics['correlation']:.4f}")
-            
-            # Generate plots
-            plots_dir = output_dir / "plots"
-            
-            plot_forecasts(
-                results['contexts'],
-                results['predictions'],
-                results['targets'],
-                dataset_name,
-                plots_dir,
-                num_samples=9
-            )
-            
-            plot_error_analysis(
-                results['predictions'],
-                results['targets'],
-                dataset_name,
-                plots_dir
-            )
-            
-        except Exception as e:
-            logger.error(f"  ❌ Error evaluating {dataset_name}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+            try:
+                # Create datamodule
+                dm = MonashDataModule(
+                    data_path=data_path,
+                    context_length=cfg.model.seq_length,
+                    prediction_length=cfg.model.prediction_length,
+                    batch_size=cfg.data.batch_size,
+                    stride=cfg.data.stride,
+                    normalize_mode=cfg.data.normalize_mode,
+                    normalizer_type=cfg.data.normalizer_type,
+                    clip_outliers=cfg.data.clip_outliers,
+                    clip_sigma=cfg.data.clip_sigma,
+                    train_val_test_split=cfg.data.train_val_test_split,
+                    num_workers=4,
+                    seed=cfg.data.seed
+                )
+                dm.prepare_data()
+                dm.setup()
+                
+                logger.info(f"  Test samples: {len(dm.test_dataset)}")
+                
+                # Evaluate on test set
+                test_loader = dm.test_dataloader()
+                results = evaluate_dataset(eval_model, test_loader, device)
+                
+                # Compute metrics using metrics.py
+                metrics = compute_forecasting_metrics_extended(
+                    results['predictions'], 
+                    results['targets']
+                )
+                all_results[dataset_name] = metrics
+                
+                # Compute per-horizon metrics
+                horizon_metrics = compute_per_horizon_metrics(
+                    results['predictions'],
+                    results['targets']
+                )
+                all_horizon_metrics[dataset_name] = horizon_metrics
+                
+                # Print metrics
+                print(f"\n  📊 Results:")
+                print(f"     RMSE:        {metrics['rmse']:.4f}")
+                print(f"     MAE:         {metrics['mae']:.4f}")
+                print(f"     SMAPE:       {metrics['smape']:.2f}%")
+                print(f"     MAPE:        {metrics['mape']:.2f}%")
+                print(f"     Huber:       {metrics['huber']:.4f}")
+                print(f"     R²:          {metrics['r2']:.4f}")
+                print(f"     Correlation: {metrics['correlation']:.4f}")
+                
+                # Generate plots
+                plots_dir = output_dir / "plots"
+                
+                plot_forecasts(
+                    results['contexts'],
+                    results['predictions'],
+                    results['targets'],
+                    dataset_name,
+                    plots_dir,
+                    num_samples=9
+                )
+                
+                plot_error_analysis(
+                    results['predictions'],
+                    results['targets'],
+                    dataset_name,
+                    plots_dir
+                )
+                
+            except Exception as e:
+                logger.error(f"  ❌ Error evaluating {dataset_name}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
     
     # ==========================================================================
     # SUMMARY
@@ -669,45 +955,51 @@ def main(cfg: DictConfig):
     print("📋 EVALUATION SUMMARY")
     print("=" * 80)
     
-    if not all_results:
+    # Local dataset summary
+    if all_results:
+        df = pd.DataFrame(all_results).T
+        df.index.name = 'Dataset'
+        
+        print("\n📊 Local Datasets:")
+        print(df.to_string())
+        
+        # Compute averages
+        print("\n" + "-" * 60)
+        avg_row = df.mean()
+        print(f"{'AVERAGE':<20}", end="")
+        for col in df.columns:
+            print(f" {col}: {avg_row[col]:.4f}", end=" |")
+        print()
+        
+        # Save results
+        results_json_path = output_dir / "local_results.json"
+        with open(results_json_path, 'w') as f:
+            json.dump(all_results, f, indent=2)
+        
+        results_csv_path = output_dir / "local_results.csv"
+        df.to_csv(results_csv_path)
+        
+        # Save horizon metrics
+        horizon_json_path = output_dir / "horizon_metrics.json"
+        with open(horizon_json_path, 'w') as f:
+            serializable = {
+                ds: {str(h): m for h, m in hm.items()} 
+                for ds, hm in all_horizon_metrics.items()
+            }
+            json.dump(serializable, f, indent=2)
+        
+        # Plot summary comparison
+        plot_summary_comparison(all_results, output_dir / "plots")
+    
+    # Nixtla summary (already printed in create_nixtla_benchmark_table)
+    if nixtla_results:
+        print(f"\n📊 Nixtla benchmark results saved to:")
+        print(f"   - {output_dir / 'nixtla_mse.csv'}")
+        print(f"   - {output_dir / 'nixtla_mae.csv'}")
+    
+    if not all_results and not nixtla_results:
         logger.error("No datasets were successfully evaluated!")
         return
-    
-    # Create summary table
-    df = pd.DataFrame(all_results).T
-    df.index.name = 'Dataset'
-    
-    # Print formatted table
-    print("\n" + df.to_string())
-    
-    # Compute averages
-    print("\n" + "-" * 60)
-    avg_row = df.mean()
-    print(f"{'AVERAGE':<20}", end="")
-    for col in df.columns:
-        print(f" {col}: {avg_row[col]:.4f}", end=" |")
-    print()
-    
-    # Save results
-    results_json_path = output_dir / "results.json"
-    with open(results_json_path, 'w') as f:
-        json.dump(all_results, f, indent=2)
-    
-    results_csv_path = output_dir / "results.csv"
-    df.to_csv(results_csv_path)
-    
-    # Save horizon metrics
-    horizon_json_path = output_dir / "horizon_metrics.json"
-    with open(horizon_json_path, 'w') as f:
-        # Convert int keys to strings for JSON
-        serializable = {
-            ds: {str(h): m for h, m in hm.items()} 
-            for ds, hm in all_horizon_metrics.items()
-        }
-        json.dump(serializable, f, indent=2)
-    
-    # Plot summary comparison
-    plot_summary_comparison(all_results, output_dir / "plots")
     
     # Save config used for evaluation
     config_path = output_dir / "eval_config.yaml"
@@ -718,8 +1010,12 @@ def main(cfg: DictConfig):
     print("✅ EVALUATION COMPLETE")
     print("=" * 80)
     print(f"  📁 Results saved to: {output_dir}")
-    print(f"     - results.json / results.csv")
-    print(f"     - horizon_metrics.json")
+    if all_results:
+        print(f"     - local_results.json / local_results.csv")
+        print(f"     - horizon_metrics.json")
+    if nixtla_results:
+        print(f"     - nixtla_results.json")
+        print(f"     - nixtla_mse.csv / nixtla_mae.csv")
     print(f"     - plots/")
     print("=" * 80)
 
