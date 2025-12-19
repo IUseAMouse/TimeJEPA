@@ -282,18 +282,68 @@ class JEPATST(nn.Module):
     def forecast(
         self, 
         context: torch.Tensor,
+        n: Optional[int] = None,
         return_representations: bool = False
     ) -> Dict[str, torch.Tensor]:
         """
-        Convenience wrapper for forecasting (used by FinetuneModule).
+        Forecast n steps ahead with automatic rolling if needed.
         
         Args:
             context: Past time series [B, context_length, C]
+            n: Number of steps to forecast. Defaults to self.prediction_length.
+               - If n <= prediction_length: single forward pass, truncate output
+               - If n > prediction_length: rolling forecast with m passes where
+                 m = ceil(n / prediction_length)
+            return_representations: If True, return intermediate representations
+                (only meaningful when n <= prediction_length)
             
         Returns:
-            Dictionary with forecast and denormalized forecast
+            Dictionary with:
+                - 'forecast': Normalized forecast [B, n, C]
+                - 'forecast_denorm': Denormalized forecast [B, n, C]
+                - 'context_embeddings', 'future_representations' (if return_representations 
+                  and n <= prediction_length)
         """
-        return self.forward_finetune(context, return_representations=return_representations)
+        if n is None:
+            n = self.prediction_length
+        
+        # Case 1: n <= native prediction length - single pass with truncation
+        if n <= self.prediction_length:
+            result = self.forward_finetune(context, return_representations=return_representations)
+            result['forecast'] = result['forecast'][:, :n]
+            result['forecast_denorm'] = result['forecast_denorm'][:, :n]
+            return result
+        
+        # Case 2: n > prediction_length - rolling forecast
+        # Calculate number of rolls: m such that m * prediction_length >= n
+        num_rolls = (n + self.prediction_length - 1) // self.prediction_length
+        
+        all_forecasts_denorm = []
+        current_context = context.clone()
+        
+        for roll_idx in range(num_rolls):
+            # Forward pass with current context
+            result = self.forward_finetune(current_context, return_representations=False)
+            all_forecasts_denorm.append(result['forecast_denorm'])
+            
+            # Prepare context for next roll (if not the last one)
+            if roll_idx < num_rolls - 1:
+                # Shift context window: drop oldest prediction_length values, 
+                # append the new predictions
+                current_context = torch.cat([
+                    current_context[:, self.prediction_length:, :],
+                    result['forecast_denorm']
+                ], dim=1)
+        
+        # Concatenate all forecasts and truncate to exactly n steps
+        forecast_denorm = torch.cat(all_forecasts_denorm, dim=1)[:, :n]
+        
+        # For normalized forecast in rolling mode, we return the denorm as placeholder
+        # (true normalized values would require re-normalizing with original context stats)
+        return {
+            'forecast': forecast_denorm,  # Note: not truly normalized in rolling mode
+            'forecast_denorm': forecast_denorm
+        }
 
     def forward(
         self,

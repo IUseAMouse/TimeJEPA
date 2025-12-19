@@ -164,19 +164,16 @@ def load_checkpoint(
 # MODEL CREATION
 # =============================================================================
 
-def create_model_from_config(cfg: DictConfig, prediction_length: Optional[int] = None) -> JEPATST:
+def create_model_from_config(cfg: DictConfig) -> JEPATST:
     """
-    Create JEPA-TST model from Hydra config.
+    Create JEPA-TST model from Hydra config with native architecture.
     
-    Args:
-        cfg: Hydra config
-        prediction_length: Override prediction length (for multi-horizon evaluation)
+    The model's prediction_length is fixed at creation time.
+    Use model.forecast(context, n=horizon) for different horizons.
     """
-    pred_len = prediction_length or cfg.model.prediction_length
-    
     model = JEPATST(
         input_length=cfg.model.seq_length,
-        prediction_length=pred_len,
+        prediction_length=cfg.model.prediction_length,
         num_features=cfg.model.num_channels,
         patch_size=cfg.model.patch_length,
         stride=cfg.model.stride,
@@ -201,7 +198,7 @@ def create_model_from_config(cfg: DictConfig, prediction_length: Optional[int] =
         d_model=cfg.model.decoder.d_model,
         patch_size=cfg.model.patch_length,
         stride=cfg.model.stride,
-        prediction_length=pred_len,
+        prediction_length=cfg.model.prediction_length,
         num_features=cfg.model.num_channels,
         decoder_type=cfg.model.decoder.type,
         revin=model.revin
@@ -508,7 +505,7 @@ def evaluate_dataset(
     max_samples: Optional[int] = None,
 ) -> Dict[str, torch.Tensor]:
     """
-    Run evaluation on a single dataset.
+    Run evaluation on a single dataset using native prediction length.
     
     Args:
         model: Model in eval mode
@@ -536,19 +533,83 @@ def evaluate_dataset(
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        # Forward pass through the model
-        output = model(context)
+        # Forward pass through the model (uses native prediction_length)
+        output = model.forecast(context)
         
         # Handle dict output from JEPATST
         if isinstance(output, dict):
-            if 'forecast_denorm' in output:
-                predictions = output['forecast_denorm']
-            elif 'forecast' in output:
-                predictions = output['forecast']
-            else:
-                raise ValueError(f"Expected 'forecast_denorm' or 'forecast' in output, got keys: {list(output.keys())}")
+            predictions = output.get('forecast_denorm', output.get('forecast'))
         else:
             predictions = output
+        
+        # Remove channel dim if univariate
+        if context.shape[-1] == 1:
+            context = context.squeeze(-1)
+            predictions = predictions.squeeze(-1)
+            target = target.squeeze(-1)
+        
+        all_contexts.append(context.cpu())
+        all_predictions.append(predictions.cpu())
+        all_targets.append(target.cpu())
+        
+        total_samples += len(context)
+        if max_samples and total_samples >= max_samples:
+            break
+    
+    return {
+        'contexts': torch.cat(all_contexts, dim=0),
+        'predictions': torch.cat(all_predictions, dim=0),
+        'targets': torch.cat(all_targets, dim=0)
+    }
+
+
+@torch.no_grad()
+def evaluate_dataset_horizon(
+    model: torch.nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    horizon: int,
+    device: torch.device,
+    max_samples: Optional[int] = None,
+) -> Dict[str, torch.Tensor]:
+    """
+    Run evaluation on a dataset with specific horizon using model.forecast(n=horizon).
+    
+    Uses rolling forecasts if horizon > model.prediction_length.
+    
+    Args:
+        model: Model in eval mode
+        dataloader: Test dataloader (must have target of length >= horizon)
+        horizon: Target forecast horizon
+        device: Device to run on
+        max_samples: Optional limit on number of samples
+    
+    Returns:
+        Dictionary with 'contexts', 'predictions', 'targets' tensors
+    """
+    model.eval()
+    native_horizon = model.prediction_length
+    
+    all_contexts = []
+    all_predictions = []
+    all_targets = []
+    total_samples = 0
+    
+    for batch in tqdm(dataloader, desc="  Inference", leave=False):
+        context = batch['context'].to(device)
+        target = batch['target'].to(device)
+        
+        # Add channel dim if needed (univariate)
+        if context.ndim == 2:
+            context = context.unsqueeze(-1)
+        if target.ndim == 2:
+            target = target.unsqueeze(-1)
+        
+        # Forecast with specified horizon (handles rolling internally)
+        output = model.forecast(context, n=horizon)
+        predictions = output['forecast_denorm']
+        
+        # Truncate target to horizon (dataloader may provide more)
+        target = target[:, :horizon]
         
         # Remove channel dim if univariate
         if context.shape[-1] == 1:
@@ -577,7 +638,7 @@ def evaluate_dataset(
 
 def evaluate_nixtla_dataset(
     cfg: DictConfig,
-    checkpoint_path: str,
+    model: torch.nn.Module,
     dataset_name: str,
     horizons: List[int],
     device: torch.device,
@@ -587,11 +648,13 @@ def evaluate_nixtla_dataset(
     """
     Evaluate on a Nixtla dataset across multiple horizons.
     
-    Uses existing MonashDataModule after converting Nixtla data to .npy.
+    Uses model.forecast(n=horizon) which handles:
+    - Truncation for horizon <= native prediction_length
+    - Rolling forecasts for horizon > native prediction_length
     
     Args:
         cfg: Hydra config
-        checkpoint_path: Path to model checkpoint
+        model: Already loaded model (with fixed architecture)
         dataset_name: Name of Nixtla dataset (e.g., 'ettm2')
         horizons: List of prediction horizons to evaluate
         device: Torch device
@@ -607,36 +670,46 @@ def evaluate_nixtla_dataset(
             "Install with: pip install datasetsforecast"
         )
     
+    native_horizon = model.prediction_length
+    context_length = cfg.model.seq_length
+    
+    logger.info(f"  Model: context={context_length}, native_horizon={native_horizon}")
+    
     results = {}
     nixtla_cache = Path(cfg.data.data_dir) / 'nixtla'
     
+    # Download data once (all horizons use same data)
+    data_path = download_and_convert(
+        dataset_name=dataset_name,
+        output_dir=nixtla_cache,
+        split='test',
+    )
+    
+    # Find max horizon to create dataloader with sufficient target length
+    max_horizon = max(horizons)
+    
     for horizon in horizons:
-        logger.info(f"\n  📏 Horizon: {horizon}")
+        # Determine forecast mode
+        if horizon <= native_horizon:
+            mode_str = f"truncate {native_horizon}→{horizon}"
+        else:
+            n_rolls = (horizon + native_horizon - 1) // native_horizon
+            mode_str = f"rolling: {n_rolls}×{native_horizon}"
         
-        # Download/convert to .npy (cached after first download)
-        data_path = download_and_convert(
-            dataset_name=dataset_name,
-            output_dir=nixtla_cache,
-            split='test',
-        )
+        logger.info(f"\n  📏 Horizon {horizon} ({mode_str})")
         
-        # Create model with this specific horizon
-        model = create_model_from_config(cfg, prediction_length=horizon)
-        model = load_checkpoint(model, checkpoint_path, device)
-        model.set_pretrain_mode(mode=False)
-        
-        # Use existing MonashDataModule
-        # Nixtla data is pre-normalized, so use identity normalizer
+        # DataModule for this horizon
+        # We need target of length=horizon for evaluation
         dm = MonashDataModule(
             data_path=data_path,
-            context_length=cfg.model.seq_length,
-            prediction_length=horizon,
+            context_length=context_length,
+            prediction_length=horizon,  # Target length for evaluation
             batch_size=cfg.data.batch_size,
             stride=horizon,  # Non-overlapping for fair evaluation
             normalize_mode='per_series',
-            normalizer_type='identity',  # Data already normalized by Nixtla
+            normalizer_type='identity',  # Nixtla data is pre-normalized
             clip_outliers=False,
-            train_val_test_split=(0.0, 0.0, 1.0),  # All data is test
+            train_val_test_split=(0.0, 0.0, 1.0),
             num_workers=4,
         )
         dm.prepare_data()
@@ -644,20 +717,28 @@ def evaluate_nixtla_dataset(
         
         logger.info(f"     Samples: {len(dm.test_dataset)}")
         
-        # Evaluate
-        result = evaluate_dataset(model, dm.test_dataloader(), device, max_samples)
+        # Evaluate with this horizon
+        result = evaluate_dataset_horizon(
+            model=model,
+            dataloader=dm.test_dataloader(),
+            horizon=horizon,
+            device=device,
+            max_samples=max_samples,
+        )
+        
+        # Compute metrics
         metrics = compute_forecasting_metrics_extended(result['predictions'], result['targets'])
         results[horizon] = metrics
         
         logger.info(f"     MSE: {metrics['mse']:.4f} | MAE: {metrics['mae']:.4f}")
         
-        # Plot for first horizon only (to avoid too many plots)
+        # Plot for first horizon only
         if horizon == horizons[0]:
             plot_forecasts(
-                result['contexts'], 
-                result['predictions'], 
+                result['contexts'],
+                result['predictions'],
                 result['targets'],
-                f"{dataset_name}_h{horizon}", 
+                f"{dataset_name}_h{horizon}",
                 output_dir / "plots",
                 num_samples=6
             )
@@ -758,6 +839,16 @@ def main(cfg: DictConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
     
+    # Create model ONCE with native architecture
+    logger.info("Creating model with native architecture...")
+    model = create_model_from_config(cfg)
+    model = load_checkpoint(model, checkpoint_path, device)
+    model.set_pretrain_mode(mode=False)
+    
+    native_horizon = cfg.model.prediction_length
+    context_length = cfg.model.seq_length
+    logger.info(f"  ✓ Model: context={context_length}, prediction_length={native_horizon}")
+    
     # =========================================================================
     # NIXTLA LONG-HORIZON BENCHMARKS
     # =========================================================================
@@ -786,6 +877,7 @@ def main(cfg: DictConfig):
                 horizons = [96, 192, 336, 720]  # Standard benchmark horizons
             
             logger.info(f"   Horizons: {horizons}")
+            logger.info(f"   Native model horizon: {native_horizon}")
             
             for name in nixtla_datasets:
                 print("\n" + "=" * 60)
@@ -810,7 +902,7 @@ def main(cfg: DictConfig):
                     
                     results = evaluate_nixtla_dataset(
                         cfg=cfg,
-                        checkpoint_path=checkpoint_path,
+                        model=model,  # Pass the single loaded model
                         dataset_name=name,
                         horizons=ds_horizons,
                         device=device,
@@ -844,7 +936,7 @@ def main(cfg: DictConfig):
     if not datasets_eval and not nixtla_datasets:
         # If no datasets specified, evaluate on all local .npy files
         data_dir = Path(cfg.data.data_dir)
-        datasets_eval = [f.stem for f in data_dir.glob("*.npy") if not f.stem.startswith('nixtla_')]
+        datasets_eval = [f.stem for f in data_dir.glob("*.npy") if not f.stem.startswith('nixtla')]
         if datasets_eval:
             logger.info(f"Evaluating on all local datasets: {datasets_eval}")
     
@@ -853,13 +945,6 @@ def main(cfg: DictConfig):
     
     if datasets_eval:
         logger.info(f"\n📦 Local datasets: {datasets_eval}")
-        
-        # Create model (single instance for local evaluation)
-        logger.info("Creating model...")
-        model = create_model_from_config(cfg)
-        eval_model = load_checkpoint(model, checkpoint_path, device)
-        eval_model.set_pretrain_mode(mode=False)
-        logger.info("  ✓ Switched model to inference mode (pretrain=False)")
         
         # Evaluate each dataset
         for dataset_name in datasets_eval:
@@ -896,7 +981,7 @@ def main(cfg: DictConfig):
                 
                 # Evaluate on test set
                 test_loader = dm.test_dataloader()
-                results = evaluate_dataset(eval_model, test_loader, device)
+                results = evaluate_dataset(model, test_loader, device)
                 
                 # Compute metrics using metrics.py
                 metrics = compute_forecasting_metrics_extended(
