@@ -102,6 +102,19 @@ data:
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
+nixtla:
+  - ettm1
+  - ettm2
+  - etth1
+  - etth2
+  - electricity
+  - exchange
+  - traffic
+  - ili
+  - weather
+
+horizons: [96, 192, 336, 720]
+
 augmentations:
   pretrain:
     enabled: true

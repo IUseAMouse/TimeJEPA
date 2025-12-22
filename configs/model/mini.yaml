@@ -5,8 +5,8 @@ model:
   name: "timejepa_mini"
   
   seq_length: 384
-  patch_length: 16
-  stride: 8
+  patch_length: 32
+  stride: 16
   num_channels: 1
   prediction_length: 96
   
@@ -101,6 +101,19 @@ data:
   max_oversample_ratio: 6.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
+
+nixtla:
+  - ettm1
+  - ettm2
+  - etth1
+  - etth2
+  - electricity
+  - exchange
+  - traffic
+  - ili
+  - weather
+
+horizons: [96, 192, 336, 720]
 
 augmentations:
   pretrain:
