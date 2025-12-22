@@ -933,7 +933,7 @@ def main(cfg: DictConfig):
     
     datasets_eval = cfg.data.get('datasets_eval', [])
     
-    if not datasets_eval and not nixtla_datasets:
+    if not datasets_eval:
         # If no datasets specified, evaluate on all local .npy files
         data_dir = Path(cfg.data.data_dir)
         datasets_eval = [f.stem for f in data_dir.glob("*.npy") if not f.stem.startswith('nixtla')]
