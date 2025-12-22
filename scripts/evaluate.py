@@ -605,8 +605,8 @@ def evaluate_dataset_horizon(
             target = target.unsqueeze(-1)
         
         # Forecast with specified horizon (handles rolling internally)
-        output = model.forecast(context, n=horizon)
-        predictions = output['forecast_denorm']
+        output = model.forecast(context, n=horizon, skip_revin=True)
+        predictions = output['forecast']
         
         # Truncate target to horizon (dataloader may provide more)
         target = target[:, :horizon]

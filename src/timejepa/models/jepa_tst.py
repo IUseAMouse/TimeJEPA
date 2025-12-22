@@ -228,7 +228,8 @@ class JEPATST(nn.Module):
     def forward_finetune(
         self,
         context: torch.Tensor,
-        return_representations: bool = False
+        return_representations: bool = False,
+        skip_revin: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass for supervised finetuning (forecasting).
@@ -244,7 +245,9 @@ class JEPATST(nn.Module):
             Dictionary with 'forecast' and 'forecast_denorm'
         """
         # 1. RevIN normalization
-        if self.revin is not None:
+        if skip_revin:
+            context_norm = context
+        elif self.revin is not None:
             context_norm = self.revin(context, mode='norm')
         else:
             context_norm = context
@@ -264,7 +267,7 @@ class JEPATST(nn.Module):
         # [B, num_target_patches, d_model]
         
         # 5. Decode to forecast values
-        forecast, forecast_denorm = self.decoder(predictions)
+        forecast, forecast_denorm = self.decoder(predictions, skip_revin=skip_revin)
         # forecast: [B, prediction_length, C] (normalized)
         # forecast_denorm: [B, prediction_length, C] (original scale)
         
@@ -283,7 +286,8 @@ class JEPATST(nn.Module):
         self, 
         context: torch.Tensor,
         n: Optional[int] = None,
-        return_representations: bool = False
+        return_representations: bool = False,
+        skip_revin: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         Forecast n steps ahead with automatic rolling if needed.
@@ -309,7 +313,7 @@ class JEPATST(nn.Module):
         
         # Case 1: n <= native prediction length - single pass with truncation
         if n <= self.prediction_length:
-            result = self.forward_finetune(context, return_representations=return_representations)
+            result = self.forward_finetune(context, return_representations=return_representations, skip_revin=skip_revin)
             result['forecast'] = result['forecast'][:, :n]
             result['forecast_denorm'] = result['forecast_denorm'][:, :n]
             return result
@@ -323,7 +327,7 @@ class JEPATST(nn.Module):
         
         for roll_idx in range(num_rolls):
             # Forward pass with current context
-            result = self.forward_finetune(current_context, return_representations=False)
+            result = self.forward_finetune(current_context, return_representations=False, skip_revin=skip_revin)
             all_forecasts_denorm.append(result['forecast_denorm'])
             
             # Prepare context for next roll (if not the last one)

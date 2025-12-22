@@ -313,7 +313,8 @@ class ForecastingHead(nn.Module):
     
     def forward(
         self,
-        x: torch.Tensor
+        x: torch.Tensor,
+        skip_revin: bool = False
     ) -> torch.Tensor:
         """
         Generate forecasts.
@@ -327,6 +328,10 @@ class ForecastingHead(nn.Module):
         
         
         predictions = self.decoder(x)
-        predictions_denorm = self.revin(predictions, mode='denorm')
+
+        if skip_revin or self.revin is None:
+            predictions_denorm = predictions
+        else:
+            predictions_denorm = self.revin(predictions, mode='denorm')
         
         return predictions, predictions_denorm
