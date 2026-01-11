@@ -267,6 +267,9 @@ class JEPATST(nn.Module):
         # [B, num_target_patches, d_model]
         
         # 5. Decode to forecast values
+        # If using skip_revin, it assumes data is already normalized
+        # Useful for evaluations of norm data, but otherwise keep it false
+        # If skip_revin, norm = denorm
         forecast, forecast_denorm = self.decoder(predictions, skip_revin=skip_revin)
         # forecast: [B, prediction_length, C] (normalized)
         # forecast_denorm: [B, prediction_length, C] (original scale)
@@ -300,6 +303,7 @@ class JEPATST(nn.Module):
                  m = ceil(n / prediction_length)
             return_representations: If True, return intermediate representations
                 (only meaningful when n <= prediction_length)
+            skip_revin: Only use if working with data already from N(0,1)
             
         Returns:
             Dictionary with:
@@ -311,43 +315,67 @@ class JEPATST(nn.Module):
         if n is None:
             n = self.prediction_length
         
-        # Case 1: n <= native prediction length - single pass with truncation
+       # ---- Case 1: single-shot forecast ----
         if n <= self.prediction_length:
-            result = self.forward_finetune(context, return_representations=return_representations, skip_revin=skip_revin)
+            result = self.forward_finetune(
+                context,
+                return_representations=return_representations,
+                skip_revin=skip_revin
+            )
             result['forecast'] = result['forecast'][:, :n]
             result['forecast_denorm'] = result['forecast_denorm'][:, :n]
             return result
         
-        # Case 2: n > prediction_length - rolling forecast
-        # Calculate number of rolls: m such that m * prediction_length >= n
+        if not skip_revin and self.revin is not None:
+            _ = self.revin(context, mode="norm")   # init stats ONCE
+            self.revin.freeze()    
+
+        # ---- Case 2: rolling forecast ----
         num_rolls = (n + self.prediction_length - 1) // self.prediction_length
-        
-        all_forecasts_denorm = []
+
+        all_forecasts_norm = []
         current_context = context.clone()
-        
+
         for roll_idx in range(num_rolls):
-            # Forward pass with current context
-            result = self.forward_finetune(current_context, return_representations=False, skip_revin=skip_revin)
-            all_forecasts_denorm.append(result['forecast_denorm'])
-            
-            # Prepare context for next roll (if not the last one)
+            result = self.forward_finetune(
+                current_context,
+                return_representations=False,
+                skip_revin=skip_revin  
+            )
+
+            forecast_norm = result['forecast']  # [B, pred_len, C]
+            all_forecasts_norm.append(forecast_norm)
+
             if roll_idx < num_rolls - 1:
-                # Shift context window: drop oldest prediction_length values, 
-                # append the new predictions
-                current_context = torch.cat([
-                    current_context[:, self.prediction_length:, :],
-                    result['forecast_denorm']
-                ], dim=1)
-        
-        # Concatenate all forecasts and truncate to exactly n steps
-        forecast_denorm = torch.cat(all_forecasts_denorm, dim=1)[:, :n]
-        
-        # For normalized forecast in rolling mode, we return the denorm as placeholder
-        # (true normalized values would require re-normalizing with original context stats)
+                current_context = torch.cat(
+                    [
+                        current_context[:, self.prediction_length:, :],
+                        forecast_norm
+                    ],
+                    dim=1
+                )
+
+        # ---- Concatenate & truncate ----
+        forecast_norm = torch.cat(all_forecasts_norm, dim=1)[:, :n]
+
+        # ---- Denormalize ONCE if needed ----
+        if skip_revin or self.revin is None:
+            forecast_denorm = forecast_norm
+        else:
+            forecast_denorm = self.revin(
+                forecast_norm,
+                mode="denorm"
+            )
+
+        if not skip_revin and self.revin is not None:
+            self.revin.unfreeze()
+
+
         return {
-            'forecast': forecast_denorm,  # Note: not truly normalized in rolling mode
-            'forecast_denorm': forecast_denorm
+            "forecast": forecast_norm,
+            "forecast_denorm": forecast_denorm
         }
+
 
     def forward(
         self,

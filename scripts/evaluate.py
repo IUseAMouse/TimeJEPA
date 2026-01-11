@@ -604,7 +604,8 @@ def evaluate_dataset_horizon(
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        # Forecast with specified horizon (handles rolling internally)
+        # Doing this because nixtla long horizon datasets are already normalized
+        # so no need to use revin
         output = model.forecast(context, n=horizon, skip_revin=True)
         predictions = output['forecast']
         

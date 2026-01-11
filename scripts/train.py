@@ -134,6 +134,11 @@ def main(cfg: DictConfig):
             
             # Loss
             loss_type=cfg.training.loss.type,
+            vicreg_weights={
+                'invariance': cfg.training.loss.invariance_loss_weight,
+                'variance': cfg.training.loss.variance_loss_weight,
+                'covariance': cfg.training.loss.covariance_loss_weight
+            },
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,

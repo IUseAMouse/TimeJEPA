@@ -59,13 +59,14 @@ training:
     type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
     finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
-    variance_loss_weight: 0.0
-    covariance_loss_weight: 0.0
+    invariance_loss_weight: 25.0
+    variance_loss_weight: 8.0
+    covariance_loss_weight: 1.0
   
   # Optimization
   optimizer:
     name: "adamw"
-    learning_rate: 1.0e-3
+    learning_rate: 7.5e-4
     weight_decay: 0.02
     betas: [0.9, 0.95]
     eps: 1.0e-8
@@ -100,8 +101,8 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: [] # This load alls
-  datasets_finetune: ["electricity", "traffic", "weather", "m4_hourly", "australian-electricity-demand", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minutes-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-extended", "london-smart-meters"]
-  datasets_eval: []
+  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count"]
+  datasets_eval: ["electricity-hourly", "traffic-hourly", "m4_hourly"]
   combine_mode: "concatenate"
   batch_size: 1024
   stride: 8
@@ -121,6 +122,7 @@ nixtla:
   - etth1
   - etth2
   - electricity
+  - ecl
   - exchange
   - traffic
   - ili
@@ -194,7 +196,7 @@ trainer:
   precision: "bf16-mixed"  # 32-true | 16-mixed | bf16-mixed
   max_epochs: ${training.max_epochs}  # Reference from training section
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
-  accumulate_grad_batches: 6  # Gradient accumulation steps
+  accumulate_grad_batches: 3  # Gradient accumulation steps
   val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
   deterministic: false  # Set to true for reproducibility (slower)

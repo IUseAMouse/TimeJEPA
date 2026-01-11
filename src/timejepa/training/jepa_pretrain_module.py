@@ -32,9 +32,10 @@ class JEPAPretrainModule(pl.LightningModule):
     def __init__(
         self,
         model: JEPATST,
-        
+        vicreg_weights: Dict[str,float] = None,
+
         # Loss
-        loss_type: Literal['mse', 'smooth_l1', 'cosine'] = 'mse',
+        loss_type: Literal['mse', 'smooth_l1', 'cosine', 'vicreg'] = 'vicreg',
         
         # Optimizer
         learning_rate: float = 1e-3,
@@ -54,6 +55,7 @@ class JEPAPretrainModule(pl.LightningModule):
         Args:
             model: JEPATST model instance
             loss_type: Loss function type ('mse', 'smooth_l1', 'cosine')
+            vicreg_weights: Weights for vicreg loss
             learning_rate: Peak learning rate
             weight_decay: AdamW weight decay
             betas: Adam beta parameters
@@ -75,6 +77,9 @@ class JEPAPretrainModule(pl.LightningModule):
         
         # Loss
         self.loss_type = loss_type
+        
+        if loss_type == 'vicreg':
+            self.vicreg_weights = vicreg_weights
         
         # Optimizer params
         self.learning_rate = learning_rate
@@ -127,7 +132,13 @@ class JEPAPretrainModule(pl.LightningModule):
         targets = outputs['targets']          # [B, num_target_patches, d_model]
         
         # Compute JEPA loss
-        loss = jepa_loss(predictions, targets, loss_type=self.loss_type, reduction='mean')
+        loss = jepa_loss(
+            predictions, 
+            targets, 
+            loss_type=self.loss_type, 
+            reduction='mean',
+            vicreg_weights=self.vicreg_weights
+        )
         
         # Logging
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)

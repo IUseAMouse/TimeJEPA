@@ -30,7 +30,7 @@ dev = [
     "matplotlib",
 ]
 cluster = [
-    "deepspeed",        # Optionnel en local, requis sur cluster
+    "deepspeed",        
 ]
 
 [build-system]
