@@ -8,7 +8,7 @@ model:
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 196
+  prediction_length: 192
   
   # Encoder architecture
   encoder:
