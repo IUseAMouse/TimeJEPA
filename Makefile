@@ -109,7 +109,7 @@ evaluate: ## Evaluate trained model (usage: make evaluate CHECKPOINT=path/to/ckp
 		echo "Usage: make evaluate CHECKPOINT=checkpoints/model.ckpt [DATASET=electricity]"; \
 		exit 1; \
 	fi
-	python scripts/evaluate.py \
+	python scripts/evaluate.py --config-name $(or $(CONFIG),tiny) \
 		+checkpoint_path=$(CHECKPOINT)
 
 
