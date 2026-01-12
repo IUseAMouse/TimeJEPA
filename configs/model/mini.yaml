@@ -4,11 +4,11 @@
 model:
   name: "timejepa_mini"
   
-  seq_length: 768
+  seq_length: 512
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 192
+  prediction_length: 128
   
   encoder:
     d_model: 192
