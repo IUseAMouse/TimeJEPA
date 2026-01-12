@@ -101,7 +101,7 @@ data:
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
   datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "london-smart-meters"] # This load alls
-  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count"]
+  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count", "solar-10-minute-dataset"]
   datasets_eval: ["electricity-hourly", "traffic-hourly", "m4_hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin"]
   combine_mode: "concatenate"
   batch_size: 1024
