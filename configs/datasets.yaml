@@ -129,12 +129,37 @@ datasets:
     expected_files: ["*.tsf"]
     frequency: ["hourly"]
 
+  wikipedia-web-traffic-weekly:
+    url: "https://zenodo.org/records/4656664/files/kaggle_web_traffic_weekly_dataset.zip?download=1"
+    description: "Number of hits or web traffic for a set of Wikipedia pages - 145063 series"
+    expected_files: ["*.tsf"]
+    frequency: ["weekly"]
+
   london-smart-meters:
     url: "https://zenodo.org/records/4656091/files/london_smart_meters_dataset_without_missing_values.zip?download=1"
     description: "Half hourly time series that represent the energy consumption readings of London households in kilowatt hour (kWh) from November 2011 to February 2014 - 5560 series"
     expected_files: ["*.tsf"]
     frequency: ["half-hourly"]
 
+  fred-md:
+    url: "https://zenodo.org/records/4654833/files/fred_md_dataset.zip?download=1"
+    description: "Macroeconomic indicators - 107 series" 
+    expected_files: ["*.tsf"]
+    frequency: ["monthly"]
+
+  wind-farms-minutely:
+    url: "https://zenodo.org/records/4654858/files/wind_farms_minutely_dataset_without_missing_values.zip?download=1"
+    description: "Wind power of 339 wind farms in Australia - 339 series"
+    expected_files: ["*.tsf"]
+    frequency: ["minutely"]
+
+  rideshare:
+    url: "https://zenodo.org/records/5122232/files/rideshare_dataset_without_missing_values.zip?download=1"
+    description: "Rideshare data from Uber and Lyft in NY in 2018"
+    expected_files: ["*.tsf"]
+    frequency: ["hourly"]
+
+    
 download:
   chunk_size: 8192
   timeout: 300
