@@ -4,11 +4,11 @@
 model:
   name: "timejepa_mini"
   
-  seq_length: 384
-  patch_length: 4
-  stride: 4
+  seq_length: 768
+  patch_length: 16
+  stride: 8
   num_channels: 1
-  prediction_length: 96
+  prediction_length: 192
   
   encoder:
     d_model: 192
@@ -49,48 +49,57 @@ training:
   finetune_mode: "gradual_unfreeze"
   unfreeze_after_epoch: 1
   
+  # Loss configuration
   loss:
-    type: "vicreg"
-    finetune_type: "huber"
+    type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
+    finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
-    variance_loss_weight: 0.0
-    covariance_loss_weight: 0.0
+    invariance_loss_weight: 25.0
+    variance_loss_weight: 8.0
+    covariance_loss_weight: 1.0
   
+  # Optimization
   optimizer:
     name: "adamw"
-    learning_rate: 8.0e-4  # Légèrement réduit
-    weight_decay: 0.03
+    learning_rate: 4e-4
+    weight_decay: 0.02
     betas: [0.9, 0.95]
     eps: 1.0e-8
-    encoder_lr_multiplier: 1.0
+    encoder_lr_multiplier: 1.00
   
+  # Learning rate schedule
   lr_scheduler:
-    type: "cosine"
+    type: "cosine"  # cosine | linear | constant
     warmup_epochs: 0.1
     min_lr: 1.0e-6
   
-  max_epochs: 30
+  # Training duration
+  max_epochs: 40
   
+  # EMA configuration
   ema:
     enabled: true
     momentum_base: 0.998
     momentum_final: 1.0
     schedule: "cosine"
   
+  # Regularization
   dropout: 0.05
   gradient_clip_val: 1.0
+  
+  # Logging
   log_every_n_steps: 50
-  log_histograms: false
+  log_histograms: false  # Log weight histograms (expensive)
 
 data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: [] # This load alls
-  datasets_finetune: ["electricity", "m4_hourly", "australian-electricity-demand", "melbourne-pedestrian-count", "london-smart-meters"]
-  datasets_eval: ["electricity", "m4_hourly"]
+  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "london-smart-meters"] # This load alls
+  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count", "solar-10-minute-dataset"]
+  datasets_eval: ["electricity-hourly", "traffic-hourly", "m4_hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin"]
   combine_mode: "concatenate"
-  batch_size: 768
+  batch_size: 512
   stride: 8
   normalize_mode: "global"
   normalizer_type: "identity"
@@ -108,6 +117,7 @@ nixtla:
   - etth1
   - etth2
   - electricity
+  - ecl
   - exchange
   - traffic
   - ili
@@ -116,26 +126,38 @@ nixtla:
 horizons: [96, 192, 336, 720]
 
 augmentations:
+  # Pretraining augmentations
   pretrain:
     enabled: true
+    
+    # Random scaling - CRUCIAL for MAPE
     scale_enabled: true
     scale_range: [0.5, 2.0]
     scale_log_uniform: true
     p_scale: 0.5
+    
+    # Gaussian jitter (context only)
     jitter_enabled: true
     jitter_std: 0.03
     jitter_relative: true
     p_jitter: 0.3
+    
+    # Magnitude warping
     magnitude_warp_enabled: true
     magnitude_warp_sigma: 0.2
     magnitude_warp_knots: 4
     p_magnitude_warp: 0.3
+    
+    # TTM-style DRS
     drs_enabled: true
     drs_factors: [2, 3, 4]
     drs_interpolation: "linear"
     p_drs: 0.15
+    
+    # Optional extras
     trend_enabled: true
   
+  # Finetuning augmentations (lighter)
   finetune:
     enabled: true
     scale_enabled: true
@@ -159,34 +181,34 @@ checkpoint:
 early_stopping:
   enabled: true
   monitor: "val_loss"
-  patience: 5
+  patience: 15
   mode: "min"
   min_delta: 0.0001
 
 trainer:
-  accelerator: "auto"
-  devices: -1
-  precision: "bf16-mixed"
-  max_epochs: ${training.max_epochs}
-  gradient_clip_val: ${training.gradient_clip_val}
-  accumulate_grad_batches: 4
-  val_check_interval: 0.05
-  log_every_n_steps: ${training.log_every_n_steps}
-  deterministic: false
-  strategy: "ddp_find_unused_parameters_true"
+  accelerator: "auto"  # auto | cpu | gpu | tpu
+  devices: -1  # Number of devices to use
+  precision: "bf16-mixed"  # 32-true | 16-mixed | bf16-mixed
+  max_epochs: ${training.max_epochs}  # Reference from training section
+  gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
+  accumulate_grad_batches: 3  # Gradient accumulation steps
+  val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
+  log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
+  deterministic: false  # Set to true for reproducibility (slower)
+  strategy: "ddp_find_unused_parameters_true" # Distributed data parallelism
   enable_progress_bar: true
   enable_model_summary: true
-  use_distributed_sampler: false
+  use_distributed_sampler: false # Don't do this because my own sampler handles this
 
 wandb:
   project: "TimeJEPA"
   entity: "iuseamouse"
-  run_name: null
+  run_name: null  # Auto-generated
   tags:
-    - "mini"
+    - "tiny"
     - "jepa_tst"
     - "v1"
     - "pytorch-lightning"
-  log_model: true
-  log_gradients: false
-  log_freq: 100
+  log_model: true  # Log checkpoints
+  log_gradients: false  # Log gradients (expensive)
+  log_freq: 100  # Gradient logging frequency

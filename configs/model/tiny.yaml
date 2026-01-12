@@ -186,7 +186,7 @@ checkpoint:
 early_stopping:
   enabled: true
   monitor: "val_loss"
-  patience: 5
+  patience: 15
   mode: "min"
   min_delta: 0.0001
 
