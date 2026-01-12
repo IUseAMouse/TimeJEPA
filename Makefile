@@ -110,8 +110,7 @@ evaluate: ## Evaluate trained model (usage: make evaluate CHECKPOINT=path/to/ckp
 		exit 1; \
 	fi
 	python scripts/evaluate.py \
-		+checkpoint_path=$(CHECKPOINT) \
-		data.datasets_eval=$(or $(DATASETS), [])
+		+checkpoint_path=$(CHECKPOINT)
 
 
 clean-data: ## Remove downloaded and processed data (WARNING: destructive)
