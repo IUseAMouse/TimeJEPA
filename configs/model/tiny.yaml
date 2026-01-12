@@ -4,11 +4,11 @@ model:
   name: "timejepa_tiny"
   
   # Input configuration
-  seq_length: 384
+  seq_length: 512
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 96
+  prediction_length: 196
   
   # Encoder architecture
   encoder:
@@ -100,9 +100,9 @@ data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "london-smart-meters"] # This load alls
+  datasets: [] # This load alls
   datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count", "solar-10-minute-dataset"]
-  datasets_eval: ["electricity-hourly", "traffic-hourly", "m4_hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin"]
+  datasets_eval: ["electricity-hourly", "traffic-hourly", "m4-hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin", "nn5-daily", "solar-10-minute-dataset", "saugeenday"]
   combine_mode: "concatenate"
   batch_size: 1024
   stride: 8
@@ -111,8 +111,8 @@ data:
   clip_outliers: false
   clip_sigma: 5.0
   balanced_sampling: true
-  sampling_temperature: 0.5
-  max_oversample_ratio: 6.0
+  sampling_temperature: 0.4
+  max_oversample_ratio: 7.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
@@ -186,7 +186,7 @@ checkpoint:
 early_stopping:
   enabled: true
   monitor: "val_loss"
-  patience: 15
+  patience: 25
   mode: "min"
   min_delta: 0.0001
 
