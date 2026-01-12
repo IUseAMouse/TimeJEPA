@@ -8,7 +8,7 @@ model:
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 196
+  prediction_length: 128
   
   encoder:
     d_model: 192
@@ -55,7 +55,7 @@ training:
     finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
     invariance_loss_weight: 25.0
-    variance_loss_weight: 8.0
+    variance_loss_weight: 13.0
     covariance_loss_weight: 1.0
   
   # Optimization
@@ -95,8 +95,8 @@ data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: [] # This load alls
-  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count", "solar-10-minute-dataset"]
+  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-weekly", "london-smart-meters", "fred-md", "wind-farms-minutely", "rideshare"] # This load alls
+  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count"]
   datasets_eval: ["electricity-hourly", "traffic-hourly", "m4-hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin", "nn5-daily", "solar-10-minute-dataset", "saugeenday"]
   combine_mode: "concatenate"
   batch_size: 512

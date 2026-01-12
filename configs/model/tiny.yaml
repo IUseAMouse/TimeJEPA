@@ -8,7 +8,7 @@ model:
   patch_length: 16
   stride: 8
   num_channels: 1
-  prediction_length: 192
+  prediction_length: 128
   
   # Encoder architecture
   encoder:
@@ -60,7 +60,7 @@ training:
     finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
     invariance_loss_weight: 25.0
-    variance_loss_weight: 8.0
+    variance_loss_weight: 15.0
     covariance_loss_weight: 1.0
   
   # Optimization
@@ -100,19 +100,19 @@ data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: [] # This load alls
-  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count", "solar-10-minute-dataset"]
+  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-weekly", "london-smart-meters", "fred-md", "wind-farms-minutely", "rideshare"] # This load alls
+  datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count"]
   datasets_eval: ["electricity-hourly", "traffic-hourly", "m4-hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin", "nn5-daily", "solar-10-minute-dataset", "saugeenday"]
   combine_mode: "concatenate"
-  batch_size: 1024
+  batch_size: 512
   stride: 8
   normalize_mode: "global"
   normalizer_type: "identity"
   clip_outliers: false
   clip_sigma: 5.0
   balanced_sampling: true
-  sampling_temperature: 0.4
-  max_oversample_ratio: 7.0
+  sampling_temperature: 0.5
+  max_oversample_ratio: 6.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
@@ -137,15 +137,15 @@ augmentations:
     
     # Random scaling - CRUCIAL for MAPE
     scale_enabled: true
-    scale_range: [0.5, 2.0]
+    scale_range: [0.8, 1.4]
     scale_log_uniform: true
     p_scale: 0.5
     
     # Gaussian jitter (context only)
     jitter_enabled: true
-    jitter_std: 0.03
+    jitter_std: 0.015
     jitter_relative: true
-    p_jitter: 0.3
+    p_jitter: 0.15
     
     # Magnitude warping
     magnitude_warp_enabled: true
@@ -160,17 +160,17 @@ augmentations:
     p_drs: 0.15
     
     # Optional extras
-    trend_enabled: true
+    trend_enabled: false
   
   # Finetuning augmentations (lighter)
   finetune:
     enabled: true
     scale_enabled: true
-    scale_range: [0.8, 1.25]
+    scale_range: [0.9, 1.15]
     p_scale: 0.3
     jitter_enabled: true
     jitter_std: 0.01
-    p_jitter: 0.2
+    p_jitter: 0.1
     magnitude_warp_enabled: false
     drs_enabled: false
     trend_enabled: false
