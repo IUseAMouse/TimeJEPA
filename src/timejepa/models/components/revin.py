@@ -1,4 +1,3 @@
-# src/timejepa/models/components/revin.py
 """
 Reversible Instance Normalization (RevIN)
 

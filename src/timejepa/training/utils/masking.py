@@ -1,4 +1,6 @@
-# src/timejepa/training/utils/masking.py
+##############################################################################################
+# Note : now deprecated since I don't do masked reconstruction anymore, keeping it as legacy
+##############################################################################################
 """
 Masking strategies for JEPA pretraining.
 

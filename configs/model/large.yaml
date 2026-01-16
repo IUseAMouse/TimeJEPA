@@ -90,7 +90,7 @@ data:
   datasets_finetune: ["electricity", "m4_hourly", "australian-electricity-demand", "melbourne-pedestrian-count", "london-smart-meters"]
   datasets_eval: ["electricity", "m4_hourly"]
   combine_mode: "concatenate"
-  batch_size: 256  # Réduit significativement pour VRAM
+  batch_size: 256 
   stride: 8
   normalize_mode: "global"
   normalizer_type: "identity"

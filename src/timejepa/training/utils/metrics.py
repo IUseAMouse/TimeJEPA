@@ -1,4 +1,3 @@
-# src/timejepa/training/utils/metrics.py
 """
 Metrics for JEPA pretraining and finetuning.
 """

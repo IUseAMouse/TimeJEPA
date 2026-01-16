@@ -1,5 +1,3 @@
-# scripts/download_data.py
-
 import argparse
 import logging
 import sys
@@ -68,7 +66,6 @@ def download_and_process_dataset(
         logger.info("Use --force-process to reprocess")
         return output_path
     
-    # 1. Download
     url = dataset_config['url']
     
     if zip_path.exists() and not force_download:
@@ -81,7 +78,6 @@ def download_and_process_dataset(
             logger.error(f"Failed to download dataset: {e}")
             return None
     
-    # 2. Extract
     try:
         extract_dir = raw_dir / dataset_name
         DataArchive.extract_zip(zip_path, extract_dir)
@@ -89,7 +85,6 @@ def download_and_process_dataset(
         logger.error(f"Failed to extract archive: {e}")
         return None
     
-    # 3. Find .ts files
     expected_files = dataset_config.get('expected_files', ['*.ts'])
     ts_files = []
     for pattern in expected_files:
@@ -102,8 +97,6 @@ def download_and_process_dataset(
     
     logger.info(f"Found {len(ts_files)} .ts file(s)")
     
-    # 4. Parse
-    # Take the first .ts file or merge if multiple
     target_file = ts_files[0]
     logger.info(f"Processing {target_file}")
     

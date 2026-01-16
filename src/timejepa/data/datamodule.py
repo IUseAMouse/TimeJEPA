@@ -1,4 +1,3 @@
-# src/timejepa/data/datamodule.py
 """
 PyTorch Lightning DataModule for time series datasets.
 """

@@ -1,4 +1,3 @@
-# src/timejepa/data/nixtla.py
 """
 Nixtla Long-Horizon benchmark datasets adapter.
 

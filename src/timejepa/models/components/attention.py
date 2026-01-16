@@ -1,4 +1,3 @@
-# src/timejepa/models/components/attention.py
 """
 Multi-head attention with Rotary Position Embedding (RoPE).
 
@@ -12,7 +11,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 import math
 
-from .rope import RotaryEmbedding, apply_rotary_pos_emb
+from .rope import RotaryEmbedding
 
 
 class RoPEAttention(nn.Module):

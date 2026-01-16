@@ -1,4 +1,3 @@
-# scripts/evaluate.py
 """
 Unified evaluation script for finetuned TimeJEPA model.
 
@@ -49,12 +48,9 @@ from timejepa.training.utils.metrics import (
 from timejepa.models import JEPATST
 from timejepa.models.decoders import ForecastingHead
 
-# Nixtla imports (optional - graceful degradation if not installed)
 try:
     from timejepa.data.nixtla import (
         download_and_convert,
-        get_dataset_info,
-        get_benchmark_horizons,
         get_available_datasets,
         NIXTLA_REGISTRY,
     )
@@ -67,9 +63,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# CHECKPOINT LOADING
-# =============================================================================
 
 def load_checkpoint(
     model: torch.nn.Module,
@@ -160,10 +153,6 @@ def load_checkpoint(
     return model
 
 
-# =============================================================================
-# MODEL CREATION
-# =============================================================================
-
 def create_model_from_config(cfg: DictConfig) -> JEPATST:
     """
     Create JEPA-TST model from Hydra config with native architecture.
@@ -224,10 +213,6 @@ def find_best_checkpoint(cfg: DictConfig) -> Optional[str]:
     
     return None
 
-
-# =============================================================================
-# VISUALIZATION
-# =============================================================================
 
 def plot_forecasts(
     contexts: torch.Tensor,
@@ -493,10 +478,6 @@ def plot_summary_comparison(
     logger.info(f"📊 Saved summary comparison to {save_path}")
 
 
-# =============================================================================
-# EVALUATION LOGIC
-# =============================================================================
-
 @torch.no_grad()
 def evaluate_dataset(
     model: torch.nn.Module,
@@ -632,10 +613,6 @@ def evaluate_dataset_horizon(
         'targets': torch.cat(all_targets, dim=0)
     }
 
-
-# =============================================================================
-# NIXTLA LONG-HORIZON BENCHMARK EVALUATION
-# =============================================================================
 
 def evaluate_nixtla_dataset(
     cfg: DictConfig,
@@ -803,10 +780,6 @@ def create_nixtla_benchmark_table(
     return df
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
-
 @hydra.main(version_base=None, config_path="../configs/model", config_name="tiny")
 def main(cfg: DictConfig):
     """Main evaluation function."""
@@ -928,10 +901,7 @@ def main(cfg: DictConfig):
                 with open(output_dir / 'nixtla_results.json', 'w') as f:
                     json.dump(json_results, f, indent=2)
     
-    # =========================================================================
-    # LOCAL DATASET EVALUATION
-    # =========================================================================
-    
+ 
     datasets_eval = cfg.data.get('datasets_eval', [])
     
     if not datasets_eval:
@@ -1032,10 +1002,7 @@ def main(cfg: DictConfig):
                 import traceback
                 traceback.print_exc()
                 continue
-    
-    # ==========================================================================
-    # SUMMARY
-    # ==========================================================================
+
     
     print("\n" + "=" * 80)
     print("📋 EVALUATION SUMMARY")

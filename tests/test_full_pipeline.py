@@ -10,7 +10,6 @@ import torch
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
-# Importe tes modules
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -26,7 +25,6 @@ def test_normalizer_identity():
     print("TEST 1: Identity Normalizer")
     print("="*80)
     
-    # Données de test
     data = np.random.randn(10, 100).astype(np.float32)
     
     # Test identity
@@ -37,7 +35,6 @@ def test_normalizer_identity():
     assert np.allclose(data, transformed), "Identity should not change data!"
     print("✅ Identity normalizer: data unchanged")
     
-    # Test que standard change bien les données
     normalizer_std = get_normalizer("standard")
     normalizer_std.fit(data)
     transformed_std = normalizer_std.transform(data)
@@ -56,34 +53,34 @@ def test_dataset_with_normalizers():
     print("TEST 2: Dataset avec normalizers")
     print("="*80)
     
-    # Créer données temporaires
+   
     with tempfile.NamedTemporaryFile(suffix='.npy', delete=False) as f:
         data = np.random.randn(5, 200).astype(np.float32)
         np.save(f.name, data)
         temp_path = Path(f.name)
     
     try:
-        # Test avec identity (par défaut)
+        
         dataset_identity = TimeSeriesDataset(
             data_path=temp_path,
             context_length=50,
             prediction_length=10,
             stride=10,
-            normalizer=None,  # Devrait utiliser identity par défaut
+            normalizer=None,  
             normalize_mode="global",
         )
         
         sample = dataset_identity[0]
         context = sample['context'].numpy()
         
-        # Vérifier que les données ne sont pas normalisées
+       
         print(f"✅ Identity dataset:")
         print(f"   Context shape: {context.shape}")
         print(f"   Context mean: {context.mean():.3f}, std: {context.std():.3f}")
         print(f"   Original mean: {data.mean():.3f}, std: {data.std():.3f}")
         print(f"   Normalizer: {dataset_identity.normalizer.__class__.__name__}")
         
-        # Test avec standard
+
         normalizer_std = get_normalizer("standard")
         dataset_standard = TimeSeriesDataset(
             data_path=temp_path,
@@ -101,7 +98,6 @@ def test_dataset_with_normalizers():
         print(f"   Context mean: {context_std.mean():.6f}, std: {context_std.std():.3f}")
         print(f"   Normalizer: {dataset_standard.normalizer.__class__.__name__}")
         
-        # Vérifier que les données sont différentes
         assert not np.allclose(context, context_std), "Identity vs Standard should differ!"
         
     finally:

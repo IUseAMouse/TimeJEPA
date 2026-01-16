@@ -1,4 +1,3 @@
-# src/timejepa/models/decoders/linear_decoder.py
 """
 Linear Decoder for generative finetuning.
 

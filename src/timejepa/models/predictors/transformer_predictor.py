@@ -1,4 +1,3 @@
-# src/timejepa/models/predictors/transformer_predictor.py
 """
 Transformer Predictor for JEPA.
 

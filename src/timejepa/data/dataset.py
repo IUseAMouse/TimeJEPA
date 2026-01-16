@@ -1,4 +1,3 @@
-# src/timejepa/data/dataset.py
 """
 PyTorch Dataset for time series with sliding windows for JEPA training.
 """

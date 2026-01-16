@@ -1,4 +1,3 @@
-# src/timejepa/models/components/patching.py
 """
 Patching module for time series.
 

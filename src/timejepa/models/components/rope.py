@@ -1,11 +1,5 @@
-# src/timejepa/models/components/rope.py
 """
-Rotary Position Embedding (RoPE)
-
-Paper: "RoFormer: Enhanced Transformer with Rotary Position Embedding"
-       (arXiv:2104.09864)
-
-Used in: LLaMA, MOIRAI, and many modern transformers
+Rotary Position Embedding 
 
 Key advantages:
 - Relative position encoding (better extrapolation)

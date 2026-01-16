@@ -1,4 +1,3 @@
-# src/timejepa/models/encoders/target_encoder.py
 """
 Target Encoder for JEPA.
 
@@ -42,7 +41,7 @@ class TargetEncoder(nn.Module):
     
     def __init__(
         self,
-        encoder: nn.Module,  # 🔥 Générique maintenant
+        encoder: nn.Module,  
         ema_decay: float = 0.996,
         ema_decay_end: float = 1.0
     ):

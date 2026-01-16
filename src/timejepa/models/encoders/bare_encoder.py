@@ -1,8 +1,5 @@
 """
-Bare Transformer Encoder (sans patching).
-
-Pour JEPA qui gère le patching en externe.
-Juste les transformer blocks + layer norm.
+Bare Transformer Encoder.
 """
 
 import torch

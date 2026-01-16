@@ -1,21 +1,14 @@
-# src/timejepa/data/normalizer.py
-
 """
 Normalizers for time series data with reversible transformations.
 
-⚠️ IMPORTANT: If your model uses RevIN (Reversible Instance Normalization) layers,
-you should use IdentityNormalizer to avoid double normalization.
+⚠️ IMPORTANT: Remember to specify IdentityNormalizer for RevIN usage
 
-RevIN is designed to receive raw (unnormalized) data and handles normalization
+RevIN is designed to receive raw data and handles normalization
 internally with instance-level statistics computed during the forward pass.
 
-Use StandardScaler/MinMaxScaler for:
-- Models without RevIN (e.g., MLPs, LSTMs, classical baselines)
-- Ablation studies comparing with/without RevIN
-- Visualization and exploratory data analysis
-- Single-dataset experiments where distribution shift is not a concern
+Use StandardScaler/MinMaxScaler only if you disable/remove RevIN
 
-For multi-dataset training with domain generalization (JEPA-style models),
+For multi-dataset training with domain generalization,
 always use IdentityNormalizer and let RevIN handle normalization.
 
 Supports both:

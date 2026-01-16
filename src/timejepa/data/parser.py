@@ -1,4 +1,3 @@
-# src/timejepa/data/parser.py
 import logging
 import zipfile
 from pathlib import Path

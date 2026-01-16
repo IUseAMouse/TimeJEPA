@@ -1,4 +1,4 @@
-# src/timejepa/models/encoders/patchtst_encoder.py
+# Deprecated, now I simply use the bare encoder
 """
 PatchTST-style Encoder with RoPE.
 

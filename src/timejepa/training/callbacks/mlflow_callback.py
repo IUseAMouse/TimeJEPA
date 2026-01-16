@@ -1,4 +1,6 @@
-# timejepa/training/callbacks.py
+#########################################################
+# Deprecated since change to WandB, keeping as legacy
+#########################################################
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional

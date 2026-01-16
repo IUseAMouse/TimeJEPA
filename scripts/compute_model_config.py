@@ -1,5 +1,8 @@
 """
 Compute optimal TimeJEPA configuration based on dataset size and scaling laws.
+
+/!\ Deprecated, especially since I wasn't computing effective tokens per training
+by taking patching into consideration at this point. 
 """
 
 import argparse
@@ -188,7 +191,7 @@ def generate_custom_config(
     Generate a custom config to match target params.
     """
     # Solve for d_model given layers and target params
-    # Simplified: total ≈ 14 * L_total * d^2 (rough approximation)
+    # Simplified: total ≈ 14 * L_total * d^2 
     L_total = encoder_layers + 2 + 2  # encoder + predictor + decoder
     
     d_model = int(np.sqrt(target_params / (14 * L_total)))
@@ -234,7 +237,6 @@ def print_analysis(
     print("🔬 TIMEJEPA SCALING LAW ANALYSIS")
     print("=" * 80)
     
-    # 1. Token computation
     token_stats = compute_effective_tokens(total_points, epochs, context_length)
     
     print(f"\n📊 DATA STATISTICS:")
@@ -247,7 +249,6 @@ def print_analysis(
     print(f"  Effective tokens*:        {token_stats['effective_tokens']:>15,.0f}")
     print(f"\n  * Accounts for diminishing returns of repeated data")
     
-    # 2. Optimal params for different regimes
     print(f"\n🎯 OPTIMAL PARAMETER COUNTS:")
     print("-" * 80)
     
@@ -259,7 +260,7 @@ def print_analysis(
         print(f"  {regime.capitalize():15} (ratio {param_range['ratio']:2}:1): "
               f"{param_range['min']/1e6:>6.1f}M - {param_range['optimal']/1e6:>6.1f}M - {param_range['max']/1e6:>6.1f}M")
     
-    # 3. Recommended config (using representation regime for JEPA)
+    
     optimal_params, param_range = compute_optimal_params(
         token_stats['effective_tokens'], 
         "representation"
@@ -289,7 +290,7 @@ def print_analysis(
               f"{config.encoder_layers:>6} {config.predictor_layers:>7} {config.decoder_layers:>6} "
               f"{params_str:>12} {status:<15}")
     
-    # 4. Custom config suggestion
+    
     print(f"\n" + "=" * 80)
     print("🛠️  CUSTOM CONFIGURATION (optimized for your data)")
     print("=" * 80)
@@ -299,7 +300,6 @@ def print_analysis(
         indicator = " ⭐" if n_layers == 6 else ""
         print(f"  {custom}{indicator}")
     
-    # 5. Final recommendation
     print(f"\n" + "=" * 80)
     print("✅ RECOMMENDED YAML CONFIG")
     print("=" * 80)
@@ -338,7 +338,7 @@ model:
 # Optimal range for your data: {param_range['min']/1e6:.1f}M - {param_range['max']/1e6:.1f}M
 """)
     
-    # 6. Training recommendations
+    
     print("=" * 80)
     print("📚 TRAINING RECOMMENDATIONS")
     print("=" * 80)

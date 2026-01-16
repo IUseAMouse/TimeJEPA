@@ -1,4 +1,3 @@
-# src/timejepa/training/finetune_module.py
 """
 PyTorch Lightning Module for supervised finetuning.
 

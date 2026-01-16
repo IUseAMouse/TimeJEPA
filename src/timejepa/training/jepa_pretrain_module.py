@@ -1,4 +1,3 @@
-# src/timejepa/training/jepa_pretrain_module.py
 """
 PyTorch Lightning Module for JEPA pretraining with TRUE forecasting objective.
 

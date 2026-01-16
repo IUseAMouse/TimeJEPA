@@ -1,4 +1,3 @@
-# scripts/train.py
 """
 Training script compatible with existing MonashDataModule.
 """
@@ -121,9 +120,6 @@ def main(cfg: DictConfig):
     # Create Model (Architecture)
     model = create_model_from_config(cfg)
     
-    # Create Lightning Module (Training Logic)
-    
-    
     if is_pretrain:
         logger.info("Creating JEPA model...")
         model.train()
@@ -170,7 +166,7 @@ def main(cfg: DictConfig):
         )
         
         pl_module = FinetuneModule(
-            model=model,  # <-- On passe l'instance du modèle créée plus haut
+            model=model,  
             
             # Pretrained weights & Strategy
             pretrained_encoder_path=cfg.training.get('pretrained_encoder_path'),
@@ -263,12 +259,6 @@ def main(cfg: DictConfig):
         strategy=cfg.trainer.strategy,
         use_distributed_sampler=cfg.trainer.use_distributed_sampler
     )
-
-    print(f"🔍 DEBUG Model:")
-    print(f"  model.seq_length: {model.input_length}")
-    print(f"  model.num_patches: {model.num_patches}")
-    print(f"  Expected from config: {cfg.model.seq_length}")
-    print(f"  Datamodule context_length: {datamodule.context_length}")
     
     # Train
     logger.info("=" * 80)

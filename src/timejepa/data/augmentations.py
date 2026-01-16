@@ -1,4 +1,3 @@
-# src/timejepa/data/augmentations.py
 """
 Data augmentations for time series JEPA pretraining.
 Inspired by TTM's Diverse Resolution Sampling and scaling strategies.
@@ -28,18 +27,18 @@ class AugmentationConfig:
     jitter_relative: bool = True  # Relative to signal std
     p_jitter: float = 0.3
     
-    # Magnitude warping (smooth deformation)
+    # Magnitude warping 
     magnitude_warp_enabled: bool = True
     magnitude_warp_sigma: float = 0.2
     magnitude_warp_knots: int = 4
     p_magnitude_warp: float = 0.3
     
-    # Temporal shift/jitter (slight time alignment noise)
+    # Temporal shift/jitter 
     temporal_shift_enabled: bool = False
     temporal_shift_max: int = 2  # Max shift in timesteps
     p_temporal_shift: float = 0.2
     
-    # Diverse Resolution Sampling (TTM-style)
+    # Diverse Resolution Sampling
     drs_enabled: bool = True
     drs_factors: Tuple[int, ...] = (2, 3, 4)
     drs_interpolation: str = "linear"  # linear, cubic

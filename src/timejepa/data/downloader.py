@@ -1,4 +1,3 @@
-# src/timejepa/data/downloader.py
 import hashlib
 import logging
 import time
