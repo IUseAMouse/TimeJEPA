@@ -1,15 +1,14 @@
 # TimeJEPA: Joint Embedding Predictive Architecture for Time Series
 
-Research implementation of JEPA applied to Multivariate Time Series Forecasting and Representation Learning.
+Research implementation of JEPA applied to Univariate Time Series Forecasting and Representation Learning.
 
 ## 🔬 Overview
 
-This project explores the application of non-generative self-supervised learning to time series. Unlike generative models that focus on pixel-level reconstruction, TimeJEPA first aims to learn semantic representations by predicting the latent embeddings of future time patches.
+This project explores the application of non-generative self-supervised learning to time series. Unlike generative models that focus on pixel-level reconstruction, TimeJEPA first aims to learn forecasting-specific semantic representations by predicting the latent embeddings of future time patches.
 
 **Key Features:**
-*   **Architecture:** Joint Embedding Predictive Architecture adapted for 1D signals.
+*   **Architecture:** Joint Embedding Predictive Architecture adapted for 1D signals forecasting.
 *   **Framework:** Built with **PyTorch** and **PyTorch Lightning**.
-*   **Data:** Automated pipelines for the **Monash Time Series Forecasting Archive**.
 *   **4 models:** TimeJEPA-tiny, TimeJEPA-mini, TimeJEPA-base and TimeJEPA-large.
 
 ## 🏗️ Architecture
@@ -51,16 +50,13 @@ The project follows a `src`-layout for better packaging and reproducibility:
 ```text
 timejepa/
 ├── data/                   # Data directory (ignored by git)
-│   ├── raw/                # Raw .ts files from Monash
-│   ├── processed/          # Pre-processed tensors (.npy/.pt)
-│   └── checkpoints/        # Model checkpoints
+│   ├── raw/                # Raw .ts/.tsf files from Monash ziped
+│   └── processed/          # Pre-processed tensors (.npy/.pt)
 ├── src/timejepa/            # Main package
 │   ├── data/               # DataModules & Parsers
 │   ├── models/             # Encoders, Predictors, Heads
-│   ├── training/           # LightningModules
-│   └── utils/              # Masking strategies, metrics
+│   └── training/           # LightningModules
 ├── scripts/                # Executable scripts (entry points)
-├── notebooks/              # Jupyter notebooks for analysis
 ├── Makefile                # Command shortcuts
 └── pyproject.toml          # Dependency definitions
 ```
@@ -101,6 +97,9 @@ The code is designed to work seamlessly with datasets from the [Monash Time Seri
 *   Electricity
 *   Traffic
 *   Weather
+*   Oikolab Weather
+*   Rain Temperature
+*   Australian Weather
 *   M4 Hourly
 *   Australian Electricity Demand
 *   Bitcoin 
@@ -115,7 +114,9 @@ The code is designed to work seamlessly with datasets from the [Monash Time Seri
 *   Melbourne Pedestrian Count
 *   Wikipedia Web Traffic Extended
 *   London Smart Meters
-
+*   FRED-MD
+*   Wind Farms Minutely
+*   Rideshare
 
 ## 📝 Citation
 

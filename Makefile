@@ -9,7 +9,7 @@
 # Default values
 EPOCHS ?= 30
 CONTEXT_LENGTH ?= 384
-TOTAL_POINTS ?= 59000000
+TOTAL_POINTS ?= 800000000
 
 ##@ General
 
@@ -40,29 +40,6 @@ download-all: ## Download all datasets
 count-data: ## Count total datapoints in processed datasets
 	@echo "📊 Counting datapoints..."
 	python scripts/compute_dataset_stats.py --data-dir data
-
-##@ Scaling Laws
-
-scaling-analysis: ## Compute optimal model config (usage: make scaling-analysis TOTAL_POINTS=60000000 EPOCHS=50)
-	@echo "\n🔬 TimeJEPA Scaling Law Analysis"
-	@echo "================================"
-	python scripts/compute_model_config.py \
-		--total-points $(TOTAL_POINTS) \
-		--epochs $(EPOCHS) \
-		--context-length $(CONTEXT_LENGTH)
-
-scaling-quick: ## Quick scaling analysis with defaults (60M points, 50 epochs)
-	@$(MAKE) scaling-analysis TOTAL_POINTS=59000000 EPOCHS=30 CONTEXT_LENGTH=384
-
-setup-all: ## Download all datasets and analyze (complete setup)
-	@echo "🚀 Complete setup: download + analysis"
-	@echo "========================================"
-	@$(MAKE) download-all
-	@$(MAKE) scaling-analysis
-	@echo "\n✅ Setup complete! Next steps:"
-	@echo "  1. Review the recommendations above"
-	@echo "  2. Update configs/model/ with recommended config"
-	@echo "  3. Run 'make train CONFIG=<config_name>' to start training\n"
 
 ##@ Training
 
