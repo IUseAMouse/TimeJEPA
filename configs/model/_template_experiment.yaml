@@ -1,0 +1,47 @@
+# @package _global_
+#
+# TEMPLATE — how to add a single-variable experiment config.
+#
+# Inherit from a base config and override only what you are testing. Everything
+# else (datasets, augmentations, SIGReg block, geometry randomization, trainer
+# settings) is inherited, so the comparison against the base run is provably
+# single-variable — no copy-paste drift.
+#
+#   python scripts/train.py --config-name <this file's name without .yaml> \
+#       wandb.run_name=my-experiment
+#
+# Before running, check the patch geometry is not degenerate. Changing
+# patch_length or stride changes the token counts, and some combinations produce
+# ZERO target patches (which crashes) or too few to be meaningful:
+#
+#   def npatch(L, p, s):
+#       if L < p: return 0
+#       rem = (L - p) % s
+#       if rem: L += (s - rem)
+#       return (L - p) // s + 1
+#
+# Check it for every value in training.context_lengths and horizon_lengths, not
+# just the nominal seq_length / prediction_length. See tiny_patch64.yaml for a
+# case where both bounds had to be raised.
+#
+# This file is not meant to be run as-is; it is a copy-paste starting point.
+defaults:
+  - tiny
+  - _self_
+
+model:
+  name: "timejepa_tiny_template"
+  # patch_length: 32
+  # stride: 16
+  # predictor:
+  #   n_layers: 4
+
+# training:
+#   context_lengths: [256, 320, 384, 448, 512]
+#   horizon_lengths: [64, 96, 128]
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"

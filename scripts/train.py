@@ -137,7 +137,13 @@ def main(cfg: DictConfig):
             float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain else 0.0
         ),
         seed=cfg.data.seed,
-        num_workers=8
+        # Hardcoded to 8 before. With 20+ datasets held in memory — several of
+        # them numpy object arrays, whose per-element refcount updates defeat
+        # fork's copy-on-write — 8 train workers plus 8 persistent validation
+        # workers were enough to get the run OOM-killed by the host kernel
+        # (a bare "Killed", no traceback). Make it tunable.
+        num_workers=int(cfg.data.get('num_workers', 4)),
+        persistent_workers=bool(cfg.data.get('persistent_workers', False)),
     )
     
     # Prepare data
@@ -281,7 +287,15 @@ def main(cfg: DictConfig):
     )
     
     # Trainer
-    trainer = pl.Trainer(
+    #
+    # `limit_val_batches` matters a lot here. The validation split is 2% of the
+    # windows, which on the full 24-dataset corpus is over a million samples —
+    # 2109 batches. With val_check_interval=0.1 that is ~21k validation batches
+    # per epoch, more compute than the training itself, and it keeps a second
+    # set of dataloader workers alive alongside the training ones. A few hundred
+    # batches give a val_loss that is already stable to well under the
+    # differences we care about.
+    trainer_kwargs = dict(
         accelerator=cfg.trainer.accelerator,
         logger=wandb_logger,
         devices=cfg.trainer.devices,
@@ -295,8 +309,13 @@ def main(cfg: DictConfig):
         default_root_dir=cfg.data.output_dir,
         deterministic=cfg.trainer.deterministic,
         strategy=cfg.trainer.strategy,
-        use_distributed_sampler=cfg.trainer.use_distributed_sampler
+        use_distributed_sampler=cfg.trainer.use_distributed_sampler,
     )
+    for key in ('limit_train_batches', 'limit_val_batches'):
+        if cfg.trainer.get(key) is not None:
+            trainer_kwargs[key] = cfg.trainer.get(key)
+
+    trainer = pl.Trainer(**trainer_kwargs)
     
     # Train
     logger.info("=" * 80)

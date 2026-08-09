@@ -15,6 +15,35 @@ from .augmentations import TimeSeriesAugmentations, AugmentationConfig, Finetune
 logger = logging.getLogger(__name__)
 
 
+class SeriesTooShortError(ValueError):
+    """
+    Raised when no window of `context_length + prediction_length` fits.
+
+    A dedicated type so that a multi-dataset pipeline can skip the offending
+    dataset and carry on, while a single-dataset run still fails loudly. It
+    subclasses ValueError so existing `except ValueError` handlers keep working.
+    """
+
+    def __init__(self, series_length: int, required: int,
+                 context_length: int, prediction_length: int,
+                 data_path: Optional[Path] = None):
+        self.series_length = series_length
+        self.required = required
+        self.context_length = context_length
+        self.prediction_length = prediction_length
+        self.data_path = data_path
+
+        # The most useful thing to tell someone here is the largest context that
+        # WOULD work, so they can fix the config in one step.
+        max_context = max(0, series_length - prediction_length)
+        where = f" in {data_path.name}" if data_path is not None else ""
+        super().__init__(
+            f"Series too short{where}: {series_length} < {required} "
+            f"(context={context_length} + pred={prediction_length}). "
+            f"Longest usable context at this prediction_length: {max_context}."
+        )
+
+
 class TimeSeriesDataset(Dataset):
     """
     Dataset for time series with sliding windows.
@@ -76,12 +105,20 @@ class TimeSeriesDataset(Dataset):
         data = np.load(self.data_path, allow_pickle=True)
 
         # Handle object arrays (variable length series)
+        # `_longest_series_seen` is captured BEFORE filtering: once the short
+        # series are dropped the array can be empty, and an error message that
+        # then reports "longest = 0" would be actively misleading.
+        self._longest_series_seen = None
         if data.dtype == object:
             logger.warning("Data contains variable-length series")
             min_len = context_length + prediction_length
+            self._longest_series_seen = max((len(s) for s in data), default=0)
             data = [s for s in data if len(s) >= min_len]
             data = np.array(data, dtype=object)
-            logger.info(f"Kept {len(data)} series with length >= {min_len}")
+            logger.info(
+                f"Kept {len(data)} series with length >= {min_len} "
+                f"(longest available: {self._longest_series_seen})"
+            )
 
         # Limit number of series if requested
         if max_series is not None and len(data) > max_series:
@@ -129,7 +166,9 @@ class TimeSeriesDataset(Dataset):
         if self.augmentations is not None:
             logger.info(f"✓ Augmentations configured (applied via AugmentedSubset)")
             self._log_augmentation_config()
-        
+
+        self._log_multi_resolution_coverage()
+
         logger.info(f"Created dataset with {len(self)} windows")
 
     def _setup_augmentations(
@@ -171,30 +210,136 @@ class TimeSeriesDataset(Dataset):
         
         logger.info(f"  Active augmentations: {', '.join(enabled) if enabled else 'none'}")
 
-    def _generate_window_indices(self) -> List[Tuple[int, int]]:
-        """Generate (series_idx, start_idx) pairs for all valid windows."""
-        indices = []
-        min_length = self.context_length + self.prediction_length
-        
+    def _log_multi_resolution_coverage(self):
+        """
+        Report what fraction of windows can actually be decimated at each factor.
+
+        A factor `f` needs `start + (ctx+pred)*f` timesteps of headroom, so short
+        series silently fall back to f=1. Without this line there is no way to
+        tell from a training log whether multi-resolution did anything at all —
+        which is exactly the question that came up on the first real run.
+        """
+        if self.p_multi_resolution <= 0 or len(self.multi_resolution_factors) <= 1:
+            return
+
+        need = self.context_length + self.prediction_length
+        factors = [f for f in self.multi_resolution_factors if f > 1]
+        total = len(self.window_indices)
+        if total == 0 or not factors:
+            return
+
+        # Vectorized: window_indices holds tens of millions of rows on the full
+        # corpus, so a Python loop here would take minutes at startup.
+        series_ids = self.window_indices[:, 0]
+        starts = self.window_indices[:, 1].astype(np.int64)
         if self.data.dtype == object:
+            lengths = np.array([s.shape[-1] for s in self.normalized_data],
+                               dtype=np.int64)[series_ids]
+        else:
+            lengths = np.full(total, self.normalized_data.shape[-1], dtype=np.int64)
+
+        eligible = {f: int((starts + need * f <= lengths).sum()) for f in factors}
+
+        parts = ", ".join(f"f={f}:{n / total:.0%}" for f, n in sorted(eligible.items()))
+        coverage = max(eligible.values()) / total
+
+        if coverage == 0:
+            logger.warning(
+                f"  ⚠️  Multi-resolution INACTIVE here: series are too short "
+                f"(need {need * min(eligible)} timesteps for the smallest factor). "
+                f"Every window falls back to f=1."
+            )
+        else:
+            logger.info(
+                f"  ✓ Multi-resolution p={self.p_multi_resolution} | "
+                f"window eligibility: {parts} | effective rate "
+                f"≈ {self.p_multi_resolution * coverage:.0%}"
+            )
+
+    def _generate_window_indices(self) -> np.ndarray:
+        """
+        Generate (series_idx, start_idx) pairs for all valid windows,
+        as an int32 array of shape [N, 2].
+
+        Memory
+        ------
+        This used to be a Python list of tuples, which is what made training run
+        out of RAM. The full 24-dataset corpus yields ~54M windows, and a list of
+        2-tuples costs roughly:
+
+            8 B   list pointer
+          + 56 B  tuple object
+          + 56 B  two int objects (start_idx is far past the small-int cache)
+          = ~120 B per window  ->  ~6.5 GB
+
+        Worse, that cost is paid PER PROCESS. Every dataloader worker walks the
+        list, and touching a tuple bumps its refcount, which writes to its page
+        and defeats fork's copy-on-write — so the parent's 6.5 GB got duplicated
+        into each of the 4 workers as the epoch progressed. That is the steady
+        climb to ~50 GB observed on a 57 GB host.
+
+        An int32 [N, 2] array is 8 B per window (~430 MB for 54M) and has no
+        per-element Python objects, so workers genuinely share the pages.
+        Roughly 15x smaller, and flat over time instead of growing.
+
+        int32 is checked, not assumed: the largest series count in the corpus is
+        ~145k (wikipedia) and the longest series ~7.4M (solar-4-seconds), both
+        comfortably inside int32.
+
+        Both storage layouts behave the same way on short series. Previously the
+        variable-length path silently dropped series that were too short, while
+        the fixed-length path raised — so a uniformly-short fixed-shape dataset
+        (e.g. wikipedia-web-traffic-weekly, 114 weekly points against a required
+        640) killed an entire multi-dataset run, whereas the same data stored as
+        an object array would just have been skipped.
+        """
+        min_length = self.context_length + self.prediction_length
+
+        if self.data.dtype == object:
+            # Build per series with numpy, then concatenate once: no Python-level
+            # per-window objects are ever materialised.
+            blocks = []
             for series_idx, series in enumerate(self.normalized_data):
                 seq_length = series.shape[-1]
                 if seq_length < min_length:
                     continue
-                for start_idx in range(0, seq_length - min_length + 1, self.stride):
-                    indices.append((series_idx, start_idx))
+                starts = np.arange(0, seq_length - min_length + 1, self.stride,
+                                   dtype=np.int32)
+                if starts.size == 0:
+                    continue
+                block = np.empty((starts.size, 2), dtype=np.int32)
+                block[:, 0] = series_idx
+                block[:, 1] = starts
+                blocks.append(block)
+
+            if not blocks:
+                # Use the pre-filter maximum: by this point every series short
+                # enough to be dropped already has been, so measuring what
+                # remains would report 0 and hide the real length.
+                longest = self._longest_series_seen
+                if longest is None:
+                    longest = max((s.shape[-1] for s in self.normalized_data), default=0)
+                raise SeriesTooShortError(
+                    longest, min_length,
+                    self.context_length, self.prediction_length, self.data_path
+                )
+            return np.concatenate(blocks, axis=0)
         else:
             seq_length = self.normalized_data.shape[-1]
             if seq_length < min_length:
-                raise ValueError(
-                    f"Series too short: {seq_length} < {min_length} "
-                    f"(context={self.context_length} + pred={self.prediction_length})"
+                raise SeriesTooShortError(
+                    seq_length, min_length,
+                    self.context_length, self.prediction_length, self.data_path
                 )
-            for series_idx in range(len(self.normalized_data)):
-                for start_idx in range(0, seq_length - min_length + 1, self.stride):
-                    indices.append((series_idx, start_idx))
-        
-        return indices
+            # Fixed-length: every series has identical starts, so build the two
+            # columns with a single outer product instead of a nested loop.
+            n_series = len(self.normalized_data)
+            starts = np.arange(0, seq_length - min_length + 1, self.stride,
+                               dtype=np.int32)
+            indices = np.empty((n_series * starts.size, 2), dtype=np.int32)
+            indices[:, 0] = np.repeat(np.arange(n_series, dtype=np.int32), starts.size)
+            indices[:, 1] = np.tile(starts, n_series)
+            return indices
     
     def __len__(self) -> int:
         return len(self.window_indices)

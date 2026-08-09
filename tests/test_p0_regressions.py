@@ -298,6 +298,315 @@ def test_mase_is_scale_invariant():
 
 
 # =============================================================================
+# B17 — a too-short dataset must not kill a multi-dataset run
+# =============================================================================
+
+def _write(dirpath, name, arr, allow_pickle=False):
+    import numpy as np
+    path = Path(dirpath) / f"{name}.npy"
+    np.save(path, arr, allow_pickle=allow_pickle)
+    return path
+
+
+@pytest.fixture
+def short_and_long_datasets(tmp_path):
+    import numpy as np
+    rng = np.random.default_rng(0)
+    t = np.arange(20000.0)
+    _write(tmp_path, "electricity-hourly",
+           np.stack([np.sin(2 * np.pi * t / 24) + 0.1 * rng.standard_normal(20000)
+                     for _ in range(4)]).astype("float32"))
+    # Exactly the shape that crashed the first real run: weekly data, 114 points
+    _write(tmp_path, "wikipedia-web-traffic-weekly",
+           rng.standard_normal((500, 114)).astype("float32"))
+    # Same problem stored as a variable-length object array
+    _write(tmp_path, "fred-md",
+           np.array([rng.standard_normal(rng.integers(300, 500)).astype("float32")
+                     for _ in range(50)], dtype=object), allow_pickle=True)
+    return tmp_path
+
+
+def test_too_short_fixed_length_dataset_raises_typed_error(short_and_long_datasets):
+    from timejepa.data.dataset import TimeSeriesDataset, SeriesTooShortError
+    with pytest.raises(SeriesTooShortError):
+        TimeSeriesDataset(
+            short_and_long_datasets / "wikipedia-web-traffic-weekly.npy",
+            context_length=512, prediction_length=128,
+        )
+
+
+def test_too_short_variable_length_dataset_raises_too(short_and_long_datasets):
+    """
+    The variable-length path used to silently drop every series and then build a
+    zero-window dataset, while the fixed-length path raised. Both now raise.
+    """
+    from timejepa.data.dataset import TimeSeriesDataset, SeriesTooShortError
+    with pytest.raises(SeriesTooShortError):
+        TimeSeriesDataset(
+            short_and_long_datasets / "fred-md.npy",
+            context_length=512, prediction_length=128,
+        )
+
+
+def test_error_reports_the_real_longest_series(short_and_long_datasets):
+    """
+    Variable-length series are filtered before window generation, so measuring
+    what remains reports 0. The message must quote the pre-filter maximum, or it
+    actively misleads whoever is debugging a config.
+    """
+    from timejepa.data.dataset import TimeSeriesDataset, SeriesTooShortError
+    with pytest.raises(SeriesTooShortError) as exc:
+        TimeSeriesDataset(
+            short_and_long_datasets / "fred-md.npy",
+            context_length=512, prediction_length=128,
+        )
+    assert exc.value.series_length >= 300, "reported 0 instead of the real length"
+    assert "Longest usable context" in str(exc.value)
+
+
+def test_window_indices_are_a_compact_array(short_and_long_datasets):
+    """
+    B19. window_indices was a Python list of 2-tuples: ~120 bytes per window
+    (8 list pointer + 56 tuple + 56 for two int objects, start_idx being well
+    past the small-int cache). At the corpus's ~54M windows that is ~6.5 GB —
+    and paid PER PROCESS, because a dataloader worker walking the list bumps
+    each tuple's refcount, writing to its page and defeating fork's
+    copy-on-write. Observed as a steady climb to ~50 GB on a 57 GB host.
+
+    An int32 [N, 2] array is 8 bytes per window and has no per-element Python
+    objects, so the pages are genuinely shared.
+    """
+    import numpy as np
+    from timejepa.data.dataset import TimeSeriesDataset
+
+    ds = TimeSeriesDataset(
+        short_and_long_datasets / "electricity-hourly.npy",
+        context_length=512, prediction_length=128, stride=8,
+    )
+    wi = ds.window_indices
+    assert isinstance(wi, np.ndarray)
+    assert wi.dtype == np.int32
+    assert wi.ndim == 2 and wi.shape[1] == 2
+    assert wi.nbytes == len(ds) * 8
+
+
+@pytest.mark.parametrize("layout", ["dense", "object"])
+def test_window_indices_still_address_the_right_data(tmp_path, layout):
+    """The compact layout must select byte-identical windows."""
+    import numpy as np
+    from timejepa.data.dataset import TimeSeriesDataset
+
+    rng = np.random.default_rng(0)
+    if layout == "dense":
+        arr = rng.standard_normal((4, 8000)).astype("float32")
+        _write(tmp_path, "d", arr)
+        path = tmp_path / "d.npy"
+    else:
+        arr = np.array([rng.standard_normal(rng.integers(2000, 8000)).astype("float32")
+                        for _ in range(6)], dtype=object)
+        _write(tmp_path, "d", arr, allow_pickle=True)
+        path = tmp_path / "d.npy"
+
+    ds = TimeSeriesDataset(path, context_length=512, prediction_length=128, stride=64)
+    for i in (0, len(ds) // 3, len(ds) - 1):
+        series_idx, start = int(ds.window_indices[i][0]), int(ds.window_indices[i][1])
+        expected = ds.normalized_data[series_idx][start:start + 512]
+        assert np.allclose(ds[i]["context"].numpy(), expected)
+
+
+def test_multidataset_skips_short_datasets_and_keeps_training(short_and_long_datasets):
+    """
+    THE B17 bug: wikipedia-web-traffic-weekly (114 weekly points vs 640 needed)
+    aborted an entire 23-dataset pretraining run.
+    """
+    from timejepa.data.datamodule import MultiDatasetMonashDataModule
+    dm = MultiDatasetMonashDataModule(
+        data_dir=short_and_long_datasets,
+        context_length=512, prediction_length=128,
+        datasets=["electricity-hourly", "wikipedia-web-traffic-weekly", "fred-md"],
+        batch_size=16, stride=64,
+        normalize_mode="global", normalizer_type="identity", clip_outliers=False,
+        train_val_test_split=(0.96, 0.02, 0.02), num_workers=0,
+    )
+    dm.prepare_data()
+    dm.setup("fit")
+
+    assert dm.dataset_names_order == ["electricity-hourly"]
+    assert len(dm.train_dataset) > 0
+
+
+def test_multidataset_raises_when_everything_is_skipped(tmp_path):
+    """Skipping is graceful; skipping *everything* must still be a hard error."""
+    import numpy as np
+    from timejepa.data.datamodule import MultiDatasetMonashDataModule
+    _write(tmp_path, "a", np.random.randn(100, 114).astype("float32"))
+    _write(tmp_path, "b", np.random.randn(100, 200).astype("float32"))
+    dm = MultiDatasetMonashDataModule(
+        data_dir=tmp_path, context_length=512, prediction_length=128,
+        datasets=["a", "b"], batch_size=16, stride=64,
+        normalize_mode="global", normalizer_type="identity", clip_outliers=False,
+        train_val_test_split=(0.96, 0.02, 0.02), num_workers=0,
+    )
+    dm.prepare_data()
+    with pytest.raises(RuntimeError, match="Every dataset was skipped"):
+        dm.setup("fit")
+
+
+# =============================================================================
+# B13 — JEPATST built its decoder on the wrong stride
+# =============================================================================
+
+@pytest.mark.parametrize("patch,stride", [(16, 8), (32, 16), (64, 32), (8, 8)])
+def test_internal_decoder_emits_the_full_horizon(patch, stride):
+    """
+    JEPATST created ForecastingHead without forwarding `stride`, so UnPatching
+    reassembled on a default grid of 8. With patch_size=32 the forecast came out
+    80 timesteps long instead of 128 — truncated silently, no error.
+
+    Masked in practice because train.py and evaluate.py replace model.decoder,
+    but any direct use of JEPATST (the packaged forecast API) got the broken one.
+    """
+    m = JEPATST(input_length=512, prediction_length=128,
+                patch_size=patch, stride=stride,
+                d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                predictor_num_layers=1, predictor_num_heads=4, predictor_d_ff=64,
+                decoder_type="mlp")
+    m.eval()
+    with torch.no_grad():
+        out = m.forward_finetune(torch.randn(2, 512, 1))["forecast"]
+    assert out.shape == (2, 128, 1), (
+        f"patch={patch}/stride={stride} produced {out.shape[1]} timesteps, expected 128"
+    )
+
+
+@pytest.mark.parametrize("config_name", ["tiny", "tiny_patch32", "tiny_patch64",
+                                         "tiny_deep_predictor"])
+def test_experiment_configs_are_runnable(config_name):
+    """
+    Every shipped config must build a model whose geometry works at the NOMINAL
+    size and at every randomized context/horizon it declares. Changing
+    patch_length silently makes some of those combinations degenerate (zero
+    target patches crashes; too few is meaningless), so this is checked rather
+    than reasoned about.
+    """
+    from hydra import initialize, compose
+
+    with initialize(version_base=None, config_path="../configs/model"):
+        cfg = compose(config_name=config_name)
+
+    m = JEPATST(
+        input_length=cfg.model.seq_length,
+        prediction_length=cfg.model.prediction_length,
+        num_features=cfg.model.num_channels,
+        patch_size=cfg.model.patch_length, stride=cfg.model.stride,
+        d_model=32, num_layers=1, num_heads=4, d_ff=64,
+        predictor_num_layers=cfg.model.predictor.n_layers,
+        predictor_num_heads=4, predictor_d_ff=64,
+        decoder_type=cfg.model.decoder.type,
+    )
+    m.eval()
+
+    with torch.no_grad():
+        for L in cfg.training.context_lengths:
+            for H in cfg.training.horizon_lengths:
+                out = m.forward_pretrain(torch.randn(2, L, 1), torch.randn(2, H, 1))
+                assert out["predictions"].shape == out["targets"].shape
+                assert out["predictions"].shape[1] > 0, f"L={L} H={H} gave 0 target patches"
+
+        rolled = m.forecast(torch.randn(2, cfg.model.seq_length, 1), n=336)
+        assert rolled["forecast_denorm"].shape == (2, 336, 1)
+        assert torch.isfinite(rolled["forecast_denorm"]).all()
+
+
+# =============================================================================
+# B18 — torch version drift in the sampler
+# =============================================================================
+
+def test_temperature_sampler_constructs():
+    """
+    `Sampler.__init__` took a deprecated `data_source` argument; newer torch
+    removed it, at which point `super().__init__(None)` reaches
+    `object.__init__` and raises "takes exactly one argument". Killed a real
+    run, and could not be reproduced locally because the local torch still had
+    the old signature — hence this direct construction test.
+    """
+    from timejepa.data.datamodule import TemperatureSampler
+    s = TemperatureSampler(dataset_sizes=[1000, 50000, 300], batch_size=64,
+                           temperature=0.5)
+    batch = next(iter(s))
+    assert len(batch) == 64
+
+
+# =============================================================================
+# P1.9 — collapse diagnostics must never kill a run
+# =============================================================================
+
+def _pretrain_module(loss_type="sigreg"):
+    from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
+    m = JEPATST(input_length=384, prediction_length=96, patch_size=16, stride=8,
+                d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                predictor_num_layers=1, predictor_num_heads=4, predictor_d_ff=64,
+                decoder_type="mlp")
+    return JEPAPretrainModule(model=m, loss_type=loss_type,
+                              sigreg_config={"lambda": 1.0})
+
+
+def test_effective_rank_detects_collapse():
+    mod = _pretrain_module()
+    torch.manual_seed(0)
+    healthy = mod._effective_rank(torch.randn(64, 47, 32))
+    collapsed = mod._effective_rank(torch.ones(64, 47, 32) * 3.0)
+    rank_one = mod._effective_rank(torch.randn(64, 47, 1) * torch.randn(1, 1, 32))
+
+    assert healthy > 20, f"healthy embeddings should be near full rank, got {healthy}"
+    assert collapsed <= 1.01
+    assert rank_one <= 1.01
+
+
+def test_effective_rank_works_under_bf16_autocast():
+    """
+    Casting the input to float32 is NOT enough: the matmul sits inside the
+    bf16-mixed autocast region, so torch casts it straight back to bfloat16 and
+    eigvalsh dies with
+        "linalg_eigh_cuda" not implemented for 'BFloat16'
+    Observed on the first GPU run — the guard turned it into a warning, so the
+    metric was silently never reported. autocast has to be disabled explicitly.
+    """
+    mod = _pretrain_module()
+    torch.manual_seed(0)
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        from_bf16 = mod._effective_rank(torch.randn(64, 47, 32).to(torch.bfloat16))
+        from_f32 = mod._effective_rank(torch.randn(64, 47, 32))
+    assert from_bf16 is not None, "effective_rank still unavailable under autocast"
+    assert from_f32 is not None
+    assert from_bf16 > 20 and from_f32 > 20
+
+
+def test_effective_rank_survives_degenerate_input():
+    """
+    Iterative eigensolvers genuinely fail on degenerate matrices — verified:
+    torch raises "failed to converge (error code: 30)" on all-NaN input. A
+    monitoring metric that crashes exactly when the monitored failure occurs
+    would be worse than no metric.
+    """
+    mod = _pretrain_module()
+    assert mod._effective_rank(torch.full((64, 47, 32), float("nan"))) is None
+
+
+def test_context_std_catches_positional_collapse():
+    """
+    Effective rank pools positions, so a per-position collapse keeps it high.
+    `collapse/context_std` is the metric that catches it — they are
+    complementary, which is why both are logged.
+    """
+    mod = _pretrain_module()
+    torch.manual_seed(0)
+    per_pos = torch.randn(1, 47, 32).repeat(64, 1, 1)
+    assert mod._effective_rank(per_pos) > 10          # blind, as expected
+    assert per_pos.std(dim=0).mean().item() < 1e-6    # but this one sees it
+
+
+# =============================================================================
 # B16 — predictor future-query table
 # =============================================================================
 

@@ -1,0 +1,42 @@
+# @package _global_
+#
+# EXPERIMENT — patch 32 / stride 16 (baseline tiny is 16 / 8)
+#
+# Tests the hypothesis that skill is governed by the seasonal period expressed
+# in PATCH POSITIONS, not by anything intrinsic to the dataset.
+#
+# Evidence motivating it (scripts/diagnose_ettm.py, docs/P1_frequency_diagnostic.txt):
+#   ECL native      cycle=24  ->  3 patch-positions   skill +28.5%
+#   ETTm1 native    cycle=96  -> 12 patch-positions   skill -27.2%
+#   ECL upsampled x4 cycle=96 -> 12 patch-positions   skill -136.3%   <- same data
+#
+# Doubling the patch halves the positions per cycle. On ETTm1 (cycle 96) this
+# moves 12 -> 6 positions, the regime where the +/-2 downsampling experiment
+# measured -8.3% instead of -27.2%.
+#
+# EVERYTHING else is inherited from tiny.yaml, so this is a single-variable
+# comparison. Read it against a tiny.yaml run with the same loss type.
+#
+# Geometry (verified):
+#   ctx 512 -> 31 patches      pred 128 -> 7 target patches
+#   ctx 128 ->  7 patches      H=32     -> 1 target patch
+defaults:
+  - tiny
+  - _self_
+
+model:
+  name: "timejepa_tiny_patch32"
+  patch_length: 32
+  stride: 16
+
+training:
+  # H=32 yields a single target patch here, which is degenerate for the
+  # predictor; start the horizon randomization at 64.
+  horizon_lengths: [64, 96, 128]
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "patch32"

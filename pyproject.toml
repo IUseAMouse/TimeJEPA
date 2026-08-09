@@ -5,6 +5,14 @@ description = "Time Series Joint Embedding Predictive Architecture Research"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # NOTE: this constraint says nothing about the CUDA build variant. On a host
+    # whose driver is older than the CUDA the default wheel was compiled against,
+    # torch fails at init with "The NVIDIA driver on your system is too old".
+    # Rented GPUs (RunPod, Colab) have a host-fixed driver you cannot upgrade, so
+    # install a matching build instead:
+    #   uv pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu128
+    # Reference version for this repo (what the test suite runs on): 2.9.1+cu128.
+    # See PLAN.md > "Pièges d'environnement".
     "torch>=2.8.0",
     "pytorch-lightning>=2.5.0",
     "numpy>=2.3.0",

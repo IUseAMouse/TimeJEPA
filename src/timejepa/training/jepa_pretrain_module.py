@@ -4,6 +4,8 @@ PyTorch Lightning Module for JEPA pretraining with TRUE forecasting objective.
 The model learns to predict representations of FUTURE timesteps.
 """
 
+import logging
+
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -12,6 +14,8 @@ from pathlib import Path
 
 from ..models.jepa_tst import JEPATST
 from .utils.metrics import jepa_loss, compute_pretrain_metrics
+
+logger = logging.getLogger(__name__)
 
 
 class JEPAPretrainModule(pl.LightningModule):
@@ -283,18 +287,58 @@ class JEPAPretrainModule(pl.LightningModule):
             collapse = ctx.std(dim=0).mean()
             self.log('collapse/context_std', collapse, on_step=False, on_epoch=True,
                      prog_bar=True, logger=True, sync_dist=True)
-            # Effective rank of the representation: a collapsed encoder puts all
-            # its energy in a handful of directions.
-            with torch.no_grad():
-                flat = ctx.reshape(-1, ctx.shape[-1]).float()
-                flat = flat - flat.mean(dim=0, keepdim=True)
-                sv = torch.linalg.svdvals(flat)
-                p = sv / sv.sum().clamp_min(1e-12)
-                entropy = -(p * (p + 1e-12).log()).sum()
-                self.log('collapse/effective_rank', entropy.exp(), on_step=False,
-                         on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+            # Effective rank: a collapsed encoder concentrates all its energy in
+            # a handful of directions. Computed on the first validation batch
+            # only — it is a diagnostic, not a per-batch quantity, and running an
+            # eigendecomposition on every batch is pure overhead.
+            if batch_idx == 0:
+                eff_rank = self._effective_rank(ctx)
+                if eff_rank is not None:
+                    self.log('collapse/effective_rank', eff_rank, on_step=False,
+                             on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return loss
+
+    @torch.no_grad()
+    def _effective_rank(self, embeddings: torch.Tensor) -> Optional[torch.Tensor]:
+        """
+        exp(entropy of the normalized covariance spectrum).
+
+        Two deliberate choices:
+
+        - Eigenvalues of the DxD covariance rather than SVD of the [B*N, D]
+          matrix. Mathematically the same spectrum (up to squaring) but on a
+          128x128 matrix instead of a 32000x128 one.
+
+        - Wrapped in try/except. Iterative eigensolvers can fail to converge on
+          near-degenerate input — which is *exactly* the collapsed case this
+          metric exists to detect. A monitoring metric that crashes the run at
+          the precise moment the thing it monitors happens would be worse than
+          useless.
+        """
+        try:
+            # autocast must be disabled explicitly. Casting to float32 is not
+            # enough: the matmul below sits inside the bf16-mixed autocast
+            # region, so PyTorch casts it straight back to bfloat16 and
+            # eigvalsh then fails with
+            #     "linalg_eigh_cuda" not implemented for 'BFloat16'
+            device_type = embeddings.device.type
+            with torch.autocast(device_type=device_type, enabled=False):
+                flat = embeddings.reshape(-1, embeddings.shape[-1]).float()
+                flat = flat - flat.mean(dim=0, keepdim=True)
+                cov = (flat.T @ flat) / max(flat.shape[0] - 1, 1)
+                eigvals = torch.linalg.eigvalsh(cov.float()).clamp_min(0)
+            total = eigvals.sum()
+            if not torch.isfinite(total) or total <= 1e-12:
+                # Fully collapsed: every direction is degenerate, rank is 1.
+                return torch.ones((), device=embeddings.device)
+            p = eigvals / total
+            entropy = -(p * (p + 1e-12).log()).sum()
+            return entropy.exp()
+        except Exception as e:  # noqa: BLE001 - diagnostics must never kill a run
+            logger.warning(f"effective_rank unavailable this step: {e}")
+            return None
     
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""

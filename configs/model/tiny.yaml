@@ -165,6 +165,14 @@ data:
   multi_resolution_factors: [1, 2, 3, 4]
   p_multi_resolution: 0.35
 
+  # Dataloader workers. Every dataset is held in memory and several are numpy
+  # object arrays, whose per-element refcount updates defeat fork's
+  # copy-on-write — so worker count multiplies RSS rather than sharing it.
+  # 8 train + 8 persistent validation workers got a run OOM-killed by the host
+  # kernel (bare "Killed", no traceback). Raise only if RSS allows.
+  num_workers: 4
+  persistent_workers: false
+
 nixtla:
   - ettm1
   - ettm2
@@ -246,6 +254,14 @@ trainer:
   gradient_clip_val: ${training.gradient_clip_val}  # Reference from training
   accumulate_grad_batches: 3  # Gradient accumulation steps
   val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
+
+  # The validation split is 2% of the windows — over a MILLION samples on the
+  # full corpus, i.e. 2109 batches. At val_check_interval=0.1 that is ~21k
+  # validation batches per epoch, more compute than the training itself, and it
+  # keeps a second set of dataloader workers alive. 300 batches (~150k samples)
+  # give a val_loss stable far below the differences we are comparing.
+  limit_val_batches: 300
+  limit_train_batches: null
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
   deterministic: false  # Set to true for reproducibility 
   strategy: "ddp_find_unused_parameters_true" 

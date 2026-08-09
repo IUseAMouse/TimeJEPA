@@ -1,0 +1,47 @@
+# @package _global_
+#
+# EXPERIMENT — patch 64 / stride 32 (baseline tiny is 16 / 8)
+#
+# The decisive point of the patch-size hypothesis. On ETTm1 (cycle 96) this puts
+# the seasonal cycle at 96/32 = 3 patch positions — EXACTLY the regime where
+# electricity, traffic and weather all win (+18% to +30% skill).
+#
+# If ETTm1 skill turns positive here, the patch-size theory is confirmed and the
+# remedy is multi-scale patching. If it does not move, the bottleneck is
+# elsewhere (predictor capacity — see tiny_deep_predictor.yaml) and patching is
+# not the lever.
+#
+# CAVEAT, read before interpreting: at this patch size the context holds only 15
+# tokens and the prediction only 3. That is a much smaller sequence for the
+# transformer to work with, and the decoder must reconstruct 128 timesteps from
+# 3 tokens. A degradation here is therefore ambiguous — it could be the token
+# count rather than the ratio. That is precisely why tiny_patch32.yaml exists:
+# three points (12 / 6 / 3 positions per cycle) give a trend, and a trend
+# separates "ratio helps" from "fewer tokens hurt".
+#
+# Geometry (verified):
+#   ctx 512 -> 15 patches      pred 128 -> 3 target patches
+#   ctx 256 ->  7 patches      H=64     -> 1 target patch
+#   ctx 128 ->  3 patches (too few — context randomization starts at 256)
+#   H=32    ->  0 patches (would crash — horizon randomization starts at 96)
+defaults:
+  - tiny
+  - _self_
+
+model:
+  name: "timejepa_tiny_patch64"
+  patch_length: 64
+  stride: 32
+
+training:
+  # Both bounds raised: the coarse patching makes short contexts and short
+  # horizons degenerate (see the geometry note above).
+  context_lengths: [256, 320, 384, 448, 512]
+  horizon_lengths: [96, 128]
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "patch64"

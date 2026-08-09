@@ -148,9 +148,19 @@ class JEPATST(nn.Module):
             raise ValueError(f"Unknown predictor_type: {predictor_type}")
         
         # ===== Decoder (for finetuning) =====
+        # `stride` MUST be forwarded. Without it ForecastingHead fell back to
+        # its default of 8, so UnPatching reassembled the forecast on the wrong
+        # grid: with patch_size=32 the decoder emitted 80 timesteps instead of
+        # 128, silently truncated, with no error anywhere.
+        #
+        # This stayed invisible because train.py and evaluate.py both replace
+        # model.decoder with a correctly-strided one right after construction —
+        # but anything using JEPATST directly (notably the packaged
+        # `model.forecast(...)` API) got the broken head.
         self.decoder = ForecastingHead(
             d_model=d_model,
             patch_size=patch_size,
+            stride=stride,
             prediction_length=prediction_length,
             num_features=num_features,
             decoder_type=decoder_type,

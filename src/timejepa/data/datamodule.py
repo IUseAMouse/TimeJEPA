@@ -10,7 +10,12 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, ConcatDataset, Sampler
 
-from .dataset import TimeSeriesDataset, MultiHorizonDataset, AugmentedSubset
+from .dataset import (
+    TimeSeriesDataset,
+    MultiHorizonDataset,
+    AugmentedSubset,
+    SeriesTooShortError,
+)
 from .normalizer import Normalizer, get_normalizer
 
 logger = logging.getLogger(__name__)
@@ -58,8 +63,13 @@ class TemperatureSampler(Sampler):
             shuffle: Shuffle within datasets
             seed: Random seed
         """
-        super().__init__(None)
-        
+        # No argument: `Sampler.__init__` used to take an (unused, deprecated)
+        # `data_source`, and newer torch removed it entirely — at which point
+        # the call falls through to `object.__init__`, which accepts nothing:
+        #     TypeError: object.__init__() takes exactly one argument
+        # Calling with no argument is correct on both.
+        super().__init__()
+
         self.dataset_sizes = dataset_sizes
         self.num_datasets = len(dataset_sizes)
         self.batch_size = batch_size
@@ -665,7 +675,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             self.val_dataset_sizes = []
             self.test_dataset_sizes = []
             self.dataset_names_order = []
-            
+            skipped = []
+
             for dataset_name, file_path in self.dataset_files.items():
                 logger.info(f"Setting up datamodule for: {dataset_name}")
                 
@@ -693,11 +704,30 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     seed=self.seed
                 )
                 
-                dm.prepare_data()
-                dm.setup(stage)
-                
+                try:
+                    dm.prepare_data()
+                    dm.setup(stage)
+                except SeriesTooShortError as e:
+                    # A dataset whose series cannot host a single window is a
+                    # configuration mismatch, not a fatal error: at
+                    # context_length=512 the weekly and most monthly Monash
+                    # datasets simply do not qualify. Skip it loudly and keep
+                    # the other 22 datasets training.
+                    skipped.append((dataset_name, e))
+                    logger.warning(
+                        f"  ⏭️  SKIPPING {dataset_name}: {e}"
+                    )
+                    continue
+
+                if len(dm.train_dataset) == 0:
+                    skipped.append((dataset_name, "0 training windows"))
+                    logger.warning(
+                        f"  ⏭️  SKIPPING {dataset_name}: produced 0 training windows"
+                    )
+                    continue
+
                 self.datamodules[dataset_name] = dm
-                
+
                 train_datasets.append(dm.train_dataset)
                 val_datasets.append(dm.val_dataset)
                 test_datasets.append(dm.test_dataset)
@@ -712,7 +742,25 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                           f"train={len(dm.train_dataset):,}, "
                           f"val={len(dm.val_dataset):,}, "
                           f"test={len(dm.test_dataset):,}")
-            
+
+            if skipped:
+                logger.warning(
+                    f"⏭️  {len(skipped)}/{len(self.dataset_files)} dataset(s) skipped "
+                    f"(context_length={self.context_length} + "
+                    f"prediction_length={self.prediction_length} = "
+                    f"{self.context_length + self.prediction_length} timesteps required):"
+                )
+                for name, reason in skipped:
+                    logger.warning(f"     - {name}: {reason}")
+
+            if not self.train_dataset_sizes:
+                raise RuntimeError(
+                    f"Every dataset was skipped: no series is long enough for "
+                    f"context_length={self.context_length} + "
+                    f"prediction_length={self.prediction_length}. "
+                    f"Lower the context length or change the dataset list."
+                )
+
             if self.combine_mode == "concatenate":
                 self.train_dataset = ConcatDataset(train_datasets)
                 self.val_dataset = ConcatDataset(val_datasets)

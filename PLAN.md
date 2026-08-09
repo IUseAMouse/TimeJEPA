@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-09 — P0 terminé, P1 code complet, en attente des runs GPU.
+**Dernière mise à jour :** 2026-08-09 — pretrain SIGReg en cours ; configs E1/E2/E3 prêtes.
 
 ---
 
@@ -221,7 +221,9 @@ non-stationnarité. Une part de la dégradation peut venir de là, pas seulement
 - [x] **P1.8** Contexte variable, échantillonné une fois par batch (tenseurs rectangulaires,
       pas de masque nécessaire : l'encodeur est agnostique à la longueur grâce à RoPE)
 - [x] **P1.9** `collapse/context_std` + `collapse/effective_rank` loggés en première classe
-- [ ] **P1.10** Pondération des datasets par prédictibilité (bitcoin/wikipedia ne doivent pas dominer
+- [ ] **P1.10** Pondération des datasets par prédictibilité ⚠️ **NON FAIT** — bitcoin et
+      wikipedia poussent l'encodeur vers la moyenne conditionnelle, donc vers le collapse.
+      Premier suspect si `collapse/context_std` dérive pendant le run. (bitcoin/wikipedia ne doivent pas dominer
       le gradient d'un objectif prédictif)
 - [ ] **P1.11** Pretrain comparatif VICReg vs SIGReg (ablation), avec/sans EMA pour SIGReg
 - [x] **P1.12** Vraie multi-résolution dans `TimeSeriesDataset.get_item` (décimation d'une
@@ -243,8 +245,44 @@ la perf downstream, ablation VICReg/SIGReg tranchée.
 ```bash
 git clone -b sota-roadmap https://github.com/IUseAMouse/TimeJEPA.git && cd TimeJEPA
 make install && source .venv/bin/activate
+
+# ⚠️ VÉRIFIER AVANT DE LANCER — voir « Pièges d'environnement » plus bas
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+
 make download-all          # ~2-3 h la première fois
 ```
+
+### ⚠️ Pièges d'environnement (rencontrés en vrai, pas hypothétiques)
+
+**1. Driver CUDA trop ancien pour le build torch.**
+
+```
+RuntimeError: The NVIDIA driver on your system is too old (found version 12080).
+```
+
+`12080` = le driver supporte CUDA 12.8. `pyproject.toml` demande `torch>=2.8.0`
+sans borne haute, donc `uv` installe la dernière version, compilée contre une
+CUDA plus récente. Sur RunPod/Colab le driver est fixé par l'hôte : impossible
+de le mettre à jour depuis le conteneur. Installer un build torch assorti :
+
+```bash
+uv pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu128
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# attendu : 2.9.1+cu128 True
+```
+
+Adapter `cu128` à ce que le driver supporte (`nvidia-smi` → colonne « CUDA Version »).
+`torch 2.9.1+cu128` est la version de référence : c'est celle sur laquelle toute
+la suite de tests est validée.
+
+**2. `TypeError: object.__init__() takes exactly one argument`** — corrigé
+(B18), mais c'est le symptôme d'un torch plus récent que celui de dev. Si un
+symptôme du même genre apparaît ailleurs, la cause est probablement la même.
+
+**3. Datasets trop courts pour le contexte** — corrigé (B17) : ils sont
+maintenant ignorés avec un warning au lieu de tuer le run. À `context_length=512`,
+`wikipedia-web-traffic-weekly` (114 pas) et `rideshare` (541 pas) sont exclus.
+C'est attendu, pas une erreur.
 
 ### Run A — VICReg (référence corrigée)
 
@@ -302,6 +340,77 @@ sur ETTm1, qui est à −31 % aujourd'hui.
 
 ---
 
+## 🧪 File d'expériences — à lancer quand le pretrain SIGReg est fini
+
+> Tout est prêt et validé (59 tests). Chaque config est un override mince de
+> `tiny.yaml` : la comparaison est à variable unique par construction.
+
+### E1 — Patch size (teste l'hypothèse « la taille de patch bloque ETTm »)
+
+```bash
+python scripts/train.py --config-name tiny_patch32 training.loss.type=sigreg wandb.run_name=e1-patch32
+python scripts/train.py --config-name tiny_patch64 training.loss.type=sigreg wandb.run_name=e1-patch64
+```
+
+| config | positions de patch par cycle ETTm1 (96) | tokens de contexte |
+|---|---|---|
+| `tiny` (référence) | 12 | 63 |
+| `tiny_patch32` | 6 | 31 |
+| `tiny_patch64` | **3** ← régime des gagnants | 15 |
+
+**Lecture.** Si le skill ETTm1 devient positif en patch64 → l'hypothèse est
+confirmée, le remède est le patching multi-échelle (voir P2.10).
+⚠️ Trois points sont nécessaires (12/6/3), pas seulement patch64 : à 15 tokens de
+contexte, une dégradation serait ambiguë entre « mauvais ratio » et « trop peu de
+tokens ». La tendance sur trois points sépare les deux.
+
+### E2 — Profondeur du prédicteur (contrôle de E1)
+
+```bash
+python scripts/train.py --config-name tiny_deep_predictor training.loss.type=sigreg wandb.run_name=e2-deep-predictor
+```
+
+Le diagnostic a établi **que** le ratio pilote le skill ; le *mécanisme* proposé
+(prédicteur à 2 couches trop court pour un motif répété seulement 4×) n'a jamais
+été testé. Matrice de lecture :
+
+| E1 améliore | E2 améliore | conclusion |
+|---|---|---|
+| ✅ | ❌ | le ratio période/patch est le driver |
+| ❌ | ✅ | la capacité du prédicteur est le driver |
+| ✅ | ✅ | les deux contribuent |
+| ❌ | ❌ | le mécanisme est ailleurs |
+
+⚠️ Confondant : +0.4M params sur 1.6M. Un gain pourrait être la capacité brute
+plutôt que la profondeur.
+
+### E3 — Datasets de finetune (8 vs 22)
+
+Pas de nouvelle config, un override suffit. **Depuis le MÊME checkpoint pretrain :**
+
+```bash
+# A — les 8 datasets actuels
+make finetune CHECKPOINT=<ckpt> CONFIG=tiny ARGS="wandb.run_name=e3-ft8"
+
+# B — tous les datasets utilisables
+python scripts/train.py --config-name tiny training.mode=finetune \
+  +training.pretrained_encoder_path=<ckpt> \
+  'data.datasets_finetune=${data.datasets}' \
+  wandb.run_name=e3-ft-all
+```
+
+**Pourquoi ça compte.** Le finetune actuel utilise 8 des 24 datasets, tous
+« saisonniers propres » : electricity, traffic, weather, m4-hourly… Il exclut
+`bitcoin`, `kdd-cup-2018`, `saugeenday`, `sunspot-daily`, `nn5-daily`,
+`london-smart-meters`, `fred-md`, `solar-*`, `windpower-*`, `rain-temperature`.
+
+Autrement dit : **le décodeur est entraîné exactement sur le régime où le modèle
+gagne déjà, et n'a jamais vu de série bruitée ou non stationnaire** — puis il est
+évalué sur ETTm1 et exchange, où il perd. Ça pourrait expliquer une part du
+−31 %, indépendamment du patching.
+
+---
+
 ## P2 — Viser le SOTA
 
 - [ ] **P2.1** Tête quantile (pinball, 9 quantiles, incréments softplus anti-croisement)
@@ -313,6 +422,11 @@ sur ETTm1, qui est à −31 % aujourd'hui.
 - [ ] **P2.7** Packaging HF : `PyTorchModelHubMixin` + safetensors,
       `TimeJEPA.from_pretrained("timejepa-tiny")`, `model.forecast(y, horizon, quantiles)`
 - [ ] **P2.8** Model card + `examples/quickstart.ipynb`
+- [ ] **P2.10** Patching multi-échelle appris (si E1 confirme) : encoder en parallèle
+      à plusieurs tailles (16/32/64) et fusionner par pondération apprise. Le modèle
+      **choisit** son échelle selon le signal — l'inverse d'un temporal-resolution
+      encoding codé en dur. Alternatives écartées : encodeur pyramidal (plus intrusif),
+      attention dilatée (moins expressif).
 - [ ] **P2.9** Nettoyage : `masking.py` (B11), `output_norm` (B12), `stride` du décodeur (B13)
       — *marquer comme deprecated, NE PAS supprimer*
 
