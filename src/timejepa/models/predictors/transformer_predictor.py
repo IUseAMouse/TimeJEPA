@@ -104,10 +104,9 @@ class TransformerPredictor(nn.Module):
         """
         batch_size = context_embeddings.shape[0]
         num_targets = target_positions.shape[1]
-        
-        future_queries = self.future_position_embedding[:, :num_targets, :]
-        future_queries = future_queries.expand(batch_size, -1, -1)
-        
+
+        future_queries = self._future_queries(batch_size, num_targets)
+
         x = torch.cat([context_embeddings, future_queries], dim=1)
         # x: [B, N_context + N_target, d_model]
         
@@ -126,6 +125,33 @@ class TransformerPredictor(nn.Module):
         
         return target_predictions
     
+    def _future_queries(self, batch_size: int, num_targets: int) -> torch.Tensor:
+        """
+        Fetch `num_targets` learned future queries, refusing to truncate.
+
+        Slicing `future_position_embedding[:, :num_targets]` past the table size
+        silently returns fewer rows. The output shape stayed correct downstream
+        because the target slice `x[:, -num_targets:]` reads from the
+        concatenated sequence — so the missing queries were quietly replaced by
+        the LAST CONTEXT EMBEDDINGS, and those were then trained and scored as
+        if they were predictions.
+
+        With patch=16 / stride=8 that silently corrupted every configuration
+        with prediction_length > 136 (e.g. large.yaml at 192 -> 23 target
+        patches, 7 of them fake), and base.yaml at patch=4 / stride=4 -> 32
+        target patches, half of them fake.
+        """
+        available = self.future_position_embedding.shape[1]
+        if num_targets > available:
+            raise ValueError(
+                f"TransformerPredictor was built with max_target_patches="
+                f"{available} but {num_targets} target patches were requested. "
+                f"Increase max_target_patches (JEPATST sizes it from "
+                f"prediction_length). Truncating here would silently feed "
+                f"context embeddings in place of predictions."
+            )
+        return self.future_position_embedding[:, :num_targets, :].expand(batch_size, -1, -1)
+
     def forward_simple(
         self,
         context_embeddings: torch.Tensor,
@@ -134,20 +160,19 @@ class TransformerPredictor(nn.Module):
     ) -> torch.Tensor:
         """
         Simplified forward pass when target positions are just 'next N'.
-        
+
         Args:
             context_embeddings: Context [B, N_context, d_model]
             num_targets: Number of targets to predict
             attention_mask: Optional mask
-            
+
         Returns:
             Predictions [B, num_targets, d_model]
         """
         batch_size = context_embeddings.shape[0]
-        
-        future_queries = self.future_position_embedding[:, :num_targets, :]
-        future_queries = future_queries.expand(batch_size, -1, -1)
-        
+
+        future_queries = self._future_queries(batch_size, num_targets)
+
         # Concat
         x = torch.cat([context_embeddings, future_queries], dim=1)
         

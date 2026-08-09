@@ -53,15 +53,54 @@ training:
   mode: "pretrain"
   finetune_mode: "gradual_unfreeze"
   unfreeze_after_epoch: 1
+
+  # I-JEPA-style targets: encode [context ‖ target] with the EMA encoder and
+  # slice the target positions, instead of encoding the future window alone.
+  # Encoding it alone gave the target encoder ~11 patches while the online
+  # encoder saw ~47 — a distribution shift between two networks that are meant
+  # to be an EMA pair — and produced nearly context-free targets.
+  contextualized_targets: true
+
+  # Input-geometry randomization, sampled once per batch (keeps tensors
+  # rectangular; the encoder is length-agnostic thanks to RoPE).
+  # scripts/diagnose_ettm.py: skill peaks exactly at the training context length
+  # and collapses either side (electricity +28.5% at ctx=384, -103.8% at 768).
+  # The model had memorized a fixed patch count; this is the direct fix.
+  context_lengths: [128, 192, 256, 320, 384, 448, 512]
+  p_random_context: 0.5
+  horizon_lengths: [32, 64, 96, 128]
+  p_random_horizon: 0.5
   
   # Loss configuration
   loss:
-    type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
+    type: "vicreg"  # mse | smooth_l1 | cosine | vicreg | sigreg
     finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
+
+    # --- VICReg ---
     invariance_loss_weight: 25.0
     variance_loss_weight: 15.0
     covariance_loss_weight: 1.0
+
+    # --- SIGReg (LeJEPA, arXiv 2511.08544). Used when type: "sigreg".
+    # Single hyperparameter `lambda`. Alternative to VICReg, kept selectable so
+    # the two can be ablated head to head.
+    # Note they are complementary, not redundant: SIGReg flags bimodal /
+    # heavy-tailed embeddings that VICReg declares healthy, while VICReg's
+    # covariance term catches single-direction anisotropy that random 1D
+    # projections rarely hit.
+    sigreg:
+      lambda: 1.0
+      apply_to: "context"      # context | predictions | both
+      num_projections: 16
+      num_quadrature: 33
+      t_max: 5.0
+      max_tokens: 8192
+
+    # Regularize the ENCODER output, not just the predictor output. The encoder
+    # output is what the decoder and any linear probe actually consume; it was
+    # previously left completely unconstrained.
+    regularize_context: true
   
   # Optimization
   optimizer:
@@ -115,6 +154,16 @@ data:
   max_oversample_ratio: 6.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
+
+  # TRUE multi-resolution sampling (train split only): reads a longer raw
+  # stretch and decimates it, so the seasonal period expressed in patch
+  # positions genuinely varies during pretraining.
+  # Distinct from augmentations.drs, which downsamples then interpolates back to
+  # the same length (a smoothing op that leaves the period/patch ratio intact).
+  # Motivated by scripts/diagnose_ettm.py: ECL interpolated x4 drops from +28.5%
+  # to -136% skill purely from that ratio changing.
+  multi_resolution_factors: [1, 2, 3, 4]
+  p_multi_resolution: 0.35
 
 nixtla:
   - ettm1

@@ -6,9 +6,19 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
+
+# The masked-JEPA API (`model(x, context_mask=..., target_mask=...)`) and the
+# `create_jepa_tst_*` factories were removed in favour of Hydra configs and a
+# pure forecasting-JEPA objective. Tests below that still depend on them are
+# marked deprecated rather than deleted.
+DEPRECATED_MASKED_API = pytest.mark.skip(
+    reason="Legacy masked-JEPA API (context_mask/target_mask, create_jepa_tst_*) "
+           "no longer exists; see tests/test_p0_regressions.py"
+)
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -16,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from timejepa.data.dataset import TimeSeriesDataset
 from timejepa.data.datamodule import MonashDataModule
 from timejepa.data.normalizer import get_normalizer
-from timejepa.models.jepa_tst import JEPATST, create_jepa_tst_tiny
+from timejepa.models.jepa_tst import JEPATST
 
 
 def test_normalizer_identity():
@@ -163,6 +173,7 @@ def test_datamodule_normalizer_types():
         temp_path.unlink()
 
 
+@DEPRECATED_MASKED_API
 def test_full_pipeline_with_model():
     """Test complet: dataloader → model → forward → backward."""
     print("\n" + "="*80)
@@ -285,6 +296,7 @@ def test_full_pipeline_with_model():
         temp_path.unlink()
 
 
+@DEPRECATED_MASKED_API
 def test_pretrain_finetune_mode():
     """Test du switch entre mode pretrain et finetune."""
     print("\n" + "="*80)

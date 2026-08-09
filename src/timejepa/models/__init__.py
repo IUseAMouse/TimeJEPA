@@ -8,10 +8,7 @@ from .components.rope import RotaryPositionEmbedding
 from .components.patching import Patching, UnPatching
 from .components.attention import RoPEAttention, TransformerBlock
 
-from .encoders.patchtst_encoder import (
-    PatchTSTEncoder,
-    ChannelIndependentPatchTSTEncoder
-)
+from .encoders.bare_encoder import BareTransformerEncoder
 from .encoders.target_encoder import TargetEncoder, EMAUpdater
 
 from .predictors.transformer_predictor import (
@@ -40,8 +37,7 @@ __all__ = [
     'TransformerBlock',
     
     # Encoders
-    'PatchTSTEncoder',
-    'ChannelIndependentPatchTSTEncoder',
+    'BareTransformerEncoder',
     'TargetEncoder',
     'EMAUpdater',
     

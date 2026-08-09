@@ -124,13 +124,19 @@ class JEPATST(nn.Module):
         
         # ===== Predictor =====
         if predictor_type == 'transformer':
+            # Size the future-query table from the actual prediction length,
+            # with headroom. The old default of 16 silently truncated any
+            # configuration needing more target patches, substituting context
+            # embeddings for predictions (see TransformerPredictor._future_queries).
+            max_target_patches = max(16, int(self.num_target_patches * 1.5) + 4)
             self.predictor = TransformerPredictor(
                 d_model=d_model,
                 num_layers=predictor_num_layers,
                 num_heads=predictor_num_heads,
                 d_ff=predictor_d_ff,
                 dropout=dropout,
-                activation=activation
+                activation=activation,
+                max_target_patches=max_target_patches,
             )
         elif predictor_type == 'mlp':
             self.predictor = MLPPredictor(
@@ -170,6 +176,7 @@ class JEPATST(nn.Module):
         self,
         context: torch.Tensor,
         target: torch.Tensor,
+        contextualized_targets: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass for JEPA pretraining with TRUE forecasting objective.
@@ -200,18 +207,39 @@ class JEPATST(nn.Module):
         # 2. Patch context and target
         context_patches = self.patching(context_norm)  # [B, num_patches, d_model]
         target_patches = self.patching(target_norm)    # [B, num_target_patches, d_model]
-        
+
         num_target_patches = target_patches.shape[1]
-        
+
         # 3. Encode context with online encoder (gets gradients)
         context_embeddings = self.online_encoder(context_patches)
         # [B, num_patches, d_model]
-        
+
         # 4. Encode target with target encoder (NO gradients - EMA updated)
         with torch.no_grad():
-            target_embeddings = self.target_encoder(target_patches)
+            if contextualized_targets:
+                # I-JEPA-style targets: encode the FULL window and slice out the
+                # target positions, rather than encoding the future window in
+                # isolation.
+                #
+                # Encoding it alone means the target encoder sees ~11 patches
+                # while the online encoder sees ~47 — a distribution shift
+                # between two networks that are supposed to be an EMA pair. It
+                # also makes targets nearly context-free (a 96-step window in
+                # isolation is little more than local statistics), which is a
+                # weak thing to ask the predictor to match.
+                #
+                # Patch geometry works out exactly: with L_ctx=384, L_tgt=96,
+                # patch=16, stride=8, the concatenated window yields 59 patches
+                # whose last 11 start at 384, 392, ..., 464 — the same spans as
+                # the 11 standalone target patches, now contextualized.
+                full_norm = torch.cat([context_norm, target_norm], dim=1)
+                full_patches = self.patching(full_norm)
+                full_embeddings = self.target_encoder(full_patches)
+                target_embeddings = full_embeddings[:, -num_target_patches:, :]
+            else:
+                target_embeddings = self.target_encoder(target_patches)
             # [B, num_target_patches, d_model]
-        
+
         # 5. Predict target representations from context embeddings
         predictions = self.predictor.forward_simple(
             context_embeddings=context_embeddings,
@@ -294,7 +322,23 @@ class JEPATST(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Forecast n steps ahead with automatic rolling if needed.
-        
+
+        Normalization contract
+        ----------------------
+        With `skip_revin=False` (the default, and the regime the model was
+        TRAINED in), the whole rollout happens in a single instance-normalized
+        frame: RevIN statistics are computed once on the real context, pinned
+        via `revin.freeze()`, and every roll operates in that frame. The result
+        is denormalized once at the end. Mixing spaces mid-rollout — feeding a
+        normalized forecast back into a raw-space context — silently produces
+        garbage, which is what the previous implementation did.
+
+        `skip_revin=True` means "the caller guarantees the context is already in
+        the model's normalized frame". It is NOT the right flag for globally
+        z-scored benchmark data (Nixtla/ETT): a global z-score is not a per-window
+        instance normalization, and passing such data with skip_revin=True feeds
+        the encoder an out-of-distribution input.
+
         Args:
             context: Past time series [B, context_length, C]
             n: Number of steps to forecast. Defaults to self.prediction_length.
@@ -303,19 +347,20 @@ class JEPATST(nn.Module):
                  m = ceil(n / prediction_length)
             return_representations: If True, return intermediate representations
                 (only meaningful when n <= prediction_length)
-            skip_revin: Only use if working with data already from N(0,1)
-            
+            skip_revin: Only use if the context is already in the model's
+                instance-normalized frame.
+
         Returns:
             Dictionary with:
-                - 'forecast': Normalized forecast [B, n, C]
-                - 'forecast_denorm': Denormalized forecast [B, n, C]
-                - 'context_embeddings', 'future_representations' (if return_representations 
+                - 'forecast': Forecast in the normalized frame [B, n, C]
+                - 'forecast_denorm': Forecast in the input's original scale [B, n, C]
+                - 'context_embeddings', 'future_representations' (if return_representations
                   and n <= prediction_length)
         """
         if n is None:
             n = self.prediction_length
-        
-       # ---- Case 1: single-shot forecast ----
+
+        # ---- Case 1: single-shot forecast ----
         if n <= self.prediction_length:
             result = self.forward_finetune(
                 context,
@@ -325,51 +370,61 @@ class JEPATST(nn.Module):
             result['forecast'] = result['forecast'][:, :n]
             result['forecast_denorm'] = result['forecast_denorm'][:, :n]
             return result
-        
-        if not skip_revin and self.revin is not None:
-            _ = self.revin(context, mode="norm")   # init stats ONCE
-            self.revin.freeze()    
 
         # ---- Case 2: rolling forecast ----
-        num_rolls = (n + self.prediction_length - 1) // self.prediction_length
+        use_revin = (not skip_revin) and (self.revin is not None)
 
-        all_forecasts_norm = []
-        current_context = context.clone()
+        if use_revin:
+            # Compute the instance statistics ONCE on the true context, then pin
+            # them so every roll stays in the same frame.
+            current_context = self.revin(context, mode='norm')
+            self.revin.freeze()
+        else:
+            current_context = context.clone()
 
-        for roll_idx in range(num_rolls):
-            result = self.forward_finetune(
-                current_context,
-                return_representations=False,
-                skip_revin=skip_revin  
-            )
+        try:
+            num_rolls = (n + self.prediction_length - 1) // self.prediction_length
+            all_forecasts_norm = []
 
-            forecast_norm = result['forecast']  # [B, pred_len, C]
-            all_forecasts_norm.append(forecast_norm)
-
-            if roll_idx < num_rolls - 1:
-                current_context = torch.cat(
-                    [
-                        current_context[:, self.prediction_length:, :],
-                        forecast_norm
-                    ],
-                    dim=1
+            for roll_idx in range(num_rolls):
+                # `current_context` is already in the normalized frame, so the
+                # inner call must not re-normalize it.
+                result = self.forward_finetune(
+                    current_context,
+                    return_representations=False,
+                    skip_revin=True,
                 )
 
-        # ---- Concatenate & truncate ----
-        forecast_norm = torch.cat(all_forecasts_norm, dim=1)[:, :n]
+                forecast_norm = result['forecast']  # [B, pred_len, C]
+                all_forecasts_norm.append(forecast_norm)
 
-        # ---- Denormalize ONCE if needed ----
-        if skip_revin or self.revin is None:
-            forecast_denorm = forecast_norm
-        else:
-            forecast_denorm = self.revin(
-                forecast_norm,
-                mode="denorm"
-            )
+                if roll_idx < num_rolls - 1:
+                    # `current_context` is in the encoder input frame (affine
+                    # applied); `forecast_norm` is in the target frame. Realign
+                    # before feeding the prediction back in.
+                    feedback = (
+                        self.revin.to_input_frame(forecast_norm)
+                        if use_revin else forecast_norm
+                    )
+                    current_context = torch.cat(
+                        [
+                            current_context[:, self.prediction_length:, :],
+                            feedback
+                        ],
+                        dim=1
+                    )
 
-        if not skip_revin and self.revin is not None:
-            self.revin.unfreeze()
+            # ---- Concatenate & truncate ----
+            forecast_norm = torch.cat(all_forecasts_norm, dim=1)[:, :n]
 
+            # ---- Denormalize ONCE, with the pinned statistics ----
+            if use_revin:
+                forecast_denorm = self.revin.denormalize_target_space(forecast_norm)
+            else:
+                forecast_denorm = forecast_norm
+        finally:
+            if use_revin:
+                self.revin.unfreeze()
 
         return {
             "forecast": forecast_norm,

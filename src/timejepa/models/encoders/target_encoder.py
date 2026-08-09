@@ -1,7 +1,7 @@
 """
 Target Encoder for JEPA.
 
-This is a wrapper around PatchTSTEncoder that maintains a separate copy
+This is a wrapper around an encoder that maintains a separate copy
 of the encoder weights, updated via Exponential Moving Average (EMA).
 
 Key JEPA principle:
@@ -15,7 +15,7 @@ import torch.nn as nn
 from typing import Optional, Dict
 from copy import deepcopy
 
-from .patchtst_encoder import PatchTSTEncoder
+from .bare_encoder import BareTransformerEncoder
 
 import math
 
@@ -224,13 +224,17 @@ class DualEncoderWrapper(nn.Module):
         # After backward:
         dual_encoder.update_target()
     
+    .. deprecated::
+        Not used by JEPATST, which wires the online/target pair directly.
+        Kept for reference and for standalone experiments.
+
     Args:
-        encoder_config: Config dict for PatchTSTEncoder
+        encoder_config: Config dict for BareTransformerEncoder (d_model, num_layers, ...)
         ema_decay: Base EMA decay rate
         ema_final_decay: Final EMA decay rate
         total_steps: Total training steps (for EMA schedule)
     """
-    
+
     def __init__(
         self,
         encoder_config: Dict,
@@ -239,9 +243,9 @@ class DualEncoderWrapper(nn.Module):
         total_steps: int = 100000
     ):
         super().__init__()
-        
+
         # Create online encoder
-        self.online = PatchTSTEncoder(**encoder_config)
+        self.online = BareTransformerEncoder(**encoder_config)
         
         # Create target encoder (copy of online)
         self.target = TargetEncoder(self.online, ema_decay=ema_decay)

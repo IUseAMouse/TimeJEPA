@@ -93,6 +93,22 @@ def main(cfg: DictConfig):
     # Create data module
     logger.info("Creating data module...")
     is_pretrain = cfg.training.mode == "pretrain"
+
+    # Augmentations were configured in every YAML but never reached the
+    # DataModule, so scale / jitter / magnitude-warp / DRS have been inert on
+    # every run so far. Wire them, picking the pretrain or finetune block.
+    aug_root = cfg.get('augmentations') or {}
+    aug_key = 'pretrain' if is_pretrain else 'finetune'
+    aug_cfg = aug_root.get(aug_key) if aug_root else None
+    if aug_cfg is not None:
+        aug_cfg = OmegaConf.to_container(aug_cfg, resolve=True)
+        if not aug_cfg.get('enabled', True):
+            aug_cfg = None
+    logger.info(
+        f"Augmentations ({aug_key}): "
+        + ("enabled" if aug_cfg else "disabled")
+    )
+
     datamodule = MultiDatasetMonashDataModule(
         data_dir=cfg.data.data_dir,
         context_length=cfg.model.seq_length,
@@ -110,6 +126,16 @@ def main(cfg: DictConfig):
         clip_outliers=cfg.data.clip_outliers,
         clip_sigma=cfg.data.clip_sigma,
         train_val_test_split=cfg.data.train_val_test_split,
+        augmentation_config=aug_cfg,
+        # True multi-resolution: reads a longer raw stretch and decimates it, so
+        # the seasonal period in patch positions actually varies during training.
+        # Train split only. See scripts/diagnose_ettm.py for why this matters.
+        multi_resolution_factors=(
+            list(cfg.data.get('multi_resolution_factors') or [1]) if is_pretrain else [1]
+        ),
+        p_multi_resolution=(
+            float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain else 0.0
+        ),
         seed=cfg.data.seed,
         num_workers=8
     )
@@ -125,9 +151,12 @@ def main(cfg: DictConfig):
         model.train()
         
         logger.info("Creating JEPA pretraining module...")
+        sigreg_cfg = cfg.training.loss.get('sigreg')
+        sigreg_cfg = OmegaConf.to_container(sigreg_cfg, resolve=True) if sigreg_cfg else {}
+
         pl_module = JEPAPretrainModule(
             model=model,
-            
+
             # Loss
             loss_type=cfg.training.loss.type,
             vicreg_weights={
@@ -135,7 +164,16 @@ def main(cfg: DictConfig):
                 'variance': cfg.training.loss.variance_loss_weight,
                 'covariance': cfg.training.loss.covariance_loss_weight
             },
-            
+            sigreg_config=sigreg_cfg,
+            regularize_context=cfg.training.loss.get('regularize_context', True),
+            contextualized_targets=cfg.training.get('contextualized_targets', True),
+
+            # Input-geometry randomization (train split only)
+            context_lengths=list(cfg.training.get('context_lengths') or []),
+            p_random_context=float(cfg.training.get('p_random_context', 0.0)),
+            horizon_lengths=list(cfg.training.get('horizon_lengths') or []),
+            p_random_horizon=float(cfg.training.get('p_random_horizon', 0.0)),
+
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,
             weight_decay=cfg.training.optimizer.weight_decay,

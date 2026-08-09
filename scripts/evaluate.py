@@ -45,6 +45,10 @@ from timejepa.training.utils.metrics import (
     compute_forecasting_metrics_extended,
     compute_per_horizon_metrics
 )
+from timejepa.training.utils.baselines import (
+    compute_all_baselines,
+    get_seasonality,
+)
 from timejepa.models import JEPATST
 from timejepa.models.decoders import ForecastingHead
 
@@ -551,67 +555,126 @@ def evaluate_dataset_horizon(
     horizon: int,
     device: torch.device,
     max_samples: Optional[int] = None,
+    skip_revin: bool = False,
 ) -> Dict[str, torch.Tensor]:
     """
     Run evaluation on a dataset with specific horizon using model.forecast(n=horizon).
-    
+
     Uses rolling forecasts if horizon > model.prediction_length.
-    
+
+    Normalization
+    -------------
+    `skip_revin=False` is the correct default and the regime the model was
+    trained in. The previous code used `skip_revin=True` with the rationale
+    "nixtla long horizon datasets are already normalized" — but those datasets
+    are z-scored GLOBALLY with train statistics, which is a completely different
+    thing from RevIN's per-window instance normalization. Passing them with
+    skip_revin=True fed the encoder inputs whose mean was far from 0 (ETTh1 test:
+    mean -1.34, std 0.34) while it had only ever seen mean-0/std-1 windows, and
+    compared its output against targets living in yet another space. That is what
+    produced the constant level offset visible in the h96 forecast plots.
+
+    With skip_revin=False the model instance-normalizes each context, predicts in
+    that frame, and denormalizes back into the globally z-scored space where the
+    targets live — exactly what PatchTST / iTransformer / TimesNet do.
+
     Args:
         model: Model in eval mode
         dataloader: Test dataloader (must have target of length >= horizon)
         horizon: Target forecast horizon
         device: Device to run on
         max_samples: Optional limit on number of samples
-    
+        skip_revin: Bypass RevIN. Kept only to reproduce the old (broken) numbers
+            for the before/after comparison.
+
     Returns:
         Dictionary with 'contexts', 'predictions', 'targets' tensors
     """
     model.eval()
-    native_horizon = model.prediction_length
-    
+
     all_contexts = []
     all_predictions = []
     all_targets = []
     total_samples = 0
-    
+
     for batch in tqdm(dataloader, desc="  Inference", leave=False):
         context = batch['context'].to(device)
         target = batch['target'].to(device)
-        
+
         # Add channel dim if needed (univariate)
         if context.ndim == 2:
             context = context.unsqueeze(-1)
         if target.ndim == 2:
             target = target.unsqueeze(-1)
-        
-        # Doing this because nixtla long horizon datasets are already normalized
-        # so no need to use revin
-        output = model.forecast(context, n=horizon, skip_revin=True)
-        predictions = output['forecast']
-        
+
+        output = model.forecast(context, n=horizon, skip_revin=skip_revin)
+        # 'forecast_denorm' brings the prediction back into the space the targets
+        # live in. With skip_revin=True the two are identical anyway.
+        predictions = output['forecast_denorm']
+
         # Truncate target to horizon (dataloader may provide more)
         target = target[:, :horizon]
-        
+
         # Remove channel dim if univariate
         if context.shape[-1] == 1:
             context = context.squeeze(-1)
             predictions = predictions.squeeze(-1)
             target = target.squeeze(-1)
-        
+
         all_contexts.append(context.cpu())
         all_predictions.append(predictions.cpu())
         all_targets.append(target.cpu())
-        
+
         total_samples += len(context)
         if max_samples and total_samples >= max_samples:
             break
-    
+
     return {
         'contexts': torch.cat(all_contexts, dim=0),
         'predictions': torch.cat(all_predictions, dim=0),
         'targets': torch.cat(all_targets, dim=0)
     }
+
+
+def evaluate_with_baselines(
+    contexts: torch.Tensor,
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    season_length: int,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Score the model AND every reference baseline on identical windows.
+
+    Without this, an absolute MSE is uninterpretable. `skill_vs_seasonal_naive`
+    is the headline number: >0 means TimeJEPA beats seasonal naive on MASE,
+    <=0 means it does not.
+
+    Returns:
+        {'timejepa': {...}, 'seasonal_naive': {...}, ..., '_skill': {...}}
+    """
+    results = {}
+
+    results['timejepa'] = compute_forecasting_metrics_extended(
+        predictions, targets, context=contexts, season_length=season_length
+    )
+
+    horizon = targets.shape[1]
+    for name, base_pred in compute_all_baselines(contexts, horizon, season_length).items():
+        results[name] = compute_forecasting_metrics_extended(
+            base_pred, targets, context=contexts, season_length=season_length
+        )
+
+    # Relative skill scores (positive = model better)
+    model_mase = results['timejepa'].get('mase')
+    if model_mase is not None:
+        results['_skill'] = {}
+        for name in ('seasonal_naive', 'naive_last', 'context_mean', 'linear_trend'):
+            ref = results[name].get('mase')
+            if ref and ref > 0:
+                results['_skill'][f'mase_ratio_vs_{name}'] = model_mase / ref
+                results['_skill'][f'skill_vs_{name}'] = 1.0 - (model_mase / ref)
+
+    return results
 
 
 def evaluate_nixtla_dataset(
@@ -647,12 +710,23 @@ def evaluate_nixtla_dataset(
             "Nixtla support requires datasetsforecast. "
             "Install with: pip install datasetsforecast"
         )
-    
+
     native_horizon = model.prediction_length
     context_length = cfg.model.seq_length
-    
+    season_length = get_seasonality(dataset_name)
+    skip_revin = bool(cfg.get('eval_skip_revin', False))
+
     logger.info(f"  Model: context={context_length}, native_horizon={native_horizon}")
-    
+    logger.info(f"  Seasonality m={season_length} | RevIN={'OFF (legacy)' if skip_revin else 'ON'}")
+
+    if dataset_name.lower() in ('etth1', 'etth2'):
+        logger.warning(
+            f"  ⚠️  {dataset_name}: datasetsforecast.LongHorizon ships only ONE series "
+            f"('OT') for this group, whereas the published benchmark tables average "
+            f"over all 7 ETT channels. These numbers are NOT comparable to the "
+            f"literature — treat them as a univariate OT-only task."
+        )
+
     results = {}
     nixtla_cache = Path(cfg.data.data_dir) / 'nixtla'
     
@@ -702,14 +776,30 @@ def evaluate_nixtla_dataset(
             horizon=horizon,
             device=device,
             max_samples=max_samples,
+            skip_revin=skip_revin,
         )
-        
-        # Compute metrics
-        metrics = compute_forecasting_metrics_extended(result['predictions'], result['targets'])
+
+        # Model + every baseline, scored on identical windows
+        scored = evaluate_with_baselines(
+            result['contexts'], result['predictions'], result['targets'], season_length
+        )
+        metrics = dict(scored['timejepa'])
+        metrics['_baselines'] = {k: v for k, v in scored.items() if k not in ('timejepa', '_skill')}
+        metrics.update(scored.get('_skill', {}))
         results[horizon] = metrics
-        
-        logger.info(f"     MSE: {metrics['mse']:.4f} | MAE: {metrics['mae']:.4f}")
-        
+
+        sn = scored['seasonal_naive']
+        nl = scored['naive_last']
+        logger.info(
+            f"     MSE {metrics['mse']:.4f} | MAE {metrics['mae']:.4f} | "
+            f"MASE {metrics.get('mase', float('nan')):.3f} | WQL {metrics['wql']:.4f}"
+        )
+        logger.info(
+            f"     baselines MASE -> seasonal_naive {sn.get('mase', float('nan')):.3f} | "
+            f"naive_last {nl.get('mase', float('nan')):.3f} | "
+            f"skill vs SN: {metrics.get('skill_vs_seasonal_naive', float('nan')):+.1%}"
+        )
+
         # Plot for first horizon only
         if horizon == horizons[0]:
             plot_forecasts(
@@ -741,6 +831,7 @@ def create_nixtla_benchmark_table(
     rows = []
     for dataset, horizon_results in all_results.items():
         for horizon, metrics in sorted(horizon_results.items()):
+            baselines = metrics.get('_baselines', {})
             rows.append({
                 'Dataset': dataset,
                 'Horizon': horizon,
@@ -748,35 +839,72 @@ def create_nixtla_benchmark_table(
                 'MAE': metrics['mae'],
                 'RMSE': metrics['rmse'],
                 'SMAPE': metrics['smape'],
+                'MASE': metrics.get('mase'),
+                'WQL': metrics.get('wql'),
+                'R2': metrics.get('r2'),
+                'MASE_seasonal_naive': baselines.get('seasonal_naive', {}).get('mase'),
+                'MASE_naive_last': baselines.get('naive_last', {}).get('mase'),
+                'MASE_context_mean': baselines.get('context_mean', {}).get('mase'),
+                'skill_vs_seasonal_naive': metrics.get('skill_vs_seasonal_naive'),
+                'skill_vs_naive_last': metrics.get('skill_vs_naive_last'),
             })
-    
+
     df = pd.DataFrame(rows)
-    
+
     # Create pivot tables (standard benchmark format)
     mse_pivot = df.pivot(index='Dataset', columns='Horizon', values='MSE')
     mae_pivot = df.pivot(index='Dataset', columns='Horizon', values='MAE')
-    
+    mase_pivot = df.pivot(index='Dataset', columns='Horizon', values='MASE')
+    skill_pivot = df.pivot(index='Dataset', columns='Horizon', values='skill_vs_seasonal_naive')
+
     # Add average column
-    mse_pivot['Avg'] = mse_pivot.mean(axis=1)
-    mae_pivot['Avg'] = mae_pivot.mean(axis=1)
-    
+    for piv in (mse_pivot, mae_pivot, mase_pivot, skill_pivot):
+        piv['Avg'] = piv.mean(axis=1)
+
     # Save all formats
     output_dir.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_dir / 'nixtla_results_long.csv', index=False)
     mse_pivot.to_csv(output_dir / 'nixtla_mse.csv')
     mae_pivot.to_csv(output_dir / 'nixtla_mae.csv')
-    
+    mase_pivot.to_csv(output_dir / 'nixtla_mase.csv')
+    skill_pivot.to_csv(output_dir / 'nixtla_skill_vs_seasonal_naive.csv')
+
     # Print tables
     print("\n" + "=" * 70)
     print("📊 NIXTLA BENCHMARK RESULTS - MSE")
     print("=" * 70)
     print(mse_pivot.round(4).to_string())
-    
+
     print("\n" + "=" * 70)
     print("📊 NIXTLA BENCHMARK RESULTS - MAE")
     print("=" * 70)
     print(mae_pivot.round(4).to_string())
-    
+
+    print("\n" + "=" * 70)
+    print("📊 MASE  (scale-free — 1.0 == seasonal naive, lower is better)")
+    print("=" * 70)
+    print(mase_pivot.round(4).to_string())
+
+    print("\n" + "=" * 70)
+    print("🎯 SKILL vs SEASONAL NAIVE  (>0 = TimeJEPA wins, <0 = it loses)")
+    print("=" * 70)
+    print((skill_pivot * 100).round(1).to_string())
+
+    # Head-to-head summary against every baseline
+    print("\n" + "=" * 70)
+    print("📋 HEAD-TO-HEAD  (mean MASE across all horizons)")
+    print("=" * 70)
+    summary = df.groupby('Dataset')[
+        ['MASE', 'MASE_seasonal_naive', 'MASE_naive_last', 'MASE_context_mean']
+    ].mean()
+    summary.columns = ['TimeJEPA', 'SeasonalNaive', 'NaiveLast', 'ContextMean']
+    summary['winner'] = summary.idxmin(axis=1)
+    print(summary.round(4).to_string())
+    summary.to_csv(output_dir / 'nixtla_head_to_head.csv')
+
+    n_wins = int((summary['winner'] == 'TimeJEPA').sum())
+    print(f"\n  TimeJEPA is the best model on {n_wins}/{len(summary)} datasets.")
+
     return df
 
 
@@ -953,14 +1081,22 @@ def main(cfg: DictConfig):
                 # Evaluate on test set
                 test_loader = dm.test_dataloader()
                 results = evaluate_dataset(model, test_loader, device)
-                
-                # Compute metrics using metrics.py
-                metrics = compute_forecasting_metrics_extended(
-                    results['predictions'], 
-                    results['targets']
+
+                # Model + baselines on identical windows
+                season_length = get_seasonality(dataset_name)
+                scored = evaluate_with_baselines(
+                    results['contexts'],
+                    results['predictions'],
+                    results['targets'],
+                    season_length,
                 )
+                metrics = dict(scored['timejepa'])
+                metrics['_baselines'] = {
+                    k: v for k, v in scored.items() if k not in ('timejepa', '_skill')
+                }
+                metrics.update(scored.get('_skill', {}))
                 all_results[dataset_name] = metrics
-                
+
                 # Compute per-horizon metrics
                 horizon_metrics = compute_per_horizon_metrics(
                     results['predictions'],
@@ -969,14 +1105,20 @@ def main(cfg: DictConfig):
                 all_horizon_metrics[dataset_name] = horizon_metrics
                 
                 # Print metrics
-                print(f"\n  📊 Results:")
+                print(f"\n  📊 Results (seasonality m={season_length}):")
                 print(f"     RMSE:        {metrics['rmse']:.4f}")
                 print(f"     MAE:         {metrics['mae']:.4f}")
                 print(f"     SMAPE:       {metrics['smape']:.2f}%")
-                print(f"     MAPE:        {metrics['mape']:.2f}%")
-                print(f"     Huber:       {metrics['huber']:.4f}")
+                print(f"     MASE:        {metrics.get('mase', float('nan')):.4f}")
+                print(f"     WQL/ND:      {metrics['wql']:.4f}")
                 print(f"     R²:          {metrics['r2']:.4f}")
                 print(f"     Correlation: {metrics['correlation']:.4f}")
+                print(f"  🎯 vs baselines (MASE):")
+                for bname, bm in metrics['_baselines'].items():
+                    marker = ""
+                    if metrics.get('mase') is not None and bm.get('mase') is not None:
+                        marker = " ← beats us" if bm['mase'] < metrics['mase'] else ""
+                    print(f"     {bname:<16} {bm.get('mase', float('nan')):.4f}{marker}")
                 
                 # Generate plots
                 plots_dir = output_dir / "plots"
@@ -1010,20 +1152,43 @@ def main(cfg: DictConfig):
     
     # Local dataset summary
     if all_results:
-        df = pd.DataFrame(all_results).T
+        # Split the nested baseline block out before building the frame
+        flat = {
+            ds: {k: v for k, v in m.items() if k != '_baselines'}
+            for ds, m in all_results.items()
+        }
+        df = pd.DataFrame(flat).T
         df.index.name = 'Dataset'
-        
+
         print("\n📊 Local Datasets:")
         print(df.to_string())
-        
-        # Compute averages
+
+        # Head-to-head against baselines (MASE)
+        h2h_rows = {}
+        for ds, m in all_results.items():
+            row = {'TimeJEPA': m.get('mase')}
+            for bname, bm in m.get('_baselines', {}).items():
+                row[bname] = bm.get('mase')
+            h2h_rows[ds] = row
+        h2h = pd.DataFrame(h2h_rows).T
+        if not h2h.empty and h2h.notna().any().any():
+            h2h['winner'] = h2h.idxmin(axis=1)
+            print("\n🎯 Head-to-head (MASE, lower is better):")
+            print(h2h.round(4).to_string())
+            n_wins = int((h2h['winner'] == 'TimeJEPA').sum())
+            print(f"\n  TimeJEPA is best on {n_wins}/{len(h2h)} local datasets.")
+            h2h.to_csv(output_dir / 'local_head_to_head.csv')
+
+        # Compute averages over numeric columns only
         print("\n" + "-" * 60)
-        avg_row = df.mean()
+        numeric = df.apply(pd.to_numeric, errors='coerce')
+        avg_row = numeric.mean()
         print(f"{'AVERAGE':<20}", end="")
-        for col in df.columns:
-            print(f" {col}: {avg_row[col]:.4f}", end=" |")
+        for col in numeric.columns:
+            if pd.notna(avg_row[col]):
+                print(f" {col}: {avg_row[col]:.4f}", end=" |")
         print()
-        
+
         # Save results
         results_json_path = output_dir / "local_results.json"
         with open(results_json_path, 'w') as f:

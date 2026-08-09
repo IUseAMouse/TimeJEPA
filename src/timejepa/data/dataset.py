@@ -40,6 +40,8 @@ class TimeSeriesDataset(Dataset):
         max_series: Optional[int] = None,
         min_series_length: Optional[int] = None,
         augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]] = None,
+        multi_resolution_factors: Optional[List[int]] = None,
+        p_multi_resolution: float = 0.0,
     ):
         """
         Args:
@@ -54,6 +56,9 @@ class TimeSeriesDataset(Dataset):
             max_series: Limit number of series (for debugging)
             min_series_length: Filter out series shorter than this
             augmentations: Augmentation config (used by AugmentedSubset, not here)
+            multi_resolution_factors: Decimation factors for TRUE multi-resolution
+                sampling, e.g. [1, 2, 3, 4]. See `get_item`.
+            p_multi_resolution: Probability of applying it (train split only).
         """
         self.data_path = Path(data_path)
         self.context_length = context_length
@@ -63,6 +68,8 @@ class TimeSeriesDataset(Dataset):
         self.normalize_mode = normalize_mode
         # Stocker les augmentations pour que AugmentedSubset y accède
         self.augmentations = self._setup_augmentations(augmentations)
+        self.multi_resolution_factors = list(multi_resolution_factors or [1])
+        self.p_multi_resolution = float(p_multi_resolution)
 
         # Load data
         logger.info(f"Loading data from {self.data_path}")
@@ -192,41 +199,88 @@ class TimeSeriesDataset(Dataset):
     def __len__(self) -> int:
         return len(self.window_indices)
     
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def _sample_resolution_factor(self, series_len: int, start_idx: int) -> int:
         """
-        Get a single sample (WITHOUT augmentation).
-        
-        Use AugmentedSubset for controlled augmentation in train/val/test.
+        Pick a decimation factor that still fits in the remaining series.
+
+        Only factors with `start_idx + (ctx + pred) * f <= series_len` are
+        eligible, so the window is always fully materialised rather than padded.
+        """
+        if self.p_multi_resolution <= 0.0 or len(self.multi_resolution_factors) <= 1:
+            return 1
+        if np.random.rand() >= self.p_multi_resolution:
+            return 1
+
+        need = self.context_length + self.prediction_length
+        eligible = [
+            f for f in self.multi_resolution_factors
+            if f >= 1 and start_idx + need * f <= series_len
+        ]
+        if not eligible:
+            return 1
+        return int(np.random.choice(eligible))
+
+    def get_item(self, idx: int, allow_multi_resolution: bool = False) -> Dict[str, Any]:
+        """
+        Get a single sample (WITHOUT the augmentation pipeline).
+
+        True multi-resolution sampling
+        ------------------------------
+        With `allow_multi_resolution=True` the window is read as
+        `series[start : start + (ctx+pred)*f : f]`, i.e. a LONGER raw stretch
+        decimated by `f`. That genuinely changes the sampling frequency, so a
+        seasonal cycle of period `m` becomes `m/f` steps and the number of
+        cycles inside the context changes by `f`.
+
+        This is distinct from `augmentations.diverse_resolution_sampling`, which
+        downsamples and then interpolates back to the SAME length: that
+        simulates a coarser sensor (a smoothing operation) and leaves the
+        period-to-patch ratio untouched.
+
+        The distinction matters: `scripts/diagnose_ettm.py` shows the model's
+        skill is governed by the seasonal period measured in patch positions
+        (ECL interpolated x4 goes from +28.5% to -136% skill), and by how far
+        the context length is from the one seen in training. Only the decimation
+        form varies those quantities during pretraining.
         """
         series_idx, start_idx = self.window_indices[idx]
-        
-        if self.data.dtype == object:
-            series = self.normalized_data[series_idx]
-        else:
-            series = self.normalized_data[series_idx]
-        
-        context_end = start_idx + self.context_length
-        target_end = context_end + self.prediction_length
-        
+        series = self.normalized_data[series_idx]
+        series_len = series.shape[-1]
+
+        factor = self._sample_resolution_factor(series_len, start_idx) \
+            if allow_multi_resolution else 1
+
+        span = (self.context_length + self.prediction_length) * factor
+        window_end = start_idx + span
+
         if self.is_multivariate:
-            context = series[:, start_idx:context_end]
-            target = series[:, context_end:target_end]
+            window = series[:, start_idx:window_end:factor]
+            context = window[:, :self.context_length]
+            target = window[:, self.context_length:self.context_length + self.prediction_length]
         else:
-            context = series[start_idx:context_end]
-            target = series[context_end:target_end]
-        
+            window = series[start_idx:window_end:factor]
+            context = window[:self.context_length]
+            target = window[self.context_length:self.context_length + self.prediction_length]
+
         if self.return_tensor:
-            context = torch.from_numpy(context).float()
-            target = torch.from_numpy(target).float()
-        
-        # ❌ PAS d'augmentation ici — géré par AugmentedSubset
-        
+            context = torch.from_numpy(np.ascontiguousarray(context)).float()
+            target = torch.from_numpy(np.ascontiguousarray(target)).float()
+
         return {
             'context': context,
             'target': target,
             'series_id': series_idx,
-            'start_idx': start_idx
+            'start_idx': start_idx,
+            'resolution_factor': factor,
         }
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        Get a single sample (WITHOUT augmentation or multi-resolution).
+
+        Use AugmentedSubset for controlled augmentation in train/val/test.
+        """
+        return self.get_item(idx, allow_multi_resolution=False)
     
     def get_normalizer(self) -> Normalizer:
         return self.normalizer
@@ -271,17 +325,20 @@ class AugmentedSubset(Dataset):
             - 'start_idx': Start index of the context window
         """
         real_idx = self.indices[idx]
-        
-        # On peut maintenant utiliser le __getitem__ parent (sans augmentation)
-        # puis appliquer l'augmentation si nécessaire
-        item = self.dataset[real_idx]
-        
+
+        # Multi-resolution sampling is a training-time augmentation, so it is
+        # gated on the same flag as the rest: val/test always see the native
+        # sampling rate.
+        item = self.dataset.get_item(
+            real_idx, allow_multi_resolution=self.apply_augmentation
+        )
+
         # Augmentation contrôlée par CETTE instance
         if self.apply_augmentation and self.dataset.augmentations is not None:
             item['context'], item['target'] = self.dataset.augmentations(
                 item['context'], item['target']
             )
-        
+
         return item
     
     def __len__(self) -> int:

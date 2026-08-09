@@ -1,0 +1,26 @@
+model ctx=384 native_h=96
+
+case                                                MASE      SN    skill
+--------------------------------------------------------------------------
+ETTm1 native 15min      cycle=96  = 12 patch-pos   1.261   0.992   -27.2%   (n=800)
+ETTm1 downsampled x4    cycle=24  =  3 patch-pos   1.123   1.095    -2.6%   (n=182)
+ETTm1 downsampled x2    cycle=48  =  6 patch-pos   1.110   1.025    -8.3%   (n=392)
+ECL native hourly       cycle=24  =  3 patch-pos   0.940   1.316   +28.5%   (n=800)
+ECL upsampled x4        cycle=96  = 12 patch-pos   2.361   0.999  -136.3%   (n=800)
+
+
+Disentangling: hold patch-positions/cycle FIXED, vary cycles in context
+case                                                MASE      SN    skill
+--------------------------------------------------------------------------
+ettm1 ctx=384   cycle=96   ->  4.0 cycles in ctx   1.261   0.992   -27.2%   (n=800)
+ettm1 ctx=768   cycle=96   ->  8.0 cycles in ctx   1.442   0.981   -47.0%   (n=784)
+ettm1 ctx=1536  cycle=96   -> 16.0 cycles in ctx   1.512   0.976   -54.9%   (n=728)
+electricity ctx=96    cycle=24   ->  4.0 cycles in ctx   1.999   1.321   -51.3%   (n=800)
+electricity ctx=192   cycle=24   ->  8.0 cycles in ctx   1.160   1.307   +11.3%   (n=800)
+electricity ctx=384   cycle=24   -> 16.0 cycles in ctx   0.940   1.316   +28.5%   (n=800)
+electricity ctx=768   cycle=24   -> 32.0 cycles in ctx   2.648   1.299  -103.8%   (n=800)
+
+Reading:
+  Skill rising with context length, at constant patch-positions/cycle,
+  means the driver is HOW MANY CYCLES FIT IN THE CONTEXT — not patch size,
+  and not which frequencies were in the pretrain corpus.

@@ -1,14 +1,22 @@
 """
 Unit tests for JEPA-TST model.
 
-/!\ Deprecated since I removed the create_jepa_tst_mini, tiny, base and large methods to favor loading configs with hydra
+Deprecated since I removed the create_jepa_tst_mini, tiny, base and large methods to favor loading configs with hydra
 """
 
 import pytest
-import torch
-from pathlib import Path
 
-from src.timejepa.models.jepa_tst import JEPATST, create_jepa_tst_tiny, create_jepa_tst_base
+pytest.skip(
+    "Legacy suite: targets an API that no longer exists (create_jepa_tst_* factories, "
+    "model.encoder.patching, context/target masks, forecast(prediction_length=...)). "
+    "Kept for reference. Current invariants are covered by tests/test_p0_regressions.py.",
+    allow_module_level=True,
+)
+
+import torch  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from timejepa.models.jepa_tst import JEPATST, create_jepa_tst_tiny, create_jepa_tst_base  # noqa: E402,F401
 
 
 class TestJEPATST:

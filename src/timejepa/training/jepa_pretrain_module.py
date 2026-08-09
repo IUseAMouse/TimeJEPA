@@ -31,11 +31,30 @@ class JEPAPretrainModule(pl.LightningModule):
     def __init__(
         self,
         model: JEPATST,
-        vicreg_weights: Dict[str,float] = None,
+        vicreg_weights: Dict[str, float] = None,
+        sigreg_config: Dict[str, float] = None,
 
         # Loss
-        loss_type: Literal['mse', 'smooth_l1', 'cosine', 'vicreg'] = 'vicreg',
-        
+        loss_type: Literal['mse', 'smooth_l1', 'cosine', 'vicreg', 'sigreg'] = 'vicreg',
+
+        # Anti-collapse target: regularize the ENCODER output, not just the
+        # predictor output (the encoder output is what downstream consumes).
+        regularize_context: bool = True,
+
+        # I-JEPA-style targets: encode [context ‖ target] and slice, instead of
+        # encoding the future window in isolation.
+        contextualized_targets: bool = True,
+
+        # Input-geometry randomization. scripts/diagnose_ettm.py shows skill
+        # peaks exactly at the training context length and collapses on both
+        # sides (electricity: +28.5% at ctx=384, -103.8% at ctx=768), i.e. the
+        # model memorizes a fixed patch count. Sampling the geometry per batch
+        # is the direct countermeasure.
+        context_lengths: Optional[list] = None,
+        p_random_context: float = 0.0,
+        horizon_lengths: Optional[list] = None,
+        p_random_horizon: float = 0.0,
+
         # Optimizer
         learning_rate: float = 1e-3,
         weight_decay: float = 0.02,
@@ -76,10 +95,20 @@ class JEPAPretrainModule(pl.LightningModule):
         
         # Loss
         self.loss_type = loss_type
-        
-        if loss_type == 'vicreg':
-            self.vicreg_weights = vicreg_weights
-        
+        # Always store both: `validation_step` used to call jepa_loss WITHOUT
+        # the weights, silently falling back to the (25, 25, 1) defaults. So
+        # early-stopping and save_top_k were selecting on a different objective
+        # than the one being trained.
+        self.vicreg_weights = vicreg_weights
+        self.sigreg_config = sigreg_config or {}
+        self.regularize_context = regularize_context
+        self.contextualized_targets = contextualized_targets
+
+        self.context_lengths = list(context_lengths) if context_lengths else None
+        self.p_random_context = float(p_random_context)
+        self.horizon_lengths = list(horizon_lengths) if horizon_lengths else None
+        self.p_random_horizon = float(p_random_horizon)
+
         # Optimizer params
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -102,6 +131,51 @@ class JEPAPretrainModule(pl.LightningModule):
     def forward(self, context: torch.Tensor, target: torch.Tensor):
         """Forward pass."""
         return self.model(context, target)
+
+    def _randomize_geometry(self, context: torch.Tensor, target: torch.Tensor):
+        """
+        Sample the input geometry ONCE PER BATCH.
+
+        Per-batch (not per-sample) keeps every tensor rectangular, so no padding
+        or attention masking is needed — the encoder is length-agnostic (RoPE,
+        no learned positional table) and simply sees a different patch count.
+
+        Context is cropped from the LEFT (keep the most recent history, which is
+        what a shorter context would actually contain at inference); the target
+        is cropped from the right.
+        """
+        if self.context_lengths and torch.rand(1).item() < self.p_random_context:
+            eligible = [L for L in self.context_lengths if L <= context.shape[1]]
+            if eligible:
+                length = int(eligible[torch.randint(len(eligible), (1,)).item()])
+                context = context[:, -length:]
+
+        if self.horizon_lengths and torch.rand(1).item() < self.p_random_horizon:
+            eligible = [H for H in self.horizon_lengths if H <= target.shape[1]]
+            if eligible:
+                horizon = int(eligible[torch.randint(len(eligible), (1,)).item()])
+                target = target[:, :horizon]
+
+        return context, target
+
+    def _compute_loss(self, predictions, targets, outputs):
+        """
+        Single entry point used by BOTH training_step and validation_step, so
+        the two can never diverge again (see B8: validation_step used to omit
+        vicreg_weights and silently score a different objective).
+        """
+        return jepa_loss(
+            predictions,
+            targets,
+            loss_type=self.loss_type,
+            reduction='mean',
+            vicreg_weights=self.vicreg_weights,
+            sigreg_config=self.sigreg_config,
+            context_embeddings=(
+                outputs.get('context_embeddings') if self.regularize_context else None
+            ),
+            return_components=True,
+        )
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         """
@@ -123,25 +197,33 @@ class JEPAPretrainModule(pl.LightningModule):
             context = context.unsqueeze(-1)  # [B, L] -> [B, L, 1]
         if target.ndim == 2:
             target = target.unsqueeze(-1)    # [B, L] -> [B, L, 1]
-        
+
+        # Randomize input geometry (training only)
+        context, target = self._randomize_geometry(context, target)
+        self.log('geometry/context_len', float(context.shape[1]),
+                 on_step=True, on_epoch=False, logger=True)
+        self.log('geometry/horizon_len', float(target.shape[1]),
+                 on_step=True, on_epoch=False, logger=True)
+
         # Forward pass - predict future representations
-        outputs = self.model(context, target)
-        
+        outputs = self.model.forward_pretrain(
+            context, target, contextualized_targets=self.contextualized_targets
+        )
+
         predictions = outputs['predictions']  # [B, num_target_patches, d_model]
         targets = outputs['targets']          # [B, num_target_patches, d_model]
-        
+
         # Compute JEPA loss
-        loss = jepa_loss(
-            predictions, 
-            targets, 
-            loss_type=self.loss_type, 
-            reduction='mean',
-            vicreg_weights=self.vicreg_weights
-        )
-        
+        loss, components = self._compute_loss(predictions, targets, outputs)
+
         # Logging
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        
+        for key, value in components.items():
+            if key == 'loss':
+                continue
+            self.log(f'train_loss/{key}', value, on_step=True, on_epoch=False,
+                     logger=True, sync_dist=True)
+
         # Additional metrics every N steps
         if batch_idx % self.log_every_n_steps == 0:
             with torch.no_grad():
@@ -164,19 +246,27 @@ class JEPAPretrainModule(pl.LightningModule):
             context = context.unsqueeze(-1)
         if target.ndim == 2:
             target = target.unsqueeze(-1)
-        
-        # Forward pass
-        outputs = self.model(context, target)
-        
+
+        # NOTE: validation deliberately uses the NATIVE geometry, never the
+        # randomized one, so val_loss stays comparable across epochs and runs.
+        outputs = self.model.forward_pretrain(
+            context, target, contextualized_targets=self.contextualized_targets
+        )
+
         predictions = outputs['predictions']
         targets = outputs['targets']
-        
-        # Compute loss
-        loss = jepa_loss(predictions, targets, loss_type=self.loss_type, reduction='mean')
-        
+
+        # Same objective as training — see _compute_loss
+        loss, components = self._compute_loss(predictions, targets, outputs)
+
         # Logging
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        
+        for key, value in components.items():
+            if key == 'loss':
+                continue
+            self.log(f'val_loss/{key}', value, on_step=False, on_epoch=True,
+                     logger=True, sync_dist=True)
+
         # Compute metrics
         metrics = compute_pretrain_metrics(
             predictions,
@@ -185,7 +275,25 @@ class JEPAPretrainModule(pl.LightningModule):
         )
         for key, value in metrics.items():
             self.log(f'val_{key}', value, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        
+
+        # Collapse is the failure mode this whole phase exists to prevent, so
+        # surface it as a first-class number instead of burying it in metrics.
+        ctx = outputs.get('context_embeddings')
+        if ctx is not None:
+            collapse = ctx.std(dim=0).mean()
+            self.log('collapse/context_std', collapse, on_step=False, on_epoch=True,
+                     prog_bar=True, logger=True, sync_dist=True)
+            # Effective rank of the representation: a collapsed encoder puts all
+            # its energy in a handful of directions.
+            with torch.no_grad():
+                flat = ctx.reshape(-1, ctx.shape[-1]).float()
+                flat = flat - flat.mean(dim=0, keepdim=True)
+                sv = torch.linalg.svdvals(flat)
+                p = sv / sv.sum().clamp_min(1e-12)
+                entropy = -(p * (p + 1e-12).log()).sum()
+                self.log('collapse/effective_rank', entropy.exp(), on_step=False,
+                         on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
         return loss
     
     def configure_optimizers(self):

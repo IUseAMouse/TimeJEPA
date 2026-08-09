@@ -50,11 +50,16 @@ training:
   unfreeze_after_epoch: 1
   
   loss:
-    type: "vicreg"
-    finetune_type: "huber"
+    type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
+    finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
-    variance_loss_weight: 0.0
-    covariance_loss_weight: 0.0
+    # `invariance_loss_weight` was missing here, which made train.py crash on
+    # cfg.training.loss.invariance_loss_weight. And with variance/covariance at
+    # 0.0 VICReg degenerated to plain MSE — i.e. no anti-collapse term at all,
+    # which is exactly the failure mode observed on noisy series.
+    invariance_loss_weight: 25.0
+    variance_loss_weight: 15.0
+    covariance_loss_weight: 1.0
   
   optimizer:
     name: "adamw"

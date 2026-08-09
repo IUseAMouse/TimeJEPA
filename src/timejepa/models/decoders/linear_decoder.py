@@ -331,6 +331,10 @@ class ForecastingHead(nn.Module):
         if skip_revin or self.revin is None:
             predictions_denorm = predictions
         else:
-            predictions_denorm = self.revin(predictions, mode='denorm')
-        
+            # `denormalize_target_space`, NOT `mode='denorm'`: the decoder is
+            # trained against a plain z-scored target (no RevIN affine), so the
+            # affine inverse in `_denormalize` would introduce a scale/offset
+            # error. See RevIN.denormalize_target_space for the full rationale.
+            predictions_denorm = self.revin.denormalize_target_space(predictions)
+
         return predictions, predictions_denorm

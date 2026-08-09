@@ -177,10 +177,23 @@ class TimeSeriesAugmentations:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         TTM-style Diverse Resolution Sampling.
-        
-        Downsamples by a random factor, then interpolates back.
-        Simulates data at different temporal resolutions.
-        
+
+        Downsamples by a random factor, then interpolates BACK TO THE SAME
+        LENGTH. Read carefully what that does: it is a smoothing / low-pass
+        operation that simulates a coarser *sensor*. The window still covers the
+        same time span, so a seasonal cycle still spans the same number of
+        timesteps, and the period-to-patch ratio is unchanged.
+
+        It therefore CANNOT address the failure mode measured in
+        `scripts/diagnose_ettm.py`, where skill is governed by the seasonal
+        period expressed in patch positions. For that, see
+        `TimeSeriesDataset.get_item(allow_multi_resolution=True)`, which reads a
+        longer raw stretch and decimates it, genuinely changing the sampling
+        frequency.
+
+        Both are useful, for different reasons — this one for sensor-quality
+        robustness, the other for temporal-scale generalization.
+
         Note: This is applied to both context and target together
         to maintain temporal consistency.
         """

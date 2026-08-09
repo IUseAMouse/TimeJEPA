@@ -261,6 +261,8 @@ class MonashDataModule(pl.LightningDataModule):
         max_series: Optional[int] = None,
         min_series_length: Optional[int] = None,
         augmentation_config: Optional[Dict[str, Any]] = None,
+        multi_resolution_factors: Optional[List[int]] = None,
+        p_multi_resolution: float = 0.0,
         seed: int = 42
     ):
         """
@@ -299,6 +301,8 @@ class MonashDataModule(pl.LightningDataModule):
         self.max_series = max_series
         self.min_series_length = min_series_length
         self.augmentation_config = augmentation_config
+        self.multi_resolution_factors = multi_resolution_factors
+        self.p_multi_resolution = p_multi_resolution
         self.seed = seed
         
         self.normalizer: Optional[Normalizer] = None
@@ -341,6 +345,8 @@ class MonashDataModule(pl.LightningDataModule):
                 max_series=self.max_series,
                 min_series_length=self.min_series_length,
                 augmentations=self.augmentation_config,
+                multi_resolution_factors=self.multi_resolution_factors,
+                p_multi_resolution=self.p_multi_resolution,
             )
             
             self.normalizer = self._full_dataset.get_normalizer()
@@ -534,6 +540,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         max_series: Optional[int] = None,
         min_series_length: Optional[int] = None,
         augmentation_config: Optional[Dict[str, Any]] = None,
+        multi_resolution_factors: Optional[List[int]] = None,
+        p_multi_resolution: float = 0.0,
         dataset_overrides: Optional[Dict[str, Any]] = None,
         seed: int = 42
     ):
@@ -581,6 +589,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.max_series = max_series
         self.min_series_length = min_series_length
         self.augmentation_config = augmentation_config
+        self.multi_resolution_factors = multi_resolution_factors
+        self.p_multi_resolution = p_multi_resolution
         self.dataset_overrides = dataset_overrides or {}
         self.seed = seed
         
@@ -678,6 +688,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     max_series=overrides.get('max_series', self.max_series),
                     min_series_length=self.min_series_length,
                     augmentation_config=overrides.get('augmentation_config', self.augmentation_config),
+                    multi_resolution_factors=self.multi_resolution_factors,
+                    p_multi_resolution=self.p_multi_resolution,
                     seed=self.seed
                 )
                 

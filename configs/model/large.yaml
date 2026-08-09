@@ -50,11 +50,15 @@ training:
   unfreeze_after_epoch: 1
   
   loss:
-    type: "vicreg"
-    finetune_type: "huber"
+    type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
+    finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
-    variance_loss_weight: 0.0
-    covariance_loss_weight: 0.0
+    # See base.yaml: `invariance_loss_weight` was missing (train.py crashed) and
+    # variance/covariance at 0.0 turned VICReg into plain MSE with no
+    # anti-collapse term.
+    invariance_loss_weight: 25.0
+    variance_loss_weight: 15.0
+    covariance_loss_weight: 1.0
   
   optimizer:
     name: "adamw"
@@ -101,6 +105,18 @@ data:
   max_oversample_ratio: 8.0
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
+
+nixtla:
+  - ettm1
+  - ettm2
+  - etth1
+  - etth2
+  - electricity
+  - exchange
+  - traffic
+  - weather
+
+horizons: [96, 192, 336, 720]
 
 augmentations:
   pretrain:
