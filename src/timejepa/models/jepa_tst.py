@@ -20,6 +20,36 @@ from .predictors.transformer_predictor import TransformerPredictor, MLPPredictor
 from .decoders.linear_decoder import ForecastingHead
 
 
+def filter_loadable(
+    model: nn.Module,
+    state_dict: Dict[str, torch.Tensor],
+) -> tuple:
+    """
+    Drop checkpoint entries whose shape does not match the target model.
+
+    `load_state_dict(strict=False)` tolerates missing and unexpected keys but
+    NOT shape mismatches — those still raise. That bites whenever a component is
+    swapped for one that occupies the same key path with a different shape.
+
+    The concrete case: a point decoder and the quantile head both own
+    `decoder.decoder.unpatching.projection`, sized `patch_size * 1` and
+    `patch_size * n_quantiles` respectively. Loading a pre-quantile checkpoint
+    into a quantile model therefore aborted, which is precisely the intended
+    workflow — reuse a pretrained encoder, re-learn the head.
+
+    Returns:
+        (filtered_state_dict, list of (key, checkpoint_shape, model_shape))
+    """
+    target = model.state_dict()
+    filtered, dropped = {}, []
+    for key, value in state_dict.items():
+        if key in target and hasattr(value, "shape") and value.shape != target[key].shape:
+            dropped.append((key, tuple(value.shape), tuple(target[key].shape)))
+            continue
+        filtered[key] = value
+    return filtered, dropped
+
+
 class JEPATST(nn.Module):
     """
     JEPA-TST model for time series forecasting.
@@ -308,19 +338,39 @@ class JEPATST(nn.Module):
         # If using skip_revin, it assumes data is already normalized
         # Useful for evaluations of norm data, but otherwise keep it false
         # If skip_revin, norm = denorm
-        forecast, forecast_denorm = self.decoder(predictions, skip_revin=skip_revin)
-        # forecast: [B, prediction_length, C] (normalized)
-        # forecast_denorm: [B, prediction_length, C] (original scale)
-        
+        #
+        # `context_embeddings` is forwarded unconditionally: the point decoders
+        # ignore it, the quantile head cross-attends to it. The predictor output
+        # is E[z_target | z_context] under MSE — a conditional mean — so a head
+        # that only sees it cannot separate two contexts with the same expected
+        # future but different volatility. Giving it the context restores that.
+        forecast, forecast_denorm = self.decoder(
+            predictions, skip_revin=skip_revin, context_embeddings=context_embeddings
+        )
+        # Point decoders: [B, prediction_length, C]
+        # Quantile head:  [B, prediction_length, Q], sorted along Q
+
         result = {
             'forecast': forecast,
             'forecast_denorm': forecast_denorm
         }
-        
+
+        # A probabilistic head returns the full fan; expose the median as the
+        # point forecast so every downstream caller (metrics, plots, rollout)
+        # keeps working unchanged. The median is also the MAE-optimal point
+        # estimate, which is what MASE scores.
+        if getattr(self.decoder, 'is_probabilistic', False):
+            head = self.decoder.decoder
+            result['quantiles'] = forecast
+            result['quantiles_denorm'] = forecast_denorm
+            result['quantile_levels'] = head.quantile_levels
+            result['forecast'] = head.median(forecast)
+            result['forecast_denorm'] = head.median(forecast_denorm)
+
         if return_representations:
             result['context_embeddings'] = context_embeddings
             result['future_representations'] = predictions
-        
+
         return result
 
     def forecast(
@@ -377,8 +427,12 @@ class JEPATST(nn.Module):
                 return_representations=return_representations,
                 skip_revin=skip_revin
             )
-            result['forecast'] = result['forecast'][:, :n]
-            result['forecast_denorm'] = result['forecast_denorm'][:, :n]
+            # Every horizon-shaped tensor must be truncated, the quantile fan
+            # included — leaving it at prediction_length while the point forecast
+            # is cut to n silently mismatches them downstream.
+            for key in ('forecast', 'forecast_denorm', 'quantiles', 'quantiles_denorm'):
+                if key in result:
+                    result[key] = result[key][:, :n]
             return result
 
         # ---- Case 2: rolling forecast ----
@@ -395,6 +449,8 @@ class JEPATST(nn.Module):
         try:
             num_rolls = (n + self.prediction_length - 1) // self.prediction_length
             all_forecasts_norm = []
+            all_quantiles_norm = []
+            quantile_levels = None
 
             for roll_idx in range(num_rolls):
                 # `current_context` is already in the normalized frame, so the
@@ -405,8 +461,20 @@ class JEPATST(nn.Module):
                     skip_revin=True,
                 )
 
-                forecast_norm = result['forecast']  # [B, pred_len, C]
+                forecast_norm = result['forecast']  # [B, pred_len, C] (median if probabilistic)
                 all_forecasts_norm.append(forecast_norm)
+
+                # Keep each roll's quantile fan. Note what this is and is not:
+                # every roll is conditioned on the MEDIAN path fed back to it, so
+                # the fan reflects the uncertainty of that roll alone and does
+                # NOT accumulate the uncertainty of the rolls before it. Interval
+                # widths at long horizons are therefore systematically too
+                # narrow. Propagating properly would need sampling or an
+                # analytic convolution across rolls; this is the honest
+                # approximation, and better than reporting no fan at all.
+                if 'quantiles' in result:
+                    all_quantiles_norm.append(result['quantiles'])
+                    quantile_levels = result['quantile_levels']
 
                 if roll_idx < num_rolls - 1:
                     # `current_context` is in the encoder input frame (affine
@@ -426,20 +494,34 @@ class JEPATST(nn.Module):
 
             # ---- Concatenate & truncate ----
             forecast_norm = torch.cat(all_forecasts_norm, dim=1)[:, :n]
+            quantiles_norm = (
+                torch.cat(all_quantiles_norm, dim=1)[:, :n]
+                if all_quantiles_norm else None
+            )
 
             # ---- Denormalize ONCE, with the pinned statistics ----
             if use_revin:
                 forecast_denorm = self.revin.denormalize_target_space(forecast_norm)
+                quantiles_denorm = (
+                    self.revin.denormalize_target_space(quantiles_norm)
+                    if quantiles_norm is not None else None
+                )
             else:
                 forecast_denorm = forecast_norm
+                quantiles_denorm = quantiles_norm
         finally:
             if use_revin:
                 self.revin.unfreeze()
 
-        return {
+        out = {
             "forecast": forecast_norm,
-            "forecast_denorm": forecast_denorm
+            "forecast_denorm": forecast_denorm,
         }
+        if quantiles_norm is not None:
+            out["quantiles"] = quantiles_norm
+            out["quantiles_denorm"] = quantiles_denorm
+            out["quantile_levels"] = quantile_levels
+        return out
 
 
     def forward(

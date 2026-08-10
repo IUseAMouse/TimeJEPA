@@ -1,0 +1,62 @@
+# @package _global_
+#
+# EXPERIMENT E3 — finetune on ALL datasets instead of the curated 8
+#
+# Run this against a `tiny_patch32` finetune FROM THE SAME PRETRAIN CHECKPOINT.
+# Only `datasets_finetune` differs, so the comparison is single-variable.
+#
+# Why
+# ---
+# The default finetune set is 8 of 24, all "clean seasonal": electricity,
+# traffic, weather, australian-weather, m4-hourly, australian-electricity-demand,
+# electricity-demand, melbourne-pedestrian-count.
+#
+# It excludes every noisy or non-stationary series — bitcoin, kdd-cup-2018,
+# saugeenday, sunspot-daily, nn5-daily, london-smart-meters, fred-md, solar-*,
+# windpower-*, rain-temperature. So the decoder is trained exactly on the regime
+# where the model already wins, never sees a hard series, and is then evaluated
+# on ETTm1 and exchange where it loses (-31% and -16% skill in the P0.8 report).
+# This tests whether that curation is part of the problem.
+#
+# Interpolated from data.datasets so it cannot drift out of sync with the
+# pretrain list. Datasets too short for the context (wikipedia-web-traffic-weekly
+# at 114 timesteps, rideshare at 541) are skipped automatically with a warning.
+#
+# ⚠️ READ BEFORE COMPARING RESULTS
+# --------------------------------
+# `datasets_eval` (the LOCAL Monash evaluation) overlaps with the finetune set.
+# With finetune=all, 9 of its 10 datasets become in-distribution for this arm
+# while remaining held-out for the baseline arm:
+#
+#     already in the curated 8 : electricity-hourly, traffic-hourly, m4-hourly,
+#                                melbourne-pedestrian-count
+#     held-out until now       : london-smart-meters, bitcoin, nn5-daily,
+#                                solar-10-minute-dataset, saugeenday
+#
+# So the local evaluation is NOT a fair comparison here — this arm has seen the
+# test series' siblings. Judge E3 on the NIXTLA benchmark, which no Monash
+# finetune touches.
+#
+# And even there, one caveat that predates this experiment: Nixtla's
+# `electricity` (ECL) and `traffic` share their underlying source with Monash
+# `electricity-hourly` and `traffic-hourly`, which are in both pretrain and
+# finetune. Those two columns are not zero-shot for ANY of our runs.
+# ETTm1, ETTm2, ETTh1, ETTh2 and exchange are clean — and ETTm1 is the metric
+# this whole line of work is chasing.
+defaults:
+  - tiny_patch32
+  - _self_
+
+model:
+  name: "timejepa_tiny_patch32_ftall"
+
+data:
+  datasets_finetune: ${data.datasets}
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "patch32"
+    - "finetune-all-datasets"

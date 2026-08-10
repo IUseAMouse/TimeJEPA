@@ -9,7 +9,7 @@ Architecture: Representation [B, N, d_model] → Values [B, L_pred, C]
 
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from ..components.patching import UnPatching
 
@@ -273,10 +273,12 @@ class ForecastingHead(nn.Module):
         prediction_length: int = 96,
         num_features: int = 1,
         decoder_type: str = 'linear',
-        revin: Optional[nn.Module] = None
+        revin: Optional[nn.Module] = None,
+        quantile_levels: Optional[Sequence[float]] = None,
+        quantile_use_context: bool = True,
     ):
         super().__init__()
-        
+
         self.d_model = d_model
         self.prediction_length = prediction_length
         self.decoder_type = decoder_type
@@ -305,28 +307,52 @@ class ForecastingHead(nn.Module):
                 prediction_length=prediction_length,
                 num_features=num_features
             )
+        elif decoder_type == 'quantile':
+            # Probabilistic head. Emits a sorted quantile fan instead of a point,
+            # and optionally cross-attends to the context embeddings.
+            from .quantile_head import QuantileHead, DEFAULT_QUANTILES
+            self.decoder = QuantileHead(
+                d_model=d_model,
+                patch_size=patch_size,
+                stride=stride,
+                prediction_length=prediction_length,
+                quantile_levels=quantile_levels or DEFAULT_QUANTILES,
+                use_context=quantile_use_context,
+            )
         else:
             raise ValueError(f"Unknown decoder_type: {decoder_type}")
-        
+
         self.output_norm = nn.LayerNorm(num_features)
-    
+
+    @property
+    def is_probabilistic(self) -> bool:
+        return self.decoder_type == 'quantile'
+
     def forward(
         self,
         x: torch.Tensor,
-        skip_revin: bool = False
+        skip_revin: bool = False,
+        context_embeddings: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Generate forecasts.
-        
+
         Args:
             x: Representations [B, num_patches, d_model]
-            
+            skip_revin: Return the normalized forecast unchanged as the "denorm" one
+            context_embeddings: Encoder output [B, N_ctx, d_model]. Only the
+                quantile head consumes it; the point decoders ignore it, so the
+                caller can always pass it.
+
         Returns:
-            Forecasts [B, L_pred, C], Forecasts Denorm [B, L_pred, C]
+            For point decoders: (forecast [B, L, C], forecast_denorm [B, L, C])
+            For the quantile head: (quantiles [B, L, Q], quantiles_denorm [B, L, Q])
+            — the caller extracts the median.
         """
-        
-        
-        predictions = self.decoder(x)
+        if self.decoder_type == 'quantile':
+            predictions = self.decoder(x, context_embeddings=context_embeddings)
+        else:
+            predictions = self.decoder(x)
 
         if skip_revin or self.revin is None:
             predictions_denorm = predictions

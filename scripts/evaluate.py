@@ -43,13 +43,15 @@ from timejepa.data.datamodule import MonashDataModule
 from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.utils.metrics import (
     compute_forecasting_metrics_extended,
-    compute_per_horizon_metrics
+    compute_per_horizon_metrics,
+    weighted_quantile_loss,
 )
 from timejepa.training.utils.baselines import (
     compute_all_baselines,
     get_seasonality,
 )
 from timejepa.models import JEPATST
+from timejepa.models.jepa_tst import filter_loadable
 from timejepa.models.decoders import ForecastingHead
 
 try:
@@ -126,6 +128,13 @@ def load_checkpoint(
         logger.warning(f"  Unknown format, attempting raw load. Keys: {list(checkpoint.keys())[:5]}...")
         cleaned_state_dict = checkpoint
     
+    # Shape-mismatched entries must be dropped, not merely tolerated:
+    # load_state_dict(strict=False) still raises on them. Swapping a point
+    # decoder for the quantile head is exactly such a case.
+    cleaned_state_dict, dropped = filter_loadable(model, cleaned_state_dict)
+    for key, ckpt_shape, model_shape in dropped:
+        logger.info(f"  ↷ re-initialising {key}: checkpoint {ckpt_shape} vs model {model_shape}")
+
     # Load weights
     missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
     
@@ -225,9 +234,18 @@ def plot_forecasts(
     dataset_name: str,
     output_dir: Path,
     num_samples: int = 9,
-    seed: int = 42
+    seed: int = 42,
+    quantiles: Optional[torch.Tensor] = None,
+    quantile_levels: Optional[List[float]] = None,
 ):
-    """Plot sample forecasts in a grid."""
+    """
+    Plot sample forecasts in a grid.
+
+    When a quantile fan is supplied, the prediction interval is shaded around
+    the median — nested bands, darkest at the centre. A probabilistic forecast
+    judged only on its median tells you nothing about whether its intervals are
+    calibrated, which is the whole point of having them.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     np.random.seed(seed)
     
@@ -283,11 +301,30 @@ def plot_forecasts(
         
         # Plot
         ax.plot(t_ctx, ctx, 'b-', label='Context', alpha=0.7, linewidth=1.5)
+
+        # Prediction intervals first, so the lines stay readable on top.
+        # Pairs are taken from the outside in: (q10,q90), (q20,q80), ...
+        if quantiles is not None:
+            q = quantiles[idx].cpu().numpy()
+            if q.ndim > 2:
+                q = q[..., 0] if q.shape[-1] == 1 else q
+            n_q = q.shape[-1]
+            for lo in range(n_q // 2):
+                hi = n_q - 1 - lo
+                lvl_lo = quantile_levels[lo] if quantile_levels else lo
+                lvl_hi = quantile_levels[hi] if quantile_levels else hi
+                ax.fill_between(
+                    t_pred, q[:, lo], q[:, hi],
+                    color='orange', alpha=0.13,
+                    label=f'{lvl_lo:.0%}–{lvl_hi:.0%}' if lo == 0 else None,
+                )
+        else:
+            ax.fill_between(t_pred, pred, targ, alpha=0.2, color='red')
+
         ax.plot(t_pred, targ, 'g-', label='Ground Truth', linewidth=2)
-        ax.plot(t_pred, pred, 'r--', label='Prediction', linewidth=2, alpha=0.8)
-        
-        # Fill between for error visualization
-        ax.fill_between(t_pred, pred, targ, alpha=0.2, color='red')
+        ax.plot(t_pred, pred, 'r--',
+                label='Median' if quantiles is not None else 'Prediction',
+                linewidth=2, alpha=0.8)
         
         # Boundary line
         ax.axvline(x=ctx_len, color='gray', linestyle=':', alpha=0.5)
@@ -302,8 +339,10 @@ def plot_forecasts(
         ax.set_xlabel('Time Step')
         ax.set_ylabel('Value')
     
-    # Hide unused subplots
-    for i in range(n, len(axes)):
+    # Hide unused subplots. Uses len(indices), not n: the good/mid/bad selection
+    # yields 3 * max(1, n//3) indices, which is fewer than n for most values of
+    # n — leaving a blank axes frame in the grid.
+    for i in range(len(indices), len(axes)):
         axes[i].set_visible(False)
     
     plt.suptitle(f'{dataset_name} - Forecast Examples', fontsize=14, fontweight='bold')
@@ -420,7 +459,13 @@ def plot_error_analysis(
         quartile_errors.append(q_errors)
         quartile_labels.append(f'H{start+1}-{end}')
     
-    bp = ax6.boxplot(quartile_errors, labels=quartile_labels, patch_artist=True)
+    # matplotlib renamed boxplot's `labels` to `tick_labels` in 3.9 and removed
+    # the old spelling in 3.11, which aborted the whole evaluation of a dataset
+    # after its plots had already been written. Setting the tick labels
+    # afterwards works on every version and needs no feature detection.
+    bp = ax6.boxplot(quartile_errors, patch_artist=True)
+    ax6.set_xticks(range(1, len(quartile_labels) + 1))
+    ax6.set_xticklabels(quartile_labels)
     colors = ['lightblue', 'lightgreen', 'lightyellow', 'lightcoral']
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
@@ -502,50 +547,59 @@ def evaluate_dataset(
         Dictionary with 'contexts', 'predictions', 'targets' tensors
     """
     model.eval()
-    
+
     all_contexts = []
     all_predictions = []
     all_targets = []
+    all_quantiles = []
+    quantile_levels = None
     total_samples = 0
-    
+
     for batch in tqdm(dataloader, desc="  Inference", leave=False):
         context = batch['context'].to(device)
         target = batch['target'].to(device)
-        
+
         # Add channel dim if needed (univariate)
         if context.ndim == 2:
             context = context.unsqueeze(-1)
         if target.ndim == 2:
             target = target.unsqueeze(-1)
-        
+
         # Forward pass through the model (uses native prediction_length)
         output = model.forecast(context)
-        
+
         # Handle dict output from JEPATST
         if isinstance(output, dict):
             predictions = output.get('forecast_denorm', output.get('forecast'))
+            if 'quantiles_denorm' in output:
+                all_quantiles.append(output['quantiles_denorm'].cpu())
+                quantile_levels = list(output['quantile_levels'])
         else:
             predictions = output
-        
+
         # Remove channel dim if univariate
         if context.shape[-1] == 1:
             context = context.squeeze(-1)
             predictions = predictions.squeeze(-1)
             target = target.squeeze(-1)
-        
+
         all_contexts.append(context.cpu())
         all_predictions.append(predictions.cpu())
         all_targets.append(target.cpu())
-        
+
         total_samples += len(context)
         if max_samples and total_samples >= max_samples:
             break
-    
-    return {
+
+    out = {
         'contexts': torch.cat(all_contexts, dim=0),
         'predictions': torch.cat(all_predictions, dim=0),
         'targets': torch.cat(all_targets, dim=0)
     }
+    if all_quantiles:
+        out['quantiles'] = torch.cat(all_quantiles, dim=0)
+        out['quantile_levels'] = quantile_levels
+    return out
 
 
 @torch.no_grad()
@@ -595,6 +649,8 @@ def evaluate_dataset_horizon(
     all_contexts = []
     all_predictions = []
     all_targets = []
+    all_quantiles = []
+    quantile_levels = None
     total_samples = 0
 
     for batch in tqdm(dataloader, desc="  Inference", leave=False):
@@ -615,6 +671,15 @@ def evaluate_dataset_horizon(
         # Truncate target to horizon (dataloader may provide more)
         target = target[:, :horizon]
 
+        # Keep the quantile fan when the head is probabilistic. Without it the
+        # reported WQL is computed from the point forecast, where it collapses
+        # to ND — the score a deterministic model earns — and none of the
+        # quantile head's benefit would ever appear in the numbers.
+        if 'quantiles_denorm' in output:
+            q = output['quantiles_denorm']
+            all_quantiles.append(q.cpu())
+            quantile_levels = list(output['quantile_levels'])
+
         # Remove channel dim if univariate
         if context.shape[-1] == 1:
             context = context.squeeze(-1)
@@ -629,11 +694,15 @@ def evaluate_dataset_horizon(
         if max_samples and total_samples >= max_samples:
             break
 
-    return {
+    out = {
         'contexts': torch.cat(all_contexts, dim=0),
         'predictions': torch.cat(all_predictions, dim=0),
         'targets': torch.cat(all_targets, dim=0)
     }
+    if all_quantiles:
+        out['quantiles'] = torch.cat(all_quantiles, dim=0)
+        out['quantile_levels'] = quantile_levels
+    return out
 
 
 def evaluate_with_baselines(
@@ -641,6 +710,8 @@ def evaluate_with_baselines(
     predictions: torch.Tensor,
     targets: torch.Tensor,
     season_length: int,
+    quantiles: Optional[torch.Tensor] = None,
+    quantile_levels: Optional[List[float]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """
     Score the model AND every reference baseline on identical windows.
@@ -657,6 +728,24 @@ def evaluate_with_baselines(
     results['timejepa'] = compute_forecasting_metrics_extended(
         predictions, targets, context=contexts, season_length=season_length
     )
+
+    # With a probabilistic head, recompute WQL over the actual quantile fan.
+    # compute_forecasting_metrics_extended derives it from the point forecast,
+    # where WQL collapses to ND by construction — the score a deterministic
+    # model earns, which would hide the entire benefit of the head.
+    # The baselines stay point forecasts, and that is correct: seasonal naive IS
+    # deterministic, so its CRPS is its ND. That is also how GIFT-Eval
+    # normalizes, with seasonal naive at 1.00 on both MASE and CRPS.
+    if quantiles is not None:
+        levels = list(quantile_levels) if quantile_levels else None
+        q = quantiles
+        if q.ndim == 3 and q.shape[-1] == len(levels or []):
+            q = q.permute(2, 0, 1)            # [B, H, Q] -> [Q, B, H]
+        results['timejepa']['wql_point'] = results['timejepa']['wql']
+        results['timejepa']['wql'] = weighted_quantile_loss(q, targets, levels).item()
+        results['timejepa']['interval_80_width'] = float(
+            (quantiles[..., -1] - quantiles[..., 0]).mean()
+        )
 
     horizon = targets.shape[1]
     for name, base_pred in compute_all_baselines(contexts, horizon, season_length).items():
@@ -781,7 +870,9 @@ def evaluate_nixtla_dataset(
 
         # Model + every baseline, scored on identical windows
         scored = evaluate_with_baselines(
-            result['contexts'], result['predictions'], result['targets'], season_length
+            result['contexts'], result['predictions'], result['targets'], season_length,
+            quantiles=result.get('quantiles'),
+            quantile_levels=result.get('quantile_levels'),
         )
         metrics = dict(scored['timejepa'])
         metrics['_baselines'] = {k: v for k, v in scored.items() if k not in ('timejepa', '_skill')}
@@ -790,9 +881,13 @@ def evaluate_nixtla_dataset(
 
         sn = scored['seasonal_naive']
         nl = scored['naive_last']
+        probabilistic = 'wql_point' in metrics
         logger.info(
             f"     MSE {metrics['mse']:.4f} | MAE {metrics['mae']:.4f} | "
-            f"MASE {metrics.get('mase', float('nan')):.3f} | WQL {metrics['wql']:.4f}"
+            f"MASE {metrics.get('mase', float('nan')):.3f} | "
+            f"WQL {metrics['wql']:.4f}"
+            + (f" (point {metrics['wql_point']:.4f}, "
+               f"largeur 10-90 {metrics['interval_80_width']:.3f})" if probabilistic else "")
         )
         logger.info(
             f"     baselines MASE -> seasonal_naive {sn.get('mase', float('nan')):.3f} | "
@@ -808,7 +903,9 @@ def evaluate_nixtla_dataset(
                 result['targets'],
                 f"{dataset_name}_h{horizon}",
                 output_dir / "plots",
-                num_samples=6
+                num_samples=6,
+                quantiles=result.get('quantiles'),
+                quantile_levels=result.get('quantile_levels'),
             )
     
     return results
@@ -1089,6 +1186,8 @@ def main(cfg: DictConfig):
                     results['predictions'],
                     results['targets'],
                     season_length,
+                    quantiles=results.get('quantiles'),
+                    quantile_levels=results.get('quantile_levels'),
                 )
                 metrics = dict(scored['timejepa'])
                 metrics['_baselines'] = {
@@ -1129,7 +1228,9 @@ def main(cfg: DictConfig):
                     results['targets'],
                     dataset_name,
                     plots_dir,
-                    num_samples=9
+                    num_samples=9,
+                    quantiles=results.get('quantiles'),
+                    quantile_levels=results.get('quantile_levels'),
                 )
                 
                 plot_error_analysis(

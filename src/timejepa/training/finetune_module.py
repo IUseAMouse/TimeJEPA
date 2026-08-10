@@ -11,8 +11,13 @@ from typing import Dict, Any, Optional, Literal, List
 from pathlib import Path
 import logging
 
-from ..models.jepa_tst import JEPATST
-from .utils.metrics import compute_forecasting_metrics, mse, mae
+from ..models.jepa_tst import JEPATST, filter_loadable
+from .utils.metrics import (
+    compute_forecasting_metrics,
+    mse,
+    mae,
+    weighted_quantile_loss,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +133,13 @@ class FinetuneModule(pl.LightningModule):
         else:
             raise ValueError(f"Unknown checkpoint format. Keys: {list(checkpoint.keys())}")
         
+        # Drop entries whose shape does not match — swapping a point decoder for
+        # the quantile head reuses the same key path with a different width, and
+        # strict=False does NOT tolerate that (it only tolerates missing keys).
+        cleaned_state_dict, dropped = filter_loadable(self.model, cleaned_state_dict)
+        for key, ckpt_shape, model_shape in dropped:
+            logger.info(f"  ↷ re-initialising {key}: checkpoint {ckpt_shape} vs model {model_shape}")
+
         # Load weights
         missing, unexpected = self.model.load_state_dict(cleaned_state_dict, strict=False)
         
@@ -187,6 +199,30 @@ class FinetuneModule(pl.LightningModule):
             return nn.functional.huber_loss(predictions, targets, delta=self.huber_delta)
         else:
             raise ValueError(f"Unknown loss_type: {self.loss_type}")
+
+    def _forward_and_loss(self, context: torch.Tensor, target: torch.Tensor):
+        """
+        Shared by train/val/test.
+
+        With a probabilistic head the loss is the pinball over the whole quantile
+        fan, not a point loss on the median — otherwise the outer quantiles would
+        receive no gradient at all. The reported point metrics still use the
+        median, which is the MAE-optimal estimate and what MASE scores.
+        """
+        results = self.model.forecast(context)
+
+        # Target normalized with the CONTEXT's statistics — never its own, which
+        # would leak the future into the normalization.
+        if self.model.revin is not None:
+            target = (target - self.model.revin.mean) / self.model.revin.std
+
+        if 'quantiles' in results:
+            head = self.model.decoder.decoder
+            loss = head.loss(results['quantiles'], target)
+        else:
+            loss = self.compute_loss(results['forecast'], target)
+
+        return loss, results, target
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         """Training step."""
@@ -198,17 +234,9 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        # Forward pass
-        results = self.model.forecast(context)
+        loss, results, target = self._forward_and_loss(context, target)
         predictions = results['forecast']
 
-        # Normalize target with same stats
-        if self.model.revin is not None:
-            target = (target - self.model.revin.mean) / self.model.revin.std
-
-        # Compute loss
-        loss = self.compute_loss(predictions, target)
-        
         # Logging
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
@@ -230,16 +258,22 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        results = self.model.forecast(context)
+        loss, results, target = self._forward_and_loss(context, target)
         predictions = results['forecast']
-        
-        if self.model.revin is not None:
-            target = (target - self.model.revin.mean) / self.model.revin.std
-        
-        loss = self.compute_loss(predictions, target)
-        
+
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        
+
+        # WQL is the metric GIFT-Eval ranks on, so track it directly rather than
+        # inferring it from the point losses.
+        if 'quantiles' in results:
+            wql = weighted_quantile_loss(
+                results['quantiles'].permute(2, 0, 1),
+                target.squeeze(-1) if target.shape[-1] == 1 else target,
+                list(results['quantile_levels']),
+            )
+            self.log('val_wql', wql, on_step=False, on_epoch=True,
+                     prog_bar=True, logger=True, sync_dist=True)
+
         metrics = compute_forecasting_metrics(predictions, target)
         for key, value in metrics.items():
             self.log(f'val_{key}', value, on_step=False, on_epoch=True, logger=True, sync_dist=True)
@@ -256,14 +290,9 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        results = self.model.forecast(context)
+        loss, results, target = self._forward_and_loss(context, target)
         predictions = results['forecast']
-        
-        if self.model.revin is not None:
-            target = (target - self.model.revin.mean) / self.model.revin.std
-        
-        loss = self.compute_loss(predictions, target)
-        
+
         self.log('test_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         
         metrics = compute_forecasting_metrics(predictions, target)

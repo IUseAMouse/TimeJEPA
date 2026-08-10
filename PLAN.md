@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-09 — pretrain SIGReg en cours ; configs E1/E2/E3 prêtes.
+**Dernière mise à jour :** 2026-08-10 — tête quantile (option B) prête, sonde d’incertitude prête, option C inscrite en ablation.
 
 ---
 
@@ -414,7 +414,41 @@ gagne déjà, et n'a jamais vu de série bruitée ou non stationnaire** — puis
 ## P2 — Viser le SOTA
 
 - [ ] **P2.1** Tête quantile (pinball, 9 quantiles, incréments softplus anti-croisement)
-- [ ] **P2.2** Tête Student-t (μ, σ, ν) en ablation → queues lourdes, bitcoin/exchange
+- [x] **P2.1** Tête quantile non paramétrique, **option B** (décodeur alimenté par le contexte)
+      — `configs/model/tiny_patch32_quantile.yaml`, **finetune seul, aucun pretrain**.
+      Grille GIFT-Eval (9 niveaux), pinball, monotonie par construction (médiane +
+      largeurs softplus cumulées vers l'extérieur).
+      Bénéfice de bord : MASE est basée sur la MAE, minimisée par la **médiane** —
+      le pinball donne la médiane conditionnelle exacte, là où Huber donne un objet
+      intermédiaire entre moyenne et médiane.
+- [x] **P2.1b** `scripts/probe_uncertainty.py` — mesure, sans entraîner, si l'incertitude
+      est récupérable depuis ce que le décodeur reçoit déjà. Compare `ctx_std` (baseline
+      gratuite), `z_pred` (= option A), `z_ctx` (= apport de l'option B), et les deux.
+      **À lancer sur le vrai checkpoint avant d'interpréter quoi que ce soit.**
+
+- [ ] **P2.2 — OPTION C : prédicteur probabiliste** *(ablation, à plus long terme)*
+
+      Le prédicteur apprend `E[z_cible | z_contexte]` sous MSE : un objet **moyen** par
+      construction. Mesuré : `pred_var` 0.6 contre `target_var` 0.95. L'incertitude vit
+      dans le résidu, que l'inférence ne voit jamais.
+
+      C consisterait à faire prédire une **distribution sur les latents** (μ, σ) entraînée
+      par NLL gaussienne contre le latent cible réel. Le latent porterait alors lui-même
+      l'incertitude, au lieu que le décodeur doive la reconstruire.
+
+      **Coût :** réécrit l'objectif de pretrain → invalide tous les checkpoints existants.
+      **Risque identifié :** interaction non caractérisée avec SIGReg. Une tête de variance
+      pourrait satisfaire le régularisateur en gonflant σ plutôt qu'en enrichissant la
+      représentation — il faudrait vérifier que `collapse/effective_rank` ne s'effondre pas
+      pendant que la loss baisse.
+      **Prérequis :** avoir P2.1 comme référence. Sans point de comparaison probabiliste,
+      C n'est pas interprétable.
+      **À décider seulement si :** la sonde montre que l'incertitude n'est PAS encodée
+      (aucun jeu de features ne bat `ctx_std`), ou si P2.1 plafonne loin de 0.52 de CRPS.
+
+- [ ] **P2.2b** Tête Student-t (μ, σ, ν) → queues lourdes, bitcoin/exchange.
+      Alternative paramétrique à P2.1, moins prioritaire : impose une forme unimodale
+      et symétrique, et n'optimise plus directement la métrique de classement.
 - [ ] **P2.3** Décodeur flatten-head PatchTST-style (remplace l'overlap-add, B14)
 - [ ] **P2.4** Rollout correct (B10) : tout dans l'espace normalisé, `revin.freeze()` implémenté
 - [ ] **P2.5** Données synthétiques : KernelSynth-like (compositions de noyaux GP) + TSMixup

@@ -453,6 +453,160 @@ def test_multidataset_raises_when_everything_is_skipped(tmp_path):
 
 
 # =============================================================================
+# P2.1 — quantile head, and backward compatibility with pre-quantile models
+# =============================================================================
+
+def _model(decoder_type="mlp"):
+    from timejepa.models.decoders import ForecastingHead
+    m = JEPATST(input_length=512, prediction_length=128, patch_size=32, stride=16,
+                d_model=64, num_layers=2, num_heads=4, d_ff=128,
+                predictor_num_layers=2, predictor_num_heads=4, predictor_d_ff=128,
+                decoder_type="mlp")
+    if decoder_type == "quantile":
+        m.decoder = ForecastingHead(
+            d_model=64, patch_size=32, stride=16, prediction_length=128,
+            num_features=1, decoder_type="quantile", revin=m.revin,
+        )
+    return m
+
+
+@pytest.mark.parametrize("decoder_type", ["mlp", "linear", "attentive"])
+def test_point_decoders_are_untouched(decoder_type):
+    """Adding the quantile branch must not perturb any existing decoder."""
+    m = JEPATST(input_length=512, prediction_length=128, patch_size=32, stride=16,
+                d_model=64, num_layers=2, num_heads=4, d_ff=128,
+                predictor_num_layers=2, predictor_num_heads=4, predictor_d_ff=128,
+                decoder_type=decoder_type)
+    m.eval()
+    ctx = torch.randn(3, 512, 1) * 4 + 30
+    with torch.no_grad():
+        out = m.forward_finetune(ctx)
+        rolled = m.forecast(ctx, n=336)
+    assert out["forecast"].shape == (3, 128, 1)
+    assert "quantiles" not in out
+    assert rolled["forecast_denorm"].shape == (3, 336, 1)
+    assert torch.isfinite(rolled["forecast_denorm"]).all()
+
+
+def test_quantile_head_is_monotone_by_construction():
+    """
+    Independently regressed quantiles can cross. The head predicts the median
+    plus softplus widths accumulated outward, so sorting is a property of the
+    parameterization — checked here under deliberately extreme raw outputs.
+    """
+    m = _model("quantile")
+    head = m.decoder.decoder
+    torch.manual_seed(0)
+    for scale in (1.0, 50.0, 500.0):
+        mono = head._make_monotone(torch.randn(4, 128, 9) * scale)
+        assert (mono.diff(dim=-1) >= 0).all(), f"crossing at scale {scale}"
+
+
+def test_quantile_head_exposes_median_as_point_forecast():
+    m = _model("quantile")
+    m.eval()
+    with torch.no_grad():
+        out = m.forward_finetune(torch.randn(3, 512, 1) * 4 + 30)
+    assert out["quantiles"].shape == (3, 128, 9)
+    assert out["forecast"].shape == (3, 128, 1)
+    mid = m.decoder.decoder.median_idx
+    assert torch.equal(out["forecast"].squeeze(-1), out["quantiles"][..., mid])
+
+
+def test_pinball_is_minimised_by_the_true_quantiles():
+    """A sanity check on the loss itself, not just its shape."""
+    from timejepa.models.decoders import pinball_loss, DEFAULT_QUANTILES
+    from scipy import stats
+    torch.manual_seed(0)
+    y = torch.randn(4000, 1, 1)
+    truth = torch.tensor([stats.norm.ppf(q) for q in DEFAULT_QUANTILES]).float()
+    truth = truth.view(1, 1, 9).repeat(4000, 1, 1)
+    wrong = torch.zeros(4000, 1, 9)
+    assert pinball_loss(truth, y, DEFAULT_QUANTILES) < pinball_loss(wrong, y, DEFAULT_QUANTILES)
+
+
+def test_pre_quantile_checkpoint_loads_into_a_quantile_model():
+    """
+    THE compatibility case. A point decoder and the quantile head both own
+    `decoder.decoder.unpatching.projection`, sized patch*1 versus patch*9.
+    load_state_dict(strict=False) tolerates missing keys but NOT shape
+    mismatches, so this combination raised outright — blocking the very workflow
+    the head exists for: reuse a pretrained encoder, relearn the head.
+    """
+    from timejepa.models.jepa_tst import filter_loadable
+    old_sd = _model("mlp").state_dict()
+    qm = _model("quantile")
+
+    with pytest.raises(RuntimeError, match="size mismatch"):
+        qm.load_state_dict(old_sd, strict=False)
+
+    filtered, dropped = filter_loadable(qm, old_sd)
+    assert any("unpatching.projection" in k for k, _, _ in dropped)
+
+    missing, _ = qm.load_state_dict(filtered, strict=False)
+    assert [k for k in missing if not k.startswith("decoder.")] == []
+
+
+def test_transferred_encoder_is_bit_identical():
+    """Reusing a checkpoint must actually reuse it, not silently reinitialise."""
+    from timejepa.models.jepa_tst import filter_loadable
+    old = _model("mlp")
+    qm = _model("quantile")
+    filtered, _ = filter_loadable(qm, old.state_dict())
+    qm.load_state_dict(filtered, strict=False)
+    for (_, a), (_, b) in zip(old.online_encoder.state_dict().items(),
+                              qm.online_encoder.state_dict().items()):
+        assert torch.equal(a, b)
+
+
+@pytest.mark.parametrize("n", [48, 96, 128, 192, 336, 720])
+def test_quantile_fan_survives_truncation_and_rollout(n):
+    """
+    Two ways the fan used to be lost. Single-shot truncated `forecast` to n but
+    left `quantiles` at prediction_length, silently mismatching them; and the
+    rollout collected only the median, so every horizon past 128 had no fan at
+    all — leaving nothing to compute a real WQL from.
+    """
+    m = _model("quantile")
+    m.eval()
+    with torch.no_grad():
+        out = m.forecast(torch.randn(4, 512, 1) * 3 + 10, n=n)
+    assert out["forecast_denorm"].shape == (4, n, 1)
+    assert out["quantiles_denorm"].shape == (4, n, 9)
+    assert (out["quantiles_denorm"].diff(dim=-1) >= 0).all()
+    mid = m.decoder.decoder.median_idx
+    assert torch.allclose(
+        out["forecast_denorm"].squeeze(-1), out["quantiles_denorm"][..., mid], atol=1e-5
+    )
+
+
+def test_true_wql_differs_from_the_point_wql():
+    """
+    WQL over a point forecast collapses to ND by construction. If evaluation
+    scored the median rather than the fan, the quantile head's entire benefit
+    would be invisible in the reported metric.
+    """
+    from timejepa.training.utils.metrics import weighted_quantile_loss, nd
+    torch.manual_seed(0)
+    target = torch.randn(32, 96)
+    median = target + torch.randn(32, 96) * 0.4
+    fan = torch.stack([median + s for s in torch.linspace(-1.2, 1.2, 9)])  # [Q,B,H]
+
+    point_wql = weighted_quantile_loss(median, target).item()
+    assert abs(point_wql - nd(median, target).item()) < 1e-5    # the collapse
+    assert weighted_quantile_loss(fan, target).item() != pytest.approx(point_wql, abs=1e-4)
+
+
+def test_quantile_head_requires_context_when_configured_for_it():
+    """Option B must fail loudly rather than silently degrade to option A."""
+    m = _model("quantile")
+    head = m.decoder.decoder
+    assert head.use_context
+    with pytest.raises(ValueError, match="context_embeddings"):
+        head(torch.randn(2, 7, 64), context_embeddings=None)
+
+
+# =============================================================================
 # B13 — JEPATST built its decoder on the wrong stride
 # =============================================================================
 
