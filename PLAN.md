@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-10 — tête quantile (option B) prête, sonde d’incertitude prête, option C inscrite en ablation.
+**Dernière mise à jour :** 2026-08-11 — 3 pretrains geo en parallèle (16-8, p32, vicreg) ; G4.5 (baseline sans pretraining) inséré avant LOTSA.
 
 ---
 
@@ -408,6 +408,83 @@ Autrement dit : **le décodeur est entraîné exactement sur le régime où le m
 gagne déjà, et n'a jamais vu de série bruitée ou non stationnaire** — puis il est
 évalué sur ETTm1 et exchange, où il perd. Ça pourrait expliquer une part du
 −31 %, indépendamment du patching.
+
+---
+
+## 🌍 ROUND GÉOMÉTRIE + DONNÉES — l'étape en cours (2026-08-10)
+
+**Constat après la tête quantile :** CRPS/SN estimé ~0.80–0.85 (était 0.95), Toto-2.0-4m à 0.52.
+Le résidu est désormais surtout un problème de **données**, pas d'architecture : corpus Monash
+sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points pour Toto.
+
+- [x] **G1. Round géométrie** — `configs/model/tiny_geo.yaml` (commit 3ddd570)
+      - contexte d'entraînement → 1024 (balayage : +5 à +8 pts ETT déjà mesurés HORS distribution)
+      - horizon natif 128 → 256 (h720 : 6 rolls → 3)
+      - retour patch 16/8 (la motivation de patch32 a été renversée par le balayage ;
+        arm patch32 = un override)
+      - randomisation du contexte AUSSI au finetune (`p_random_context_finetune`, clé
+        séparée, défaut 0 → configs existantes inchangées)
+      - coûts documentés dans la config : 5 datasets exclus à fenêtre 1280 (dont m4-hourly),
+        batch 256 × acc 6, epoch ~2-3× plus long
+      - **après ce pretrain : re-balayer le contexte à l'éval** (l'optimum 640 était celui
+        d'un modèle entraîné jusqu'à 512)
+- [x] **G2. Rollout échantillonné** (commit 26560ce) — propage l'éventail, pas la médiane.
+      Couplage comonotone (copie k continue à son niveau k), déterministe, coût B×Q sur les
+      rolls uniquement. Corrige le rétrécissement mesuré des intervalles (exchange h720 :
+      largeur 0.267 pour une incertitude vraie en √h). Hypothèse assumée : dépendance de rang
+      parfaite entre rolls — borne par le haut, là où la médiane biaisait par le bas.
+- [x] **G3. Couverture empirique** dans l'éval — `couverture X%/80%` à côté du WQL.
+      C'est le chiffre qui remplace « les intervalles ont l'air ok » ; viser ~80 %.
+- [ ] **G4. Lancer le round** : pretrain `tiny_geo` (sigreg) → finetune quantile → éval
+      complète avec balayage de contexte. Comparaison en bundle vs patch32+ftall+quantile.
+- [ ] **G4.5 — BASELINE SANS PRETRAINING** ⚡ *le contrôle du pari central, à faire AVANT LOTSA*
+
+      Tout ce qui a été montré jusqu'ici : la recette JEPA *fonctionne*. Jamais montré :
+      qu'elle *bat l'alternative*. Le contrôle décisif — même architecture, même budget,
+      entraînée **supervisée de bout en bout sans pretraining** — n'a jamais tourné.
+      Si le pipeline pretrain→finetune ne bat pas ce baseline, le pari central de TimeJEPA
+      est infirmé quel que soit le reste ; s'il le bat, c'est la preuve qui manque au papier.
+
+      Déjà supporté par le code : `training.mode=finetune` SANS `pretrained_encoder_path`
+      = init aléatoire. **`full_finetune` obligatoire** (gradual_unfreeze gèlerait des poids
+      aléatoires — et ne dégèle jamais l'encodeur).
+
+      ```bash
+      # arm p32 (jumeau du finetune geo-p32 en cours, seule différence : pas de pretrain)
+      python scripts/train.py --config-name tiny_geo \
+        training.mode=finetune training.finetune_mode=full_finetune \
+        model.decoder.type=quantile \
+        model.patch_length=32 model.stride=16 \
+        model.name=timejepa_tiny_geo_p32_scratch \
+        wandb.run_name=geo-p32-scratch
+
+      # arm 16/8 (jumeau du finetune geo principal)
+      python scripts/train.py --config-name tiny_geo \
+        training.mode=finetune training.finetune_mode=full_finetune \
+        model.decoder.type=quantile \
+        model.name=timejepa_tiny_geo_scratch \
+        wandb.run_name=geo-scratch
+      ```
+
+      Règles de lecture :
+      - mêmes overrides que le finetune jumeau (LR, epochs, early stopping) — la SEULE
+        variable est l'absence de poids pré-entraînés ;
+      - le from-scratch a droit au même early stopping (patience 25 → il a la place de
+        converger) ; s'il est arrêté court, lui redonner des époques avant de conclure —
+        être généreux avec le baseline rend la victoire (ou la défaite) incontestable ;
+      - juger sur l'éval benchmark (skill/WQL/couverture), pas sur la val_loss ;
+      - un jumeau par arm suffit — commencer par celui du meilleur arm geo.
+
+- [ ] **G5. Corpus LOTSA** — *conditionné au succès de G4.*
+      [LOTSA](https://huggingface.co/datasets/Salesforce/lotsa_data) (corpus de pretrain de
+      Moirai) : ~27 Md d'observations, public sur HuggingFace, **toutes fréquences** — règle
+      aussi le biais sub-quotidien du corpus actuel. Travail : un convertisseur
+      LOTSA→`.npy`/memmap compatible `TimeSeriesDataset`, une politique d'échantillonnage
+      (on ne charge pas 27 Md de points en RAM — memmap + sous-échantillonnage par dataset),
+      et re-régler `sampling_temperature`. C'est le levier n°1 restant vers Toto : après le
+      round géométrie, l'écart résiduel est principalement données+compute.
+      ⚠️ Vérifier le chevauchement LOTSA ↔ benchmarks d'éval (LOTSA contient des datasets
+      GIFT-Eval/Monash — exclure du pretrain tout ce qui sert à l'éval).
 
 ---
 

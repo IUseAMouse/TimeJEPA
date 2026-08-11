@@ -374,11 +374,12 @@ class JEPATST(nn.Module):
         return result
 
     def forecast(
-        self, 
+        self,
         context: torch.Tensor,
         n: Optional[int] = None,
         return_representations: bool = False,
         skip_revin: bool = False,
+        sample_paths: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
         Forecast n steps ahead with automatic rolling if needed.
@@ -448,6 +449,29 @@ class JEPATST(nn.Module):
 
         try:
             num_rolls = (n + self.prediction_length - 1) // self.prediction_length
+
+            # With a probabilistic head, propagate the FAN through the rolls
+            # instead of the median. Median feedback makes every later roll see
+            # a context smoother than real data, so intervals shrink with
+            # horizon when the truth widens — measured on exchange h720: width
+            # 0.267 against a sqrt(h)-growing true uncertainty.
+            if sample_paths and getattr(self.decoder, 'is_probabilistic', False):
+                forecast_norm, quantiles_norm, quantile_levels = \
+                    self._rolling_forecast_sampled(current_context, n, num_rolls, use_revin)
+                if use_revin:
+                    forecast_denorm = self.revin.denormalize_target_space(forecast_norm)
+                    quantiles_denorm = self.revin.denormalize_target_space(quantiles_norm)
+                else:
+                    forecast_denorm = forecast_norm
+                    quantiles_denorm = quantiles_norm
+                return {
+                    "forecast": forecast_norm,
+                    "forecast_denorm": forecast_denorm,
+                    "quantiles": quantiles_norm,
+                    "quantiles_denorm": quantiles_denorm,
+                    "quantile_levels": quantile_levels,
+                }
+
             all_forecasts_norm = []
             all_quantiles_norm = []
             quantile_levels = None
@@ -523,6 +547,80 @@ class JEPATST(nn.Module):
             out["quantile_levels"] = quantile_levels
         return out
 
+
+    def _rolling_forecast_sampled(
+        self,
+        current_context: torch.Tensor,
+        n: int,
+        num_rolls: int,
+        use_revin: bool,
+    ):
+        """
+        Quantile-path rollout: propagate the whole fan, not the median.
+
+        Mechanism
+        ---------
+        Roll 1 is a single exact forward. For later rolls the batch is expanded
+        Q-fold — one copy per quantile level — and copy k is fed the level-k
+        trajectory of the previous roll. Each copy then continues at its own
+        level (a comonotonic coupling), and the marginal fan at every timestep
+        is the per-timestep SORT of the Q paths (rearrangement, which also
+        restores monotonicity where paths cross).
+
+        What this assumes, honestly: perfect rank dependence across rolls — a
+        series running at its q90 keeps running at its q90. True temporal
+        dependence is weaker, so this bounds the spread from above the way
+        independence would bound it from below. It replaces a systematic bias
+        (median feedback shrinks intervals as the horizon grows, because the
+        median path is smoother than any real trajectory) with a much smaller,
+        sign-known one. Deterministic — the levels ARE the stratified sample,
+        no RNG involved.
+
+        Cost: rolls after the first run at batch B*Q (Q=9 by default). Only the
+        rolling path pays it, and only for probabilistic decoders.
+
+        Returns (forecast_norm [B,n,C], quantiles_norm [B,n,Q], levels).
+        """
+        head = self.decoder.decoder
+        mid = head.median_idx
+        pred_len = self.prediction_length
+        batch = current_context.shape[0]
+
+        # ---- Roll 1: exact, on the true context ----
+        first = self.forward_finetune(current_context, skip_revin=True)
+        fan = first['quantiles']                              # [B, H, Q]
+        levels = first['quantile_levels']
+        n_q = fan.shape[-1]
+
+        fans = [fan]
+
+        if num_rolls > 1:
+            # One batch copy per quantile level: rows are ordered
+            # (b0,k0)..(b0,kQ-1),(b1,k0)... so the level of row i is i % Q.
+            ctx = current_context.repeat_interleave(n_q, dim=0)     # [B*Q, L, C]
+            paths = fan.permute(0, 2, 1).reshape(batch * n_q, pred_len, 1)
+            level_idx = torch.arange(n_q, device=fan.device).repeat(batch)
+
+            for _ in range(1, num_rolls):
+                feedback = self.revin.to_input_frame(paths) if use_revin else paths
+                ctx = torch.cat([ctx[:, pred_len:, :], feedback], dim=1)
+
+                rolled = self.forward_finetune(ctx, skip_revin=True)
+                fan_k = rolled['quantiles']                    # [B*Q, H, Q]
+
+                # Comonotonic continuation: copy k follows its own level k
+                paths = fan_k.gather(
+                    -1, level_idx.view(-1, 1, 1).expand(-1, pred_len, 1)
+                )                                              # [B*Q, H, 1]
+
+                # Marginal fan = per-timestep order statistics of the Q paths
+                roll_fan = paths.view(batch, n_q, pred_len).permute(0, 2, 1)
+                roll_fan, _ = roll_fan.sort(dim=-1)            # [B, H, Q]
+                fans.append(roll_fan)
+
+        quantiles_norm = torch.cat(fans, dim=1)[:, :n]
+        forecast_norm = quantiles_norm[..., mid:mid + 1]
+        return forecast_norm, quantiles_norm, levels
 
     def forward(
         self,

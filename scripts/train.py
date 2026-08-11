@@ -234,7 +234,16 @@ def main(cfg: DictConfig):
             
             # Regularization
             dropout=cfg.training.dropout,
-            
+
+            # Context-geometry randomization (train only). Reads the same
+            # context_lengths list as the pretrain, but its own probability key
+            # so existing finetune configs keep their previous fixed-context
+            # behavior at the default of 0.0.
+            context_lengths=list(cfg.training.get('context_lengths') or []),
+            p_random_context_finetune=float(
+                cfg.training.get('p_random_context_finetune', 0.0)
+            ),
+
             # Logging
             log_every_n_steps=cfg.training.log_every_n_steps,
         )
@@ -253,6 +262,15 @@ def main(cfg: DictConfig):
         save_top_k=cfg.checkpoint.save_top_k,
         save_last=cfg.checkpoint.save_last,
         filename=cfg.checkpoint.filename,
+        # B21: the config carried auto_insert_metric_name: false but it was
+        # never forwarded, so Lightning kept its default (True) and prefixed
+        # each metric name AGAIN on top of the template's own text. Result:
+        # "epochepoch=00_val_lossval_loss=0.3445.ckpt" — doubled names, and
+        # '=' characters that Hydra's override grammar then choked on for
+        # every downstream finetune and eval command.
+        auto_insert_metric_name=bool(
+            cfg.checkpoint.get('auto_insert_metric_name', False)
+        ),
         verbose=True,
     ))
     

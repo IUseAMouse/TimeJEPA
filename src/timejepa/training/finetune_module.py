@@ -50,6 +50,23 @@ class FinetuneModule(pl.LightningModule):
         # Loss
         loss_type: Literal['mse', 'mae', 'huber'] = 'mse',
         huber_delta: float = 1.0,
+
+        # Context-geometry randomization, TRAIN ONLY (validation keeps the
+        # native geometry so val_loss stays comparable across epochs).
+        #
+        # Without this the decoder only ever sees one context length, while the
+        # encoder was pretrained on many — so evaluating at any other length
+        # puts the decoder out of distribution even where the encoder is fine.
+        # The context sweep could not separate those two effects; this removes
+        # the decoder's share. Horizon stays FIXED in finetune: eval already
+        # truncates 128->96, and rolling horizons always use the full native
+        # prediction_length per roll, so there is no mismatch to fix there.
+        #
+        # A separate probability key (not the pretrain's p_random_context) so
+        # existing finetune configs keep their exact previous behavior at the
+        # default of 0.0.
+        context_lengths: Optional[List[int]] = None,
+        p_random_context_finetune: float = 0.0,
         
         # Optimizer
         learning_rate: float = 1e-4,
@@ -90,7 +107,11 @@ class FinetuneModule(pl.LightningModule):
         # Loss configuration
         self.loss_type = loss_type
         self.huber_delta = huber_delta
-        
+
+        # Context-geometry randomization (train only)
+        self.context_lengths = list(context_lengths) if context_lengths else None
+        self.p_random_context_finetune = float(p_random_context_finetune)
+
         # Optimizer params
         self.learning_rate = learning_rate
         self.encoder_lr_multiplier = encoder_lr_multiplier
@@ -182,8 +203,15 @@ class FinetuneModule(pl.LightningModule):
         """Handle gradual unfreezing."""
         if self.finetune_mode == 'gradual_unfreeze':
             if self.current_epoch == self.unfreeze_after_epoch:
-                logger.info(f"Epoch {self.current_epoch}: Unfreezing encoder and predictor")
+                # B20: this used to call unfreeze_predictor() alone while
+                # logging "encoder and predictor" — the encoder and patching
+                # stayed frozen forever. Now the action matches the log.
+                logger.info(
+                    f"Epoch {self.current_epoch}: unfreezing encoder, predictor and patching"
+                )
+                self.model.unfreeze_encoder()
                 self.model.unfreeze_predictor()
+                self.model.unfreeze_patching()
     
     def forward(self, context: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Forward pass for forecasting."""
@@ -224,16 +252,40 @@ class FinetuneModule(pl.LightningModule):
 
         return loss, results, target
     
+    def _maybe_crop_context(self, context: torch.Tensor) -> torch.Tensor:
+        """
+        Sample a context length ONCE PER BATCH and crop from the LEFT (keep the
+        most recent history — what a shorter context would actually contain at
+        inference). Mirrors JEPAPretrainModule._randomize_geometry, minus the
+        horizon part, which stays fixed in finetune by design.
+        """
+        if not self.context_lengths or self.p_random_context_finetune <= 0.0:
+            return context
+        if torch.rand(1).item() >= self.p_random_context_finetune:
+            return context
+        eligible = [L for L in self.context_lengths if L <= context.shape[1]]
+        if not eligible:
+            return context
+        length = int(eligible[torch.randint(len(eligible), (1,)).item()])
+        return context[:, -length:]
+
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         """Training step."""
         context = batch['context']
         target = batch['target']
-        
+
         if context.ndim == 2:
             context = context.unsqueeze(-1)
         if target.ndim == 2:
             target = target.unsqueeze(-1)
-        
+
+        # Train only — validation_step and test_step keep the native geometry.
+        context = self._maybe_crop_context(context)
+        # Same observability as the pretrain: without this line there is no way
+        # to confirm from W&B that the randomization is actually active.
+        self.log('geometry/context_len', float(context.shape[1]),
+                 on_step=True, on_epoch=False, logger=True)
+
         loss, results, target = self._forward_and_loss(context, target)
         predictions = results['forecast']
 
@@ -311,11 +363,25 @@ class FinetuneModule(pl.LightningModule):
         # Separate parameters
         encoder_params = []
         decoder_params = []
-        
+
         for name, param in self.model.named_parameters():
-            if not param.requires_grad:
+            # The EMA target encoder is never trained, in any mode.
+            if name.startswith('target_encoder'):
                 continue
-            
+
+            # B20: register EVERY parameter, frozen ones included. A frozen
+            # parameter has grad=None and AdamW skips it, so registration is a
+            # no-op until the parameter is unfrozen — at which point the
+            # EXISTING optimizer picks it up, and the LR scheduler stays
+            # consistent because the groups never change.
+            #
+            # The previous code filtered on requires_grad here. The optimizer
+            # is built once, at epoch 0, when gradual_unfreeze has everything
+            # frozen — so the later unfreeze flipped requires_grad, gradients
+            # flowed, and optimizer.step() silently never updated those
+            # weights. gradual_unfreeze therefore trained the decoder (plus
+            # the RevIN affine) alone for the entire run, in every run that
+            # ever used it.
             if 'decoder' in name:
                 decoder_params.append(param)
             else:

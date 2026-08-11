@@ -453,6 +453,188 @@ def test_multidataset_raises_when_everything_is_skipped(tmp_path):
 
 
 # =============================================================================
+# B21 / config hygiene — the experiment grid must be declarative
+# =============================================================================
+
+def _compose(name):
+    from hydra import initialize, compose
+    root = Path(__file__).resolve().parents[1]
+    with initialize(version_base=None, config_path="../configs/model"):
+        return compose(config_name=name)
+
+
+@pytest.mark.parametrize("config_name", ["tiny", "tiny_geo", "tiny_geo_p32",
+                                         "tiny_geo_vicreg", "tiny_geo_scratch"])
+def test_checkpoint_filename_has_no_equals_sign(config_name):
+    """
+    B21. auto_insert_metric_name lived in the config but was never forwarded to
+    ModelCheckpoint, so Lightning kept its default (True) and prefixed each
+    metric name on top of the template's own text:
+    'epochepoch=00_val_lossval_loss=0.3445.ckpt'. Hydra's override grammar
+    treats '=' as a separator, so every downstream finetune and eval command
+    needed quoting gymnastics — and one of them failed outright with backslashes
+    surviving literally into the path.
+    """
+    cfg = _compose(config_name)
+    assert "=" not in cfg.checkpoint.filename
+    assert cfg.checkpoint.auto_insert_metric_name is False
+
+
+def test_geo_arms_differ_only_in_their_declared_variable():
+    """
+    Each arm of the geometry grid is a named config, not a pile of overrides:
+    a forgotten `model.patch_length=32` at EVAL time only warns
+    ('re-initialising patching.*') and yields silently wrong numbers.
+    Everything except the arm's own variable must match the base.
+    """
+    base = _compose("tiny_geo")
+    # Round-wide defaults: no override should ever be needed for these
+    assert base.training.loss.type == "sigreg"
+    assert base.model.decoder.type == "quantile"
+    assert len(base.data.datasets_finetune) == len(base.data.datasets)
+
+    p32 = _compose("tiny_geo_p32")
+    assert (p32.model.patch_length, p32.model.stride) == (32, 16)
+    assert p32.model.name != base.model.name
+    for key in ("seq_length", "prediction_length"):
+        assert p32.model[key] == base.model[key]
+    assert p32.training.loss.type == base.training.loss.type
+    assert p32.model.decoder.type == base.model.decoder.type
+
+    vic = _compose("tiny_geo_vicreg")
+    assert vic.training.loss.type == "vicreg"
+    assert vic.model.name != base.model.name
+    assert (vic.model.patch_length, vic.model.stride) == (base.model.patch_length,
+                                                          base.model.stride)
+
+    scratch = _compose("tiny_geo_scratch")
+    assert scratch.training.mode == "finetune"
+    # Mandatory: gradual_unfreeze would freeze randomly initialised weights
+    assert scratch.training.finetune_mode == "full_finetune"
+    assert "pretrained_encoder_path" not in scratch.training
+
+
+# =============================================================================
+# B20 — gradual_unfreeze never actually trained anything but the decoder
+# =============================================================================
+
+def _step(module, optimizer):
+    module.model.train()
+    loss, _, _ = module._forward_and_loss(torch.randn(4, 512, 1), torch.randn(4, 128, 1))
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+
+def _snapshot(model, prefix):
+    return {n: p.clone() for n, p in model.named_parameters() if n.startswith(prefix)}
+
+
+def _moved(model, before):
+    return any(not torch.equal(before[n], p)
+               for n, p in model.named_parameters() if n in before)
+
+
+def test_optimizer_registers_frozen_params_so_unfreezing_works():
+    """
+    THE B20 bug. The optimizer is created once, at epoch 0, when
+    gradual_unfreeze has everything frozen. Filtering on requires_grad at that
+    moment meant the later unfreeze flipped the flag and gradients flowed, but
+    optimizer.step() silently never touched those weights: gradual_unfreeze
+    trained the decoder alone for the entire run — in every run that used it,
+    including the historical best checkpoints.
+    """
+    torch.manual_seed(0)
+    mod = _finetune_module(finetune_mode="gradual_unfreeze", unfreeze_after_epoch=0,
+                           lr_scheduler="constant", learning_rate=1e-2)
+    opt = mod.configure_optimizers()
+
+    in_opt = {id(p) for g in opt.param_groups for p in g["params"]}
+    m = mod.model
+    assert all(id(p) in in_opt for p in m.predictor.parameters())
+    assert all(id(p) in in_opt for p in m.online_encoder.parameters())
+    assert all(id(p) in in_opt for p in m.patching.parameters())
+    assert not any(id(p) in in_opt for p in m.target_encoder.parameters())
+
+    # Phase 1 — still frozen: a step must move the decoder and nothing else
+    enc0 = _snapshot(m, "online_encoder")
+    pred0 = _snapshot(m, "predictor")
+    dec0 = _snapshot(m, "decoder")
+    _step(mod, opt)
+    assert _moved(m, dec0)
+    assert not _moved(m, enc0)
+    assert not _moved(m, pred0)
+
+    # Phase 2 — the epoch hook fires (detached module: current_epoch == 0)
+    mod.on_train_epoch_start()
+    enc1 = _snapshot(m, "online_encoder")
+    pred1 = _snapshot(m, "predictor")
+    _step(mod, opt)
+    assert _moved(m, enc1), "encoder still frozen after gradual unfreeze"
+    assert _moved(m, pred1), "predictor unfrozen but not updated by the optimizer"
+
+
+def test_linear_probe_still_trains_only_the_decoder():
+    """Registering frozen params must not leak training into a probe."""
+    torch.manual_seed(0)
+    mod = _finetune_module(finetune_mode="linear_probe",
+                           lr_scheduler="constant", learning_rate=1e-2)
+    opt = mod.configure_optimizers()
+    m = mod.model
+    enc0 = _snapshot(m, "online_encoder")
+    pred0 = _snapshot(m, "predictor")
+    _step(mod, opt)
+    assert not _moved(m, enc0)
+    assert not _moved(m, pred0)
+
+
+# =============================================================================
+# Geometry round — finetune-side context randomization
+# =============================================================================
+
+def _finetune_module(**kw):
+    from timejepa.training.finetune_module import FinetuneModule
+    m = JEPATST(input_length=512, prediction_length=128, patch_size=16, stride=8,
+                d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                predictor_num_layers=1, predictor_num_heads=4, predictor_d_ff=64,
+                decoder_type="mlp")
+    kw.setdefault("finetune_mode", "linear_probe")
+    return FinetuneModule(model=m, **kw)
+
+
+def test_finetune_crops_context_from_the_left():
+    """Keep the most recent history — what a short context contains at inference."""
+    mod = _finetune_module(context_lengths=[128, 256], p_random_context_finetune=1.0)
+    torch.manual_seed(0)
+    ctx = torch.arange(512.0).view(1, 512, 1).repeat(3, 1, 1)
+    cropped = mod._maybe_crop_context(ctx)
+    assert cropped.shape[1] in (128, 256)
+    # Left crop: the LAST timestep must survive
+    assert torch.equal(cropped[:, -1], ctx[:, -1])
+
+
+def test_finetune_context_randomization_is_off_by_default():
+    """
+    Existing finetune configs must keep their exact previous behavior: the
+    probability key defaults to 0.0, so nothing changes unless a config opts in.
+    """
+    mod = _finetune_module()
+    ctx = torch.randn(3, 512, 1)
+    assert mod._maybe_crop_context(ctx).shape[1] == 512
+
+    # Even with lengths configured, p=0 must be a no-op
+    mod2 = _finetune_module(context_lengths=[128], p_random_context_finetune=0.0)
+    assert mod2._maybe_crop_context(ctx).shape[1] == 512
+
+
+def test_finetune_crop_never_upsamples():
+    """A context already shorter than every option must pass through unchanged."""
+    mod = _finetune_module(context_lengths=[256, 512], p_random_context_finetune=1.0)
+    ctx = torch.randn(2, 192, 1)
+    assert mod._maybe_crop_context(ctx).shape[1] == 192
+
+
+# =============================================================================
 # P2.1 — quantile head, and backward compatibility with pre-quantile models
 # =============================================================================
 
@@ -580,6 +762,80 @@ def test_quantile_fan_survives_truncation_and_rollout(n):
     )
 
 
+def test_sampled_rollout_accumulates_uncertainty():
+    """
+    The measured defect: median feedback makes every later roll see a context
+    smoother than real data, so intervals SHRINK with horizon (exchange h720:
+    width 0.267 where truth grows as sqrt(h)).
+
+    The plumbing is validated with a stub decoder that conditions on the level
+    of the path it is fed (persistence + a fixed [-1, +1] fan). Under the
+    comonotonic coupling the spread must accumulate LINEARLY — widths 2, 4, 6, 8
+    across four rolls — while median feedback stays flat at 2. An untrained real
+    model cannot show this because its fan does not depend on its input.
+    """
+    m = _model("quantile")
+    m.eval()
+    H = 128
+
+    def stub(ctx, skip_revin=True, **kw):
+        base = ctx[:, -1:, :].expand(-1, H, -1)
+        q = base + torch.linspace(-1.0, 1.0, 9).view(1, 1, 9)
+        return {"quantiles": q, "quantiles_denorm": q,
+                "quantile_levels": (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
+                "forecast": q[..., 4:5], "forecast_denorm": q[..., 4:5]}
+
+    m.forward_finetune = stub
+    ctx = torch.zeros(2, 512, 1)
+
+    def widths(out):
+        q = out["quantiles"]
+        return [round(float((q[:, i*H:(i+1)*H, -1] - q[:, i*H:(i+1)*H, 0]).mean()), 3)
+                for i in range(4)]
+
+    with torch.no_grad():
+        sampled = m.forecast(ctx, n=512, skip_revin=True, sample_paths=True)
+        median = m.forecast(ctx, n=512, skip_revin=True, sample_paths=False)
+
+    assert widths(sampled) == [2.0, 4.0, 6.0, 8.0]
+    assert widths(median) == [2.0, 2.0, 2.0, 2.0]
+
+    # Deterministic: the quantile levels ARE the stratified sample, no RNG.
+    with torch.no_grad():
+        again = m.forecast(ctx, n=512, skip_revin=True, sample_paths=True)
+    assert torch.equal(sampled["quantiles"], again["quantiles"])
+
+
+def test_sampled_rollout_matches_single_shot_within_native_horizon():
+    """sample_paths must be a strict no-op when no rolling happens."""
+    m = _model("quantile")
+    m.eval()
+    torch.manual_seed(0)
+    ctx = torch.randn(3, 512, 1) * 3 + 10
+    with torch.no_grad():
+        a = m.forecast(ctx, n=96, sample_paths=True)
+        b = m.forecast(ctx, n=96, sample_paths=False)
+    assert torch.equal(a["quantiles_denorm"], b["quantiles_denorm"])
+
+
+def test_sampled_rollout_first_roll_is_exact_and_output_is_monotone():
+    m = _model("quantile")
+    m.eval()
+    torch.manual_seed(0)
+    ctx = torch.randn(3, 512, 1) * 3 + 10
+    with torch.no_grad():
+        smp = m.forecast(ctx, n=384, sample_paths=True)
+        med = m.forecast(ctx, n=384, sample_paths=False)
+    # Roll 1 is a single exact forward in both schemes
+    assert torch.allclose(smp["quantiles_denorm"][:, :128],
+                          med["quantiles_denorm"][:, :128], atol=1e-5)
+    assert (smp["quantiles_denorm"].diff(dim=-1) >= -1e-6).all()
+    mid = m.decoder.decoder.median_idx
+    assert torch.allclose(smp["forecast_denorm"].squeeze(-1),
+                          smp["quantiles_denorm"][..., mid], atol=1e-5)
+    assert not m.revin.is_frozen
+
+
 def test_true_wql_differs_from_the_point_wql():
     """
     WQL over a point forecast collapses to ND by construction. If evaluation
@@ -634,7 +890,9 @@ def test_internal_decoder_emits_the_full_horizon(patch, stride):
 
 
 @pytest.mark.parametrize("config_name", ["tiny", "tiny_patch32", "tiny_patch64",
-                                         "tiny_deep_predictor"])
+                                         "tiny_deep_predictor", "tiny_geo",
+                                         "tiny_geo_p32", "tiny_geo_vicreg",
+                                         "tiny_geo_scratch"])
 def test_experiment_configs_are_runnable(config_name):
     """
     Every shipped config must build a model whose geometry works at the NOMINAL

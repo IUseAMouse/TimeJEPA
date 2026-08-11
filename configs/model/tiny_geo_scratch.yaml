@@ -1,0 +1,54 @@
+# @package _global_
+#
+# G4.5 — BASELINE SANS PRETRAINING. Le contrôle du pari central de TimeJEPA.
+#
+#   python scripts/train.py --config-name tiny_geo_scratch wandb.run_name=geo-scratch
+#   # arm 32/16 : --config-name tiny_geo_scratch model.patch_length=32 model.stride=16 \
+#   #             model.name=timejepa_tiny_geo_p32_scratch
+#
+#   python scripts/evaluate.py --config-name tiny_geo_scratch \
+#       +checkpoint_path=checkpoints/timejepa_tiny_geo_scratch/pretrain_False/<ckpt>
+#
+# ⚠️ PAS de +training.pretrained_encoder_path — c'est TOUT l'objet de la config.
+# Sans ce flag, le finetune part d'une init aléatoire : même architecture, même
+# budget, mêmes données, entraînée supervisée de bout en bout.
+#
+# Pourquoi ce run existe
+# ----------------------
+# Tout ce qui a été montré jusqu'ici : la recette JEPA *fonctionne*. Jamais
+# montré : qu'elle *bat l'alternative*. Si le pipeline pretrain->finetune ne bat
+# pas ce baseline, le pari central est infirmé quel que soit le reste ; s'il le
+# bat, c'est la preuve qui manque au papier. À faire AVANT LOTSA : scaler les
+# données n'a de sens que si l'objectif de pretrain qu'elles nourrissent a
+# prouvé sa valeur.
+#
+# Règles de lecture (les respecter, sinon le résultat ne prouve rien)
+# -------------------------------------------------------------------
+# - full_finetune est OBLIGATOIRE : gradual_unfreeze gèlerait des poids
+#   aléatoires pendant la première époque. Fixé ci-dessous, ne pas surcharger.
+# - Être GÉNÉREUX avec le baseline : mêmes epochs, même early stopping
+#   (patience 25). S'il s'arrête court, lui redonner des époques avant de
+#   conclure. Une victoire contre un baseline sous-entraîné ne prouve rien.
+# - Juger sur l'éval benchmark (skill / WQL / couverture), pas sur la val_loss.
+# - Le LR du finetune est calibré pour un encodeur pré-entraîné ; si le scratch
+#   plafonne visiblement, tester training.optimizer.learning_rate=3e-4 et
+#   garder le MEILLEUR des deux — toujours au bénéfice du baseline.
+defaults:
+  - tiny_geo
+  - _self_
+
+model:
+  name: "timejepa_tiny_geo_scratch"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "geo-round"
+    - "baseline"
+    - "no-pretrain"

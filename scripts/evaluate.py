@@ -746,6 +746,15 @@ def evaluate_with_baselines(
         results['timejepa']['interval_80_width'] = float(
             (quantiles[..., -1] - quantiles[..., 0]).mean()
         )
+        # Empirical coverage of the outermost band. With levels 0.1..0.9 the
+        # target should fall inside 80% of the time: below that the intervals
+        # are overconfident, above it they are wasteful and WQL pays for it.
+        # The eye cannot judge this from plots; this number can.
+        t = targets.unsqueeze(-1) if targets.ndim == quantiles.ndim - 1 else targets
+        inside = (t >= quantiles[..., :1]) & (t <= quantiles[..., -1:])
+        results['timejepa']['coverage_outer'] = float(inside.float().mean())
+        if levels:
+            results['timejepa']['coverage_target'] = float(levels[-1] - levels[0])
 
     horizon = targets.shape[1]
     for name, base_pred in compute_all_baselines(contexts, horizon, season_length).items():
@@ -887,7 +896,9 @@ def evaluate_nixtla_dataset(
             f"MASE {metrics.get('mase', float('nan')):.3f} | "
             f"WQL {metrics['wql']:.4f}"
             + (f" (point {metrics['wql_point']:.4f}, "
-               f"largeur 10-90 {metrics['interval_80_width']:.3f})" if probabilistic else "")
+               f"largeur 10-90 {metrics['interval_80_width']:.3f}, "
+               f"couverture {metrics['coverage_outer']:.0%}/"
+               f"{metrics.get('coverage_target', 0.8):.0%})" if probabilistic else "")
         )
         logger.info(
             f"     baselines MASE -> seasonal_naive {sn.get('mase', float('nan')):.3f} | "

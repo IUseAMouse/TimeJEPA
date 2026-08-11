@@ -1,0 +1,47 @@
+# @package _global_
+#
+# ARM VICReg du round géométrie. Identique à tiny_geo sauf la loss de pretrain.
+#
+#   python scripts/train.py    --config-name tiny_geo_vicreg wandb.run_name=geo-vicreg
+#   python scripts/train.py    --config-name tiny_geo_vicreg training.mode=finetune \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_tiny_geo_vicreg/pretrain_True/<ckpt>
+#   python scripts/evaluate.py --config-name tiny_geo_vicreg \
+#       +checkpoint_path=checkpoints/timejepa_tiny_geo_vicreg/pretrain_False/<ckpt>
+#
+# L'ablation P1.11, jamais terminée : SIGReg n'a été comparé à rien.
+# ------------------------------------------------------------------
+# Et c'est la PREMIÈRE FOIS que le VICReg corrigé s'entraîne réellement. Tous
+# les anciens checkpoints "VICReg" tournaient avec la version poolée (variance
+# calculée après reshape(-1, D), aveugle au collapse positionnel : 0.0000 vs
+# 0.9990 mesuré) ET des poids variance/covariance à 0.0 — c'est-à-dire une MSE
+# pure. Cet arm teste le vrai VICReg : per-position, 25/15/1, régularisation
+# des embeddings d'encodeur.
+#
+# Ce que les courbes doivent dire
+# -------------------------------
+# `train_vicreg/variance` quasi nul = aucune pression de collapse, tant mieux ;
+# une hinge qui travaille fort = information que SIGReg ne donnait pas.
+# À croiser avec `collapse/effective_rank` (calibration : 3.7-4.8 à l'init sur
+# signal réel, PAS 128 — l'alarme est l'approche de 1.0) et `collapse/context_std`.
+#
+# ⚠️ Les val_loss des trois arms ne sont PAS comparables entre elles (objectifs
+# différents). L'arbitrage se fait sur l'éval downstream, mêmes commandes.
+defaults:
+  - tiny_geo
+  - _self_
+
+model:
+  name: "timejepa_tiny_geo_vicreg"
+
+training:
+  loss:
+    type: "vicreg"
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "geo-round"
+    - "ctx1024"
+    - "vicreg"

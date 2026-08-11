@@ -1,0 +1,129 @@
+# @package _global_
+#
+# ROUND GÉOMÉTRIE — contexte étendu à 1024, horizon natif étendu à 256,
+# retour au patch 16/8, et randomisation du contexte AUSSI au finetune.
+#
+# Cette config porte les DEFAUTS du round : loss sigreg, decodeur quantile,
+# finetune sur les 24 datasets. Plus aucun override necessaire — les commandes
+# a rallonge etaient devenues le premier vecteur d'erreurs (decodeur mlp
+# silencieux, geometrie p32 oubliee a l'eval, '=' dans les chemins).
+#
+#   # pretrain
+#   python scripts/train.py --config-name tiny_geo wandb.run_name=geo-pretrain
+#
+#   # finetune (quantile par defaut, depuis le checkpoint ci-dessus)
+#   python scripts/train.py --config-name tiny_geo training.mode=finetune \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_tiny_geo/pretrain_True/<ckpt> \
+#       wandb.run_name=geo-quantile
+#
+#   # eval
+#   python scripts/evaluate.py --config-name tiny_geo \
+#       +checkpoint_path=checkpoints/timejepa_tiny_geo/pretrain_False/<ckpt>
+#
+# Les autres arms ont chacun leur config — ne JAMAIS les faire a coups
+# d'override : tiny_geo_p32 (patch 32/16), tiny_geo_vicreg (loss VICReg),
+# tiny_geo_scratch (G4.5, sans pretrain).
+#
+# Les quatre changements, et leurs preuves
+# ----------------------------------------
+# 1. context_lengths -> 1024. Le balayage post-hoc (docs, session du 10/08) :
+#    ETTm gagne +5 à +8 pts de skill à ctx 1024 MALGRÉ un encodeur jamais
+#    entraîné au-delà de 512, et l'optimum (640) coïncide avec la frontière
+#    d'entraînement. Étendre l'entraînement supprime la pénalité hors
+#    distribution partout en dessous. Pas 2048 : coût attention 16.8x vs 4.1x,
+#    pari non mesuré.
+#
+# 2. prediction_length 128 -> 256. h=720 passe de 6 rolls à 3, h=336 de 3 à 2,
+#    h=192 devient mono-passe. Chaque roll réinjecte la trajectoire MÉDIANE,
+#    plus lisse que la réalité — c'est le mécanisme mesuré du rétrécissement
+#    des intervalles aux longs horizons (exchange h720 : largeur 0.267 alors
+#    que l'incertitude vraie croît en sqrt(h)). Moins de rolls = moins de
+#    composition de ce biais.
+#
+# 3. Retour au patch 16/8 (défaut de tiny.yaml, donc simple non-override).
+#    La motivation de patch32 (positions/cycle) a été renversée par le
+#    balayage : le driver est le nombre de cycles dans la fenêtre, indépendant
+#    du patch. Et le 3e batch (patch32) a fait -9 pts vs le 2e (patch16) à
+#    finetune comparable. Arm patch32 : --config-name tiny_geo_p32
+#    (JAMAIS par override : a l'eval, une geometrie fausse ne fait que WARNER
+#    "re-initialising patching.*" et sort des chiffres silencieusement faux).
+#
+# 4. p_random_context_finetune. L'encodeur était entraîné sur 128-512 mais le
+#    décodeur ne voyait QUE 512 : à toute autre longueur d'éval, le décodeur
+#    était hors distribution même là où l'encodeur ne l'était pas — le
+#    balayage mélangeait donc deux effets. L'horizon reste FIXE au finetune
+#    (l'éval tronque déjà, le rollout utilise le natif complet par roll).
+#
+# Coûts à connaître avant de lancer
+# ---------------------------------
+# - Fenêtre requise 1024+256 = 1280 pas -> exclus (B17 les loggue) :
+#   wikipedia-weekly, rideshare (déjà exclus), + rain-temperature (725),
+#   nn5-daily (791), m4-hourly (1008). m4-hourly quitte donc aussi le
+#   finetune-8. ~7 % du batch. L'éligibilité multi-résolution recule aussi
+#   (facteur 4 => 5120 pas requis) — lire la ligne "Multi-resolution" du log.
+# - Attention O(N²) : 127 patchs à ctx 1024 vs 63 à 512 (~4x sur les batchs
+#   longs, tirés par batch). batch_size 512->256 et accumulation 3->6 gardent
+#   le batch effectif à 1536 en divisant le pic mémoire par 2. Epoch estimé
+#   2-3x plus long qu'avant ; `+trainer.max_steps=30000` reste le bon outil
+#   pour borner un run de comparaison.
+# - Après CE pretrain, re-balayer le contexte à l'éval : l'optimum mesuré à
+#   640 était celui d'un modèle entraîné jusqu'à 512, il va se déplacer.
+defaults:
+  - tiny
+  - _self_
+
+model:
+  name: "timejepa_tiny_geo"
+  seq_length: 1024
+  prediction_length: 256
+
+  decoder:
+    # Quantile par DEFAUT. Le defaut de tiny.yaml est "mlp", et un finetune
+    # geo est parti dessus sans que rien ne le signale : l'eval a sorti des
+    # colonnes "WQL" qui etaient en fait des ND ponctuels (repere au fait que
+    # le log chargeait 110 cles au lieu de 118, et que les lignes WQL
+    # n'avaient plus leur suffixe couverture). Le round se compare en
+    # quantile — donc c'est le defaut, et un point decoder devient l'override
+    # explicite (model.decoder.type=mlp), pas l'inverse.
+    type: "quantile"
+
+training:
+  # Le defaut de tiny.yaml est "vicreg" : chaque pretrain geo a du le
+  # surcharger a la main. L'arm VICReg a sa propre config (tiny_geo_vicreg).
+  loss:
+    type: "sigreg"
+
+  # finetune_mode reste "gradual_unfreeze" (defaut de tiny.yaml), mais ATTENTION
+  # a la lecture : jusqu'au fix B20, ce mode n'entrainait QUE le decodeur —
+  # l'optimiseur etait construit a l'epoch 0 en filtrant sur requires_grad, donc
+  # le degel de l'epoch 1 ne touchait aucun poids enregistre. Tous les resultats
+  # historiques (2e batch, 3e batch, reference quantile) sont donc des probes a
+  # encodeur gele. Depuis B20 le degel est reel : les arms geo ne sont PAS
+  # comparables au protocole des anciens runs, mais le sont entre eux.
+  context_lengths: [128, 192, 256, 384, 512, 640, 768, 1024]
+  p_random_context: 0.5
+  horizon_lengths: [64, 96, 128, 192, 256]
+  p_random_horizon: 0.5
+  p_random_context_finetune: 0.5
+
+data:
+  batch_size: 256
+
+  # E3's conclusion, baked in: finetune on ALL datasets. The curated-8 list
+  # inherited from tiny.yaml cost +12 skill points on average and +65 on
+  # exchange (the decoder had never seen a random walk). Interpolated from
+  # data.datasets so it cannot drift; too-short datasets are skipped (B17).
+  # Caught live: the first geo finetunes ran on the curated list because this
+  # line was missing — those runs double as the ft8-vs-ftall ablation on geo.
+  datasets_finetune: ${data.datasets}
+
+trainer:
+  accumulate_grad_batches: 6
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "geo-round"
+    - "ctx1024"
