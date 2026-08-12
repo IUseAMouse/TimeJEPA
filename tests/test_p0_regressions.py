@@ -453,6 +453,69 @@ def test_multidataset_raises_when_everything_is_skipped(tmp_path):
 
 
 # =============================================================================
+# B22 — uniform-length survivors of the length filter became object arrays
+# =============================================================================
+
+def test_pack_series_returns_numeric_when_lengths_are_uniform():
+    """
+    B22. np.array(list_of_arrays, dtype=object) does NOT give a ragged 1-D array
+    when every series has the same length — it silently gives a 2-D OBJECT array,
+    and np.stack on that preserves dtype=object. The value then reaches
+    torch.from_numpy, which rejects object arrays outright.
+
+    Never triggered before because the length filter always left mixed lengths;
+    it fires as soon as a dataset whose survivors are uniform is used
+    (m4-hourly: every series is 1008 steps once filtered).
+    """
+    import numpy as np
+    from timejepa.data.dataset import _pack_series
+
+    uniform = _pack_series([np.arange(64.0), np.arange(64.0), np.arange(64.0)])
+    assert uniform.dtype != object, "uniform survivors must become a numeric array"
+    assert uniform.shape == (3, 64)
+    # The operation that used to raise
+    torch.from_numpy(np.ascontiguousarray(uniform[0])).float()
+
+
+def test_pack_series_keeps_ragged_input_ragged():
+    import numpy as np
+    from timejepa.data.dataset import _pack_series
+
+    ragged = _pack_series([np.arange(64.0), np.arange(48.0)])
+    assert ragged.dtype == object
+    assert ragged.ndim == 1 and len(ragged) == 2
+    assert ragged[0].dtype != object
+    torch.from_numpy(np.ascontiguousarray(ragged[1])).float()
+
+
+def test_pack_series_empty_stays_detectable():
+    """The empty case must keep working: callers raise SeriesTooShortError."""
+    import numpy as np
+    from timejepa.data.dataset import _pack_series
+    assert len(_pack_series([])) == 0
+
+
+def test_dataset_yields_float_tensors_for_uniform_variable_length_input(tmp_path):
+    """End-to-end: the exact m4-hourly shape must produce usable tensors."""
+    import numpy as np
+    from timejepa.data.dataset import TimeSeriesDataset
+
+    raw = np.empty(3, dtype=object)
+    raw[0] = np.sin(np.arange(1008.0) / 10)
+    raw[1] = np.sin(np.arange(1008.0) / 12)
+    raw[2] = np.sin(np.arange(700.0) / 10)      # dropped by the length filter
+    path = tmp_path / "uniform_after_filter.npy"
+    np.save(path, raw, allow_pickle=True)
+
+    ds = TimeSeriesDataset(str(path), context_length=512, prediction_length=256)
+    item = ds[0]
+    assert item["context"].dtype == torch.float32
+    assert item["context"].shape[-1] == 512
+    assert item["target"].shape[-1] == 256
+    assert torch.isfinite(item["context"]).all()
+
+
+# =============================================================================
 # B21 / config hygiene — the experiment grid must be declarative
 # =============================================================================
 
@@ -892,7 +955,8 @@ def test_internal_decoder_emits_the_full_horizon(patch, stride):
 @pytest.mark.parametrize("config_name", ["tiny", "tiny_patch32", "tiny_patch64",
                                          "tiny_deep_predictor", "tiny_geo",
                                          "tiny_geo_p32", "tiny_geo_vicreg",
-                                         "tiny_geo_scratch"])
+                                         "tiny_geo_scratch", "tiny_geo_lowdata",
+                                         "tiny_geo_scratch_lowdata"])
 def test_experiment_configs_are_runnable(config_name):
     """
     Every shipped config must build a model whose geometry works at the NOMINAL

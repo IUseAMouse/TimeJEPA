@@ -44,6 +44,38 @@ class SeriesTooShortError(ValueError):
         )
 
 
+def _pack_series(series_list):
+    """
+    Pack a list of series into either a dense numeric array or a genuinely
+    ragged 1-D object array.
+
+    B22. `np.array(list_of_arrays, dtype=object)` does NOT always produce the
+    ragged 1-D array one expects: when every kept series has the SAME length it
+    silently returns a 2-D OBJECT array of shape (N, L). `np.stack` on that
+    preserves dtype=object, so the value survives all the way to
+    `torch.from_numpy`, which rejects object arrays:
+
+        TypeError: can't convert np.ndarray of type numpy.object_
+
+    The case never arose before because the length filter always left series of
+    mixed lengths. It appears as soon as a dataset whose survivors are uniform
+    is used — m4-hourly, whose series are all 1008 steps once filtered.
+    """
+    if len(series_list) == 0:
+        # Preserved on purpose: callers detect the empty case and raise
+        # SeriesTooShortError with a helpful message.
+        return np.array([], dtype=object)
+
+    lengths = {np.asarray(s).shape[-1] for s in series_list}
+    if len(lengths) == 1:
+        stacked = np.stack([np.asarray(s) for s in series_list])
+        return stacked.astype(np.float32) if stacked.dtype == object else stacked
+
+    out = np.empty(len(series_list), dtype=object)
+    out[:] = list(series_list)
+    return out
+
+
 class TimeSeriesDataset(Dataset):
     """
     Dataset for time series with sliding windows.
@@ -113,8 +145,7 @@ class TimeSeriesDataset(Dataset):
             logger.warning("Data contains variable-length series")
             min_len = context_length + prediction_length
             self._longest_series_seen = max((len(s) for s in data), default=0)
-            data = [s for s in data if len(s) >= min_len]
-            data = np.array(data, dtype=object)
+            data = _pack_series([s for s in data if len(s) >= min_len])
             logger.info(
                 f"Kept {len(data)} series with length >= {min_len} "
                 f"(longest available: {self._longest_series_seen})"
@@ -128,18 +159,23 @@ class TimeSeriesDataset(Dataset):
         # Filter by minimum length
         if min_series_length is not None:
             if isinstance(data, np.ndarray) and data.dtype == object:
-                data = [s for s in data if len(s) >= min_series_length]
-                data = np.array(data, dtype=object)
+                data = _pack_series([s for s in data if len(s) >= min_series_length])
             elif isinstance(data, np.ndarray):
                 mask = np.array([s.shape[-1] >= min_series_length for s in data])
                 data = data[mask]
             logger.info(f"After length filter: {len(data)} series")
 
         # Convert to array if homogeneous
-        if isinstance(data, np.ndarray) and data.dtype == object:
-            lengths = [s.shape[-1] for s in data]
+        if isinstance(data, np.ndarray) and data.dtype == object and len(data) > 0:
+            lengths = [np.asarray(s).shape[-1] for s in data]
             if len(set(lengths)) == 1:
-                data = np.stack(data)
+                # _pack_series already handles this on the filtered paths; kept
+                # for inputs that arrive uniform without passing a filter.
+                # .astype is essential: np.stack over object elements stays
+                # object-typed (B22).
+                data = np.stack([np.asarray(s) for s in data])
+                if data.dtype == object:
+                    data = data.astype(np.float32)
                 logger.info(f"Converted to dense array: {data.shape}")
 
         self.data = data

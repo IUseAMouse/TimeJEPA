@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-11 — 3 pretrains geo en parallèle (16-8, p32, vicreg) ; G4.5 (baseline sans pretraining) inséré avant LOTSA.
+**Dernière mise à jour :** 2026-08-12 — G4.6 + robustesse : le pretraining améliore le TRANSFERT (-8,7 % de MASE) mais pas l'ajustement au domaine d'aval, où le scratch fait mieux. Prochaine étape : LOTSA.
 
 ---
 
@@ -435,8 +435,71 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
       parfaite entre rolls — borne par le haut, là où la médiane biaisait par le bas.
 - [x] **G3. Couverture empirique** dans l'éval — `couverture X%/80%` à côté du WQL.
       C'est le chiffre qui remplace « les intervalles ont l'air ok » ; viser ~80 %.
-- [ ] **G4. Lancer le round** : pretrain `tiny_geo` (sigreg) → finetune quantile → éval
-      complète avec balayage de contexte. Comparaison en bundle vs patch32+ftall+quantile.
+- [x] **G4. RÉSULTATS DU ROUND (2026-08-12)** — meilleur batch du projet, de loin.
+
+      MASE moyenne (7 datasets communs), vs référence patch32_quantile ctx512 ftall :
+
+      | dataset     | réf   | geo 16/8 | geo vicreg | geo p32 |
+      |-------------|-------|----------|------------|---------|
+      | traffic     | 1.134 | **0.768**| 0.780      | 0.777   |
+      | weather     | 0.997 | 0.967    | 0.967      | **0.960**|
+      | electricity | 1.250 | **1.029**| 1.090      | 1.057   |
+      | ettm2       | 1.334 | 1.231    | **1.225**  | 1.232   |
+      | etth1       | 1.520 | 1.265    | 1.270      | **1.247**|
+      | ettm1       | 1.454 | 1.369    | **1.286**  | 1.315   |
+      | etth2       | 1.864 | 1.722    | 1.667      | **1.528**|
+      | **moyenne** | **1.365** | 1.193 | 1.183      | **1.159**|
+
+      - **-13 à -15 % de MASE moyenne, uniforme** : les 7 datasets s'améliorent, aucun
+        ne régresse. traffic à 0.768 (skill +46 % à h96), 3 datasets sous 1.0.
+        ETTh1 h720 à +39 % de skill chez p32 — le profil par horizon s'inverse
+        (le pari « moins de rolls » paie). WQL suit : traffic 0.386 -> 0.283.
+      - ⚠️ **Deux changements dans le bundle** : géométrie ET fix B20 (l'encodeur se
+        dégèle réellement pour la 1re fois). Non séparables avec ces runs.
+      - **Les 3 arms tiennent en 3 %** (bruit : etth2 h336/h720 = 2-5 fenêtres).
+        => **patch32 n'est pas moins bon et coûte 4x moins cher** : c'est l'arm à
+        porter vers LOTSA. La question du patching est tranchée — le driver est le
+        nombre de cycles dans le contexte, pas la taille de patch.
+        => SIGReg vs VICReg indiscernables en downstream ; garder SIGReg
+        (un seul hyperparamètre). P1.11 est close.
+      - **Restes faibles** : ettm1 toujours -20 à -30 % vs SN (dernier vrai échec) ;
+        sous-couverture chronique etth2 (42-65 % vs 80 %) sur les 3 arms — structurel,
+        pas le rollout, c'est le cas d'usage de la calibration conforme ;
+        exchange h720 et ili inévaluables à ctx 1024 (fenêtre requise > série).
+
+- [x] **G4.1 BALAYAGE DE CONTEXTE (2026-08-12)** — le round a acheté de la ROBUSTESSE,
+      pas un optimum. MASE moyenne (7 datasets communs, arm p32) :
+
+      | ctx        | 512   | 640   | **768**   | 1024  | 1280  |
+      |------------|-------|-------|-----------|-------|-------|
+      | moyenne    | 1.203 | 1.162 | **1.144** | 1.159 | 1.168 |
+
+      - L'optimum est monté de 640 -> 768 (et non 1024 comme anticipé), mais le
+        résultat important est la PLATITUDE : 640-1280 tient en 2 %, 512-1280 en 5 %.
+        Avant le round, la même expérience donnait -33 % sur ettm1 entre longueurs.
+        Sur les gros datasets (traffic/electricity/weather, milliers de fenêtres)
+        chacun a un optimum différent et tous les écarts sont dans le bruit.
+        => La randomisation du contexte tient sa promesse : le modèle accepte
+        n'importe quelle longueur d'historique sans s'effondrer. C'est la garantie
+        qu'il faut pour l'API `model.forecast(y)` (P2.7).
+      - Seule la pénalité à 512 subsiste (+5 %), cohérente avec cycles-dans-le-contexte.
+      - ⚠️ Réserve : le nombre de fenêtres de test change avec le contexte, donc les
+        jeux ne sont pas strictement identiques. etth1/etth2 aux longs horizons
+        (2-6 fenêtres) sont du bruit pur — ne conclure que sur les gros datasets.
+
+      **=> POINT D'OPÉRATION RETENU : ctx 768.** Meilleure moyenne, meilleur bilan
+      head-to-head du balayage (6/8), seule longueur >= 640 où exchange est
+      entièrement évaluable (768+720=1488 < 1517) et où il sort son meilleur score
+      (16.45), et moins cher que 1024 (47 patchs vs 63). Deux premières à 768 :
+      ettm2 devient une victoire (1.182 vs SN 1.250) et etth2 son meilleur niveau (1.419).
+
+      **Échecs structurels restants, insensibles au contexte** : ettm1 (-21 %) et
+      exchange (-8 %). Ce sont les deux cibles à traiter par autre chose que la géométrie.
+
+- [ ] **G4.2 Calibration conforme** (optionnel, quelques lignes, aucun réentraînement) :
+      un facteur d'échelle par dataset ajusté sur un split de validation, pour ramener
+      la couverture à 80 %. Motivé par etth2 (42-65 %) et weather h96 (68-72 %).
+
 - [ ] **G4.5 — BASELINE SANS PRETRAINING** ⚡ *le contrôle du pari central, à faire AVANT LOTSA*
 
       Tout ce qui a été montré jusqu'ici : la recette JEPA *fonctionne*. Jamais montré :
@@ -475,7 +538,69 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
       - juger sur l'éval benchmark (skill/WQL/couverture), pas sur la val_loss ;
       - un jumeau par arm suffit — commencer par celui du meilleur arm geo.
 
-- [ ] **G5. Corpus LOTSA** — *conditionné au succès de G4.*
+- [x] **G4.6 — TRANSFERT VERS DES DONNÉES INÉDITES : RÉUSSI** (2026-08-12) — **−26 % de MASE
+      moyenne, 8/8 datasets** en faveur du pré-entraîné (1.470 vs 1.992). traffic-hourly :
+      R² 0.76 contre 0.095. Le pari central reçoit son premier signal positif ; E8 était un
+      plafond dû à la coïncidence des corpus, pas une absence de valeur. Détail en E11 du
+      registre expérimental.
+      ✅ **Run de robustesse fait (E12)** : à budget généreux, le scratch obtient une MEILLEURE
+      val_loss de finetune (0.1594 vs 0.1807) et reste MOINS BON sur tous les benchmarks.
+      L'ampleur tombe à **−8,7 %**, mais la revendication se précise et devient défendable :
+      **le pretraining améliore le TRANSFERT, pas l'ajustement au domaine d'aval**.
+      Corollaire : la val_loss de finetune est un mauvais critère de sélection.
+      => **LOTSA (G5) devient prioritaire** : c'est le régime où le pretraining paie.
+
+- [x] **G4.6-old — TRANSFERT VERS DES DONNÉES INÉDITES** ⚡ *le vrai test du pari* — **configs
+      prêtes** : `tiny_geo_lowdata` (pré-entraîné) et `tiny_geo_scratch_lowdata` (contrôle),
+      jumelles par héritage.
+      Finetune sur **m4-hourly + nn5-daily**, les deux datasets que le pretrain n'a JAMAIS pu
+      voir (écartés par le filtre de longueur à fenêtre 1280), à ctx 512 / pred 256 (768 pas
+      requis, ils tiennent). ~12 k fenêtres au lieu de 8 M : held-out ET petit régime d'un
+      coup. nn5-daily apporte en plus une fréquence quotidienne quasi absente du corpus.
+      ⚠️ Vérifier d'abord `grep -i SKIPPING <log_pretrain_tiny_geo>` : les deux doivent y être.
+
+      **Pourquoi G4.5 seul ne suffit pas.** Le corpus de pretrain et celui de finetune
+      sont les MÊMES 24 datasets. Or la proposition de valeur du SSL est d'apprendre de
+      données sur lesquelles on ne peut pas superviser : quand pretrain == finetune, le
+      pretraining n'est plus qu'une initialisation, le modèle supervisé voit exactement
+      les mêmes octets, et l'égalité est le résultat PAR DÉFAUT — pas une réfutation.
+
+      Le protocole SSL standard teste donc le **régime pauvre en données**, là où la
+      représentation pré-entraînée porte de l'information que le supervisé ne peut pas
+      reconstruire à partir de trois fois rien :
+
+      ```bash
+      # pretrained, finetune sur UN SEUL dataset
+      # NB: tiny_geo (16/8), PAS tiny_geo_p32 — tiny_geo_scratch hérite de tiny_geo,
+      # donc l'arm pré-entraîné doit être 16/8 lui aussi, sinon la comparaison
+      # mélange « pretraining » et « taille de patch ».
+      python scripts/train.py --config-name tiny_geo training.mode=finetune \
+        training.finetune_mode=full_finetune \
+        'data.datasets_finetune=[electricity-hourly]' \
+        model.name=timejepa_geo_lowdata \
+        '+training.pretrained_encoder_path="<ckpt_pretrain>"' \
+        wandb.run_name=lowdata-pretrained
+
+      # scratch, strictement identique moins les poids
+      python scripts/train.py --config-name tiny_geo_scratch \
+        'data.datasets_finetune=[electricity-hourly]' \
+        model.name=timejepa_scratch_lowdata \
+        wandb.run_name=lowdata-scratch
+      ```
+      (variante : garder les 24 datasets mais monter `data.stride` pour ne voir que
+      ~10 % des fenêtres — même idée, distribution préservée.)
+
+      **Lecture :**
+      - pretrained gagne nettement en petit régime => le pari est VALIDÉ ; l'égalité en
+        gros régime signifie seulement « le corpus de finetune suffisait ». LOTSA devient
+        la suite évidente, et plus urgente.
+      - égalité même en petit régime => vrai signal négatif sur l'objectif de pretraining.
+
+      ⚠️ Ce que G4.5 ne teste PAS, et qu'il ne faut pas lui faire dire : l'arm scratch
+      utilise la MÊME architecture (encodeur + prédicteur + décodeur). Une égalité ne dit
+      donc rien sur « encodeur vs decoder-only » — les deux bras sont le même encodeur.
+
+- [ ] **G5. Corpus LOTSA** — *le premier régime où pretrain >> finetune, donc le test décisif du pari.*
       [LOTSA](https://huggingface.co/datasets/Salesforce/lotsa_data) (corpus de pretrain de
       Moirai) : ~27 Md d'observations, public sur HuggingFace, **toutes fréquences** — règle
       aussi le biais sub-quotidien du corpus actuel. Travail : un convertisseur
@@ -490,7 +615,6 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
 
 ## P2 — Viser le SOTA
 
-- [ ] **P2.1** Tête quantile (pinball, 9 quantiles, incréments softplus anti-croisement)
 - [x] **P2.1** Tête quantile non paramétrique, **option B** (décodeur alimenté par le contexte)
       — `configs/model/tiny_patch32_quantile.yaml`, **finetune seul, aucun pretrain**.
       Grille GIFT-Eval (9 niveaux), pinball, monotonie par construction (médiane +
@@ -527,7 +651,7 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
       Alternative paramétrique à P2.1, moins prioritaire : impose une forme unimodale
       et symétrique, et n'optimise plus directement la métrique de classement.
 - [ ] **P2.3** Décodeur flatten-head PatchTST-style (remplace l'overlap-add, B14)
-- [ ] **P2.4** Rollout correct (B10) : tout dans l'espace normalisé, `revin.freeze()` implémenté
+- [x] **P2.4** Rollout correct (B10) : tout dans l'espace normalisé, `revin.freeze()` implémenté
 - [ ] **P2.5** Données synthétiques : KernelSynth-like (compositions de noyaux GP) + TSMixup
 - [ ] **P2.6** Harness GIFT-Eval complet (23 datasets, 97 configs)
 - [ ] **P2.7** Packaging HF : `PyTorchModelHubMixin` + safetensors,
