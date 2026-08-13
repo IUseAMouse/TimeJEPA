@@ -1,0 +1,61 @@
+# @package _global_
+#
+# G5 — FINETUNE sur MONASH d'un encodeur pré-entraîné sur LOTSA.
+#      **ARM ALTERNATIF — voir lotsa_tiny_zeroshot pour le protocole principal.**
+#
+# ⚠️ CONTAMINATION CONNUE. Le corpus Monash contient les benchmarks d'évaluation :
+# `electricity-hourly` EST le Nixtla `electricity` (5260/26304 = les derniers
+# 20 %), `traffic-hourly` EST `traffic` (3508/17544). Le découpage train/val/test
+# est séquentiel sur des indices groupés par série, donc ce finetune voit ces
+# séries sur toute leur durée, AVEC cibles supervisées. Les chiffres traffic et
+# electricity produits par cet arm ne sont donc PAS publiables — il sert de borne
+# haute (« ce que donnerait une adaptation au domaine »), pas de résultat.
+#
+#   python scripts/train.py --config-name lotsa_tiny_finetune \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>"' \
+#       wandb.run_name=lotsa-quantile
+#
+#   python scripts/evaluate.py --config-name lotsa_tiny_finetune \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_ft/pretrain_False/<ckpt>
+#
+# Le finetune revient au corpus MONASH, pas à LOTSA
+# -------------------------------------------------
+# C'est le schéma des modèles de fondation (Moirai, Chronos) : pré-entraîner
+# large, adapter sur le domaine. C'est aussi ce que E12 impose comme lecture —
+# le pretraining paie en TRANSFERT, donc il faut que le domaine d'aval soit
+# distinct du corpus de pretrain pour que le gain soit visible. Finetuner sur
+# LOTSA lui-même reproduirait exactement la configuration d'E8, où l'égalité
+# était le résultat par défaut.
+#
+# La comparaison qui compte
+# -------------------------
+# Contre `tiny_geo` finetuné à l'identique (même géométrie, même corpus d'aval,
+# même mode) : la SEULE variable est le corpus de pretrain, Monash vs LOTSA.
+# C'est la mesure directe de « scaler le pretraining paie-t-il ? ».
+#
+# À évaluer aussi en régime pauvre, avec `tiny_geo_lowdata` : E12 y a mesuré
+# −8,7 % pour le pretrain Monash. Si LOTSA creuse cet écart, la prédiction de
+# G5 est confirmée ; s'il ne le bouge pas, le plafond n'est pas dans les données
+# et c'est une information au moins aussi utile.
+defaults:
+  - tiny_geo
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_ft"
+
+training:
+  mode: "finetune"
+  # Mode identique à celui des arms d'E11/E12, pour que les chiffres se comparent.
+  finetune_mode: "full_finetune"
+
+# data hérite entièrement de tiny_geo : corpus Monash, 24 datasets, pas de mmap.
+# Rien à redéclarer — et surtout pas data_dir, qui pointerait sinon sur LOTSA.
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "finetune"

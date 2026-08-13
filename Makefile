@@ -37,6 +37,21 @@ download-all: ## Download all datasets
 	python scripts/download_data.py --dataset all -v
 	@echo "✓ Download complete!"
 
+lotsa-list: ## Inventory LOTSA subsets and show what would be EXCLUDED (writes nothing)
+	@echo "🔎 LOTSA inventory — review the exclusion list before converting"
+	python scripts/prepare_lotsa.py --list
+
+lotsa-download: ## Convert LOTSA to the TimeJEPA format (usage: make lotsa-download [CHUNKS=30000])
+	@echo "📥 Converting LOTSA (this is long — streaming, constant RAM)"
+	@echo "   ⚠️  ~1 GB of disk per subset at CHUNKS=30000; ~6.5 GB at 200000."
+	@echo "   ⚠️  Re-read the EXCLUDED list it prints: pretraining on an eval"
+	@echo "      benchmark would invalidate every number in the project."
+	python scripts/prepare_lotsa.py \
+		--out data/processed/lotsa \
+		--max-chunks-per-subset $(or $(CHUNKS),30000) \
+		--resume
+	@echo "✓ LOTSA ready — pretrain with: make train CONFIG=lotsa_tiny"
+
 count-data: ## Count total datapoints in processed datasets
 	@echo "📊 Counting datapoints..."
 	python scripts/compute_dataset_stats.py --data-dir data

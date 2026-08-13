@@ -8,10 +8,12 @@ rattachée à une mesure, et ce qui n'a PAS été mesuré est signalé comme tel
 de l'architecture (`docs/TECHNICAL_OVERVIEW.md`). Les justifications détaillées de chaque
 changement de code vivent dans les messages de commit de la branche `sota-roadmap`.
 
-**Statut au 2026-08-12 (soir).** Le baseline sans pretraining (E8) est tombé : **égalité**
-avec l'arm pré-entraîné. Le pari central n'est pas réfuté pour autant — le régime testé ne
-peut pas le réfuter (voir E8) — mais il n'est pas soutenu non plus. L'expérience discriminante
-(régime pauvre en données) est la prochaine.
+**Statut au 2026-08-13.** Le pari central est tranché, modestement : le pretraining
+n'améliore pas l'ajustement au domaine d'aval mais améliore le **transfert** hors de ce
+domaine (E11 puis E12, −8,7 % de MASE). En construisant l'ingestion de LOTSA, une réserve de
+validité lourde est apparue — **le corpus d'entraînement contient deux des benchmarks**
+(§5) — et le protocole bascule en conséquence : entraînement intégral sur LOTSA, évaluation
+zero-shot. Le pretrain LOTSA (E13) n'a pas encore tourné.
 
 ---
 
@@ -518,6 +520,54 @@ en faveur du scratch), l'ampleur est modeste. À présenter ainsi.
 
 ---
 
+### E13 — Ingestion de LOTSA et protocole zero-shot (2026-08-13) — *mis en place, non mesuré*
+
+**Motivation, prédiction falsifiable.** E12 établit que le pretraining paie en **transfert**.
+LOTSA (corpus de Moirai, ~27 Md d'observations, toutes fréquences) est donc le prolongement
+direct, avec une prédiction testable : si le gain est bien un gain de transfert, un corpus
+~1000× plus grand et réellement diversifié doit le creuser. S'il ne bouge pas, le plafond
+n'est pas dans les données. E10 donne la seconde raison — le corpus actuel n'est diversifié
+qu'en apparence (48,7 % du batch pour deux sources haute fréquence).
+
+**Conversion.** Sortie **dense float32 exclusivement**, par segmentation en morceaux de
+longueur fixe (8192) : les tableaux `object` cassent le copy-on-write de `fork` (B19) et
+seraient rédhibitoires à cette échelle. Corollaire, les fichiers sont memmappables
+(`data.use_mmap`, absent de toutes les autres configs donc sans effet sur elles). Coût
+assumé : une fenêtre ne peut pas chevaucher deux morceaux, soit ~15 % des positions perdues
+aux frontières. Plafond par sous-ensemble contre le déséquilibre d'E10.
+
+**Exclusions, vérifiées sur la sortie réelle** (`--list`, 2026-08-13) : **47 sous-ensembles
+exclus, 123 retenus**. Les motifs couvrent les benchmarks Nixtla (7) et les **28 répertoires
+GIFT-Eval**, ces derniers confrontés au dépôt officiel
+(`huggingface.co/api/datasets/Salesforce/GiftEval/tree/main`) plutôt qu'écrits de mémoire.
+
+**Deux décisions prises en relisant cette sortie**, ce qui est la raison d'être de l'étape :
+- `beijing_air_quality` et `china_air_quality` **exclus** : `kdd_cup_2018` (GIFT-Eval) EST la
+  qualité de l'air à Pékin 2017-2018. Quasi-doublon d'un dataset d'évaluation.
+- La famille **PEMS** (`PEMS03/04/07/08`, `PEMS_BAY`, `LOS_LOOP`, `largest_*`) **conservée**,
+  et à déclarer explicitement dans tout article : elle partage le réseau routier californien
+  avec le benchmark `traffic` mais aucun capteur, aucune année ni fréquence (PEMS-SF = 862
+  capteurs horaires 2008-2009 ; les autres = 5 minutes, 2016-2021). Utiliser des données du
+  même domaine issues d'autres sources est la pratique standard, mais traffic étant le
+  résultat vedette, mieux vaut l'écrire que le laisser trouver.
+
+**Protocole retenu.** Pretrain ET finetune sur LOTSA, évaluation zero-shot. L'architecture
+impose un finetune (le décodeur est aléatoire après le pretrain), donc le faire sur Monash
+rouvrirait la contamination du §5 — avec cibles supervisées cette fois. Entraîner les deux
+étapes sur LOTSA rend les corpus disjoints **par construction**.
+
+⚠️ **Limite connue** : la section « Local datasets » de l'évaluation porte sur Monash, dont
+sept entrées ont un équivalent RETENU dans LOTSA (london-smart-meters, bitcoin,
+wind-farms-minutely, rideshare, fred-md, sunspot-daily, melbourne-pedestrian-count). Ces
+lignes sont de l'**in-domaine**, pas du zero-shot. La section Nixtla, elle, est intégralement
+propre — c'est celle qui porte les chiffres publiables.
+
+**Validé de bout en bout, sans résultat d'entraînement** : `--list` tourne contre le Hub,
+la conversion d'`era5_1989` produit un `(1000, 8192)` float32 fini et memmappable.
+**Aucun chiffre de performance à ce stade.**
+
+---
+
 ## 3. Ce qui est établi
 
 Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
@@ -552,7 +602,9 @@ Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
 À ne pas revendiquer sans mesure supplémentaire.
 
 - **L'explication du fait que traffic porte l'essentiel du gain de transfert** (−26 % contre
-  −0,3 % à −5 % ailleurs, E12). Non élucidé.
+  −0,3 % à −5 % ailleurs, E12). Non élucidé — et désormais suspect : `traffic-hourly` est
+  dans le corpus d'entraînement ET est le benchmark `traffic` (voir §5, contamination).
+- **Tout chiffre traffic ou electricity**, jusqu'à un run sur corpus disjoint (§5).
 - **La généralité du résultat E12** : une seule graine, un seul couple de datasets d'aval
   (dominé par m4-hourly), un seul modèle tiny. La direction est systématique sur 6 datasets
   d'évaluation, l'ampleur est modeste (−8,7 %).
@@ -585,9 +637,73 @@ certaines dates ne sont pas comparables. Chaque entrée a son commit sur `sota-r
 | **B5** | `augmentation_config` jamais transmis au DataModule | augmentations inertes sur tous les runs antérieurs |
 | **B20** | `gradual_unfreeze` : l'optimiseur filtrait sur `requires_grad` à sa création (epoch 0, tout gelé), donc le dégel ultérieur ne mettait à jour **aucun** poids enregistré. Mesuré : 0/23 paramètres du prédicteur, 0/18 de l'encodeur dans l'optimiseur | **tous** les résultats historiques en mode gradual sont des probes à encodeur gelé — y compris les meilleurs checkpoints du 2ᵉ batch. Lecture : ils **sous-estiment** les représentations, aucun gain n'ayant jamais pu venir d'une adaptation de l'encodeur |
 | **B17** | `SeriesTooShortError` non gérée : une série trop courte tuait un run de 23 datasets | robustesse, pas justesse |
+| **B22** | `np.array(liste, dtype=object)` renvoie un tableau object **2-D** quand toutes les séries retenues ont la même longueur, et `np.stack` préserve ce dtype — la valeur atteint `torch.from_numpy`, qui refuse les tableaux object | tout dataset dont les survivants du filtre de longueur sont **uniformes**. Jamais déclenché avant parce que le filtre laissait toujours des longueurs mêlées ; apparu sur m4-hourly (1008 pas partout), c'est-à-dire **le dataset held-out de G4.6** — celui qui portait l'expérience décisive |
 | **B21** | `auto_insert_metric_name` présent dans la config mais jamais transmis à `ModelCheckpoint` → noms de fichiers doublés contenant `=`, incompatibles avec la grammaire d'override Hydra | ergonomie ; a causé au moins un échec de commande |
 | — | **Incident de configuration** : un finetune du round géométrie a tourné avec un décodeur ponctuel (défaut hérité `mlp`) sans qu'aucun signal ne l'indique. Détecté par le nombre de clés chargées (110 au lieu de 118) et l'absence du suffixe de couverture | une évaluation dont les colonnes « WQL » étaient en fait des ND ponctuels |
 | — | **Incident de configuration** : un finetune a tourné sur la liste curatée de 8 datasets au lieu des 24, contredisant E3 | conservé comme arm d'ablation ft8 |
+
+**⚠️ CONTAMINATION DU CORPUS PAR LES BENCHMARKS — la réserve la plus lourde du projet
+(trouvée le 2026-08-13 en construisant la liste d'exclusion de LOTSA).**
+
+Le corpus d'entraînement contient deux des huit benchmarks d'évaluation, sur les mêmes
+séries et la même fenêtre temporelle :
+
+| corpus (pretrain ET finetune) | benchmark | recoupement |
+|---|---|---|
+| `electricity-hourly` (321 séries × 26 304) | `electricity` (321 × 5 260) | 5 260/26 304 = les derniers 20 % |
+| `traffic-hourly` (862 × 17 544) | `traffic` (862 × 3 508) | 3 508/17 544 = les derniers 20 % |
+
+Le découpage train/val/test est `range(0, train_len)` sur des indices **groupés par série** :
+l'entraînement prend donc les ~96 premiers pour cent des SÉRIES, **sur toute leur durée**,
+période d'évaluation comprise. Le modèle a vu ces valeurs cibles au pretrain (auto-supervisé)
+ET au finetune (supervisé).
+
+**Portée.** Les chiffres **traffic et electricity ne sont pas publiables** en l'état. C'est
+d'autant plus gênant que ce sont deux des trois datasets où le modèle brille (traffic MASE
+0,768, +46 % de skill ; electricity 1,029) et que **traffic porte à lui seul l'essentiel du
+gain de transfert d'E12** (−26 % contre −0,3 % à −5 % ailleurs) : on ne peut pas exclure que
+ce gain soit en partie de la mémorisation.
+
+**Ce qui n'est PAS touché.** ettm1, ettm2, etth1, etth2, exchange et weather paraissent
+propres (weather Monash a une forme différente du weather Nixtla — à confirmer). Et les
+conclusions **géométriques** (E5, E7, E9) sont des comparaisons appariées où la contamination
+agit des deux côtés : elle ne peut pas créer un écart entre arms.
+
+**Exclusions appliquées à LOTSA.** 7 motifs pour les benchmarks Nixtla, et 23 pour GIFT-Eval
+**vérifiés contre le dépôt officiel** le 2026-08-13
+(`huggingface.co/api/datasets/Salesforce/GiftEval/tree/main`) : les 28 répertoires y sont
+couverts, avec un test de non-régression sur les noms verbatim. GIFT-Eval autorise en
+principe l'entraînement sur son propre split de train ; exclure le dataset entier est donc
+plus conservateur que le minimum requis — choix assumé, faute de pouvoir aligner nos
+découpages sur les leurs.
+
+**Vérification de la conversion (2026-08-13).** `prepare_lotsa.py --list` exécuté pour de
+vrai : **45 sous-ensembles exclus, ~80 retenus**. L'exclusion attrape bien ett1/ett2,
+electricity_15min, traffic_hourly, traffic_weekly, Q-TRAFFIC, weather, oikolab_weather,
+solar_power, m1/m3/m4, nn5, LOOP_SEATTLE, M_DENSE, SZ_TAXI, taxi_30min, car_parts,
+hierarchical_sales, kdd_cup_2018, temperature_rain, restaurant, saugeenday, hospital,
+covid_*, us_births, tourism_*, wiki-rolling_nips.
+
+**Limite trouvée à cette occasion.** La section « Local datasets » de `evaluate.py` porte sur
+le corpus Monash, dont **sept entrées ont un équivalent RETENU dans LOTSA** :
+london-smart-meters, bitcoin, wind-farms-minutely, rideshare, fred-md, sunspot-daily,
+melbourne-pedestrian-count. Ces lignes sont donc de l'in-domaine et **ne doivent pas être
+présentées comme du zero-shot**. La section Nixtla, elle, est intégralement propre — c'est
+celle qui porte les chiffres publiables. Documenté dans `lotsa_tiny_eval.yaml` plutôt que
+corrigé par une liste curée : maintenir une correspondance Monash↔LOTSA exhaustive (alias
+compris) est précisément le genre de liste dont une omission produirait silencieusement une
+revendication fausse.
+
+**Correction retenue.** Ne pas purger le corpus Monash au cas par cas — ce serait une liste à
+maintenir — mais changer de protocole : pretrain ET finetune sur LOTSA (dont la liste
+d'exclusion couvre Nixtla et GIFT-Eval), évaluation zero-shot sur Monash et Nixtla. Corpus
+d'entraînement et corpus d'évaluation deviennent alors disjoints **par construction**,
+vérifiable dans le log de conversion. Voir `configs/model/lotsa_tiny_zeroshot.yaml`.
+
+**Note honnête sur la découverte.** Le défaut est présent depuis le début du projet et n'a
+été vu qu'en écrivant la discipline d'exclusion pour un AUTRE corpus. C'est un argument pour
+énoncer explicitement la provenance des données dans tout article : la question « le corpus
+d'entraînement recoupe-t-il l'évaluation ? » ne s'était jamais posée à voix haute.
 
 **Leçon transversale, qui mérite une phrase dans un article :** la majorité de ces défauts
 étaient **silencieux** — formes de tenseurs valides, pertes qui descendent, aucun avertissement.
@@ -607,6 +723,11 @@ Configurations déclaratives, une variable chacune (aucun override nécessaire) 
 | `tiny_geo_p32` | patch 32/16 |
 | `tiny_geo_vicreg` | perte VICReg |
 | `tiny_geo_scratch` | aucun pretraining (G4.5) |
+| `tiny_geo_lowdata` / `tiny_geo_scratch_lowdata` | transfert vers données inédites (G4.6, E11/E12) — jumelles par héritage |
+| `lotsa_tiny` | pretrain sur LOTSA (G5) |
+| `lotsa_tiny_zeroshot` | finetune sur LOTSA — **protocole principal**, évaluation zero-shot |
+| `lotsa_tiny_finetune` | finetune sur Monash — borne haute, **contaminée**, non publiable |
+| `lotsa_tiny_eval` | géométrie d'entraînement + données d'évaluation |
 
 ```bash
 # pretrain
@@ -788,6 +909,14 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-13 (suite)** — ajout de **E13** : ingestion LOTSA et protocole zero-shot mis en
+  place et validés de bout en bout (47 exclus / 123 retenus, conversion vérifiée), sans
+  résultat d'entraînement. B22 ajouté au tableau du §5, §6 complété des configs LOTSA.
+- **2026-08-13** — §5 : découverte de la **contamination du corpus par les benchmarks**
+  (electricity-hourly et traffic-hourly SONT les benchmarks Nixtla correspondants), trouvée
+  en construisant la liste d'exclusion de LOTSA. §4 complété : les chiffres traffic et
+  electricity sont en attente d'un run sur corpus disjoint. Correction adoptée : protocole
+  zero-shot, entraînement intégral sur LOTSA.
 - **2026-08-12 (nuit, fin)** — ajout de **E12**, run de robustesse : le baseline généreux
   obtient une MEILLEURE val_loss de finetune et reste MOINS BON sur tous les benchmarks.
   L'ampleur tombe de −26 % à −8,7 %, mais la revendication se précise et devient défendable :

@@ -103,6 +103,7 @@ class TimeSeriesDataset(Dataset):
         augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]] = None,
         multi_resolution_factors: Optional[List[int]] = None,
         p_multi_resolution: float = 0.0,
+        use_mmap: bool = False,
     ):
         """
         Args:
@@ -134,7 +135,29 @@ class TimeSeriesDataset(Dataset):
 
         # Load data
         logger.info(f"Loading data from {self.data_path}")
-        data = np.load(self.data_path, allow_pickle=True)
+        # use_mmap: for the LOTSA-scale corpora, files run to several GB and must
+        # NOT be read into RAM. A memmapped DENSE array also keeps fork's
+        # copy-on-write intact across dataloader workers, which object arrays
+        # famously do not (B19: per-element refcounts turned 6.5 GB into ~32 GB
+        # across 5 processes). Default False, so every existing config loads
+        # exactly as before.
+        if use_mmap:
+            try:
+                data = np.load(self.data_path, mmap_mode="r")
+            except ValueError as exc:
+                # numpy refuses object arrays with "Array can't be memory-mapped:
+                # Python objects in dtype." — accurate but it does not say what
+                # to do about it.
+                raise ValueError(
+                    f"use_mmap=True requires a dense array, but {self.data_path} "
+                    f"holds an object (ragged) array. Convert it with "
+                    f"scripts/prepare_lotsa.py, which segments series into "
+                    f"fixed-length chunks precisely so the result is dense and "
+                    f"memmappable. Original error: {exc}"
+                ) from exc
+            logger.info(f"  memmap enabled: {data.shape} {data.dtype} (RAM non chargée)")
+        else:
+            data = np.load(self.data_path, allow_pickle=True)
 
         # Handle object arrays (variable length series)
         # `_longest_series_seen` is captured BEFORE filtering: once the short

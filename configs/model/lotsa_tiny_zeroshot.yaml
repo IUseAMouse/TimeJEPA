@@ -1,0 +1,65 @@
+# @package _global_
+#
+# G5 — FINETUNE SUR LOTSA, pour une évaluation ZERO-SHOT. **Le protocole principal.**
+#
+#   python scripts/train.py --config-name lotsa_tiny_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>"' \
+#       wandb.run_name=lotsa-zeroshot
+#
+#   # évaluation : Monash et Nixtla n'ont JAMAIS été vus, ni au pretrain ni ici
+#   python scripts/evaluate.py --config-name tiny_geo \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_zs/pretrain_False/<ckpt>
+#
+# Pourquoi finetuner sur LOTSA et pas sur Monash
+# ----------------------------------------------
+# L'architecture impose un finetune : après le pretrain JEPA, le décodeur est
+# encore aléatoire. On ne peut donc pas être zero-shot « gratuitement » comme
+# Chronos ou Moirai, entraînés de bout en bout à prévoir.
+#
+# Mais finetuner sur Monash rouvrirait la contamination, et en pire — avec des
+# cibles SUPERVISÉES sur les séries et la fenêtre temporelle de l'évaluation :
+# `electricity-hourly` EST le benchmark Nixtla `electricity` (5260/26304 = les
+# derniers 20 %), `traffic-hourly` EST `traffic` (3508/17544). Le découpage
+# train/val/test étant séquentiel sur des indices groupés par série,
+# l'entraînement couvre ces séries sur toute leur durée.
+#
+# Entraîner les DEUX étapes sur LOTSA rend donc corpus d'entraînement et corpus
+# d'évaluation disjoints **par construction**, vérifiable dans le log de la
+# conversion. C'est le protocole de la littérature, et la seule façon de produire
+# des chiffres comparables à Chronos / Moirai / TimesFM / Toto.
+#
+# À quoi s'attendre, pour ne pas mal le lire
+# ------------------------------------------
+# Les chiffres absolus vont BAISSER par rapport aux runs Monash, probablement
+# nettement sur traffic et electricity. **Ce n'est pas une régression** : c'est la
+# disparition d'un artefact de contamination. S'y ajoute un vrai coût, celui de
+# renoncer à l'adaptation au domaine (E3 : +12 points de skill pour un finetune
+# divers). Les deux effets se cumulent et ne se séparent pas dans ce run.
+#
+# L'arm alternatif `lotsa_tiny_finetune` adapte au domaine Monash : meilleurs
+# chiffres absolus, mais contaminés sur electricity et traffic, donc non
+# publiables tels quels. Il reste utile comme borne haute.
+defaults:
+  - lotsa_tiny
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_zs"
+
+training:
+  mode: "finetune"
+  # Même mode que les arms d'E11/E12, pour que les chiffres se comparent.
+  finetune_mode: "full_finetune"
+
+data:
+  # null => glob du répertoire LOTSA, exactement comme le pretrain.
+  # C'est la ligne qui fait tout : le décodeur ne voit que du LOTSA.
+  datasets_finetune: null
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "zeroshot"

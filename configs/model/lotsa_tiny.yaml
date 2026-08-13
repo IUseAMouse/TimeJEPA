@@ -1,0 +1,82 @@
+# @package _global_
+#
+# G5 — PRETRAIN SUR LOTSA. Géométrie identique à tiny_geo, corpus remplacé.
+#
+#   # 1. conversion (une fois) — relire la liste des EXCLUS qu'il imprime
+#   python scripts/prepare_lotsa.py --list
+#   python scripts/prepare_lotsa.py --out data/processed/lotsa
+#
+#   # 2. pretrain
+#   python scripts/train.py --config-name lotsa_tiny wandb.run_name=lotsa-pretrain
+#
+#   # 3. finetune — sur le corpus Monash habituel, PAS sur LOTSA
+#   python scripts/train.py --config-name lotsa_tiny_finetune \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>
+#
+# Pourquoi LOTSA, et pourquoi maintenant
+# --------------------------------------
+# E12 a établi que le pretraining améliore le TRANSFERT hors du domaine d'aval
+# (−8,7 % de MASE), pas l'ajustement à ce domaine — où le scratch fait mieux.
+# LOTSA est donc l'expérience qui prolonge directement ce résultat, avec une
+# prédiction falsifiable : si le gain est bien un gain de transfert, un corpus
+# ~1000x plus grand ET réellement diversifié doit le creuser. S'il ne bouge pas,
+# le plafond n'est pas dans les données.
+#
+# E10 donne la seconde raison : le corpus actuel n'est diversifié qu'en apparence
+# — wind-farms-minutely et london-smart-meters pèsent 48,7 % du batch, tous deux
+# à très haute fréquence. LOTSA couvre toutes les fréquences, et la conversion
+# plafonne chaque sous-ensemble pour ne pas reproduire ce déséquilibre.
+#
+# Ce qui change par rapport à tiny_geo, et rien d'autre
+# ----------------------------------------------------
+# 1. `data.data_dir` pointe sur le corpus converti.
+# 2. `data.datasets: null` => tous les `.npy` du répertoire (dataset_pattern).
+# 3. `data.use_mmap: true` => fichiers lus sans passer par la RAM. Indispensable :
+#    les fichiers font des Go. Ce drapeau est ABSENT de toutes les autres configs,
+#    donc leur comportement est inchangé au bit près.
+# 4. `datasets_finetune` reste le corpus Monash : on pré-entraîne sur LOTSA et on
+#    finetune sur les données du domaine, comme Moirai/Chronos. Voir
+#    lotsa_tiny_finetune.
+# 5. Multi-résolution désactivée : LOTSA couvre déjà nativement les fréquences,
+#    la décimation synthétique ferait double emploi et coûte des fenêtres.
+#
+# ⚠️ Avant de lancer — contamination de l'évaluation
+# --------------------------------------------------
+# LOTSA CONTIENT ETT, electricity, traffic, weather. `prepare_lotsa.py` les
+# exclut par sous-chaîne et imprime la liste : **la relire**. Un pretrain sur un
+# benchmark d'évaluation invaliderait tous les chiffres du projet.
+defaults:
+  - tiny_geo
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny"
+
+data:
+  data_dir: "data/processed/lotsa"
+  # null => prend tous les .npy du répertoire, donc pas de liste à maintenir
+  # au fil des versions de LOTSA.
+  datasets: null
+  dataset_pattern: "*.npy"
+  use_mmap: true
+
+  # Le plafond par sous-ensemble est appliqué à la CONVERSION
+  # (--max-chunks-per-subset) ; la température reste le second garde-fou.
+  sampling_temperature: 0.5
+
+  # Les morceaux LOTSA font 8192 pas : un stride de 8 produirait ~900 fenêtres
+  # par morceau, soit un facteur de redondance élevé pour un corpus déjà énorme.
+  # 64 garde ~110 fenêtres par morceau, largement assez pour la diversité.
+  stride: 64
+
+  # Multi-résolution off : LOTSA apporte les fréquences en nature.
+  multi_resolution_factors: [1]
+  p_multi_resolution: 0.0
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "pretrain"

@@ -27,7 +27,12 @@ dependencies = [
     "pytest>=9.0.0",
     "hydra-core>=1.3.0",
     "wandb>=0.22.0",
-    "datasetsforecast==1.0.0"          
+    "datasetsforecast==1.0.0",
+    # Corpus LOTSA (scripts/prepare_lotsa.py) : lecture en streaming depuis
+    # HuggingFace. Dépendances de base et non optionnelles — le coût d'install
+    # ne justifie pas la complexité d'un import conditionnel.
+    "datasets>=3.0.0",
+    "huggingface-hub>=0.26.0",
 ]
 
 [project.optional-dependencies]

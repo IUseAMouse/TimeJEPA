@@ -273,6 +273,7 @@ class MonashDataModule(pl.LightningDataModule):
         augmentation_config: Optional[Dict[str, Any]] = None,
         multi_resolution_factors: Optional[List[int]] = None,
         p_multi_resolution: float = 0.0,
+        use_mmap: bool = False,
         seed: int = 42
     ):
         """
@@ -313,6 +314,8 @@ class MonashDataModule(pl.LightningDataModule):
         self.augmentation_config = augmentation_config
         self.multi_resolution_factors = multi_resolution_factors
         self.p_multi_resolution = p_multi_resolution
+        # LOTSA-scale corpora only; False keeps every existing config identical.
+        self.use_mmap = bool(use_mmap)
         self.seed = seed
         
         self.normalizer: Optional[Normalizer] = None
@@ -357,6 +360,7 @@ class MonashDataModule(pl.LightningDataModule):
                 augmentations=self.augmentation_config,
                 multi_resolution_factors=self.multi_resolution_factors,
                 p_multi_resolution=self.p_multi_resolution,
+                use_mmap=self.use_mmap,
             )
             
             self.normalizer = self._full_dataset.get_normalizer()
@@ -552,6 +556,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         augmentation_config: Optional[Dict[str, Any]] = None,
         multi_resolution_factors: Optional[List[int]] = None,
         p_multi_resolution: float = 0.0,
+        use_mmap: bool = False,
         dataset_overrides: Optional[Dict[str, Any]] = None,
         seed: int = 42
     ):
@@ -601,6 +606,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.augmentation_config = augmentation_config
         self.multi_resolution_factors = multi_resolution_factors
         self.p_multi_resolution = p_multi_resolution
+        # LOTSA-scale corpora only; False keeps every existing config identical.
+        self.use_mmap = bool(use_mmap)
         self.dataset_overrides = dataset_overrides or {}
         self.seed = seed
         
@@ -701,6 +708,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     augmentation_config=overrides.get('augmentation_config', self.augmentation_config),
                     multi_resolution_factors=self.multi_resolution_factors,
                     p_multi_resolution=self.p_multi_resolution,
+                    use_mmap=self.use_mmap,
                     seed=self.seed
                 )
                 

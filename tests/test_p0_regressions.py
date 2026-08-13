@@ -453,6 +453,181 @@ def test_multidataset_raises_when_everything_is_skipped(tmp_path):
 
 
 # =============================================================================
+# G5 — LOTSA integration must be purely additive
+# =============================================================================
+
+def test_lotsa_segmentation_produces_dense_chunks():
+    """
+    The corpus MUST convert to dense arrays only: object arrays break fork's
+    copy-on-write (B19) and would be fatal at LOTSA scale.
+    """
+    import numpy as np
+    from timejepa.data.lotsa import segment_series, iter_dense_chunks
+
+    # long series -> exact chunks, remainder dropped
+    chunks = segment_series(np.arange(20_000.0), chunk_length=8192, min_length=1280)
+    assert len(chunks) == 2
+    assert all(c.shape == (8192,) for c in chunks)
+    assert all(c.dtype == np.float32 for c in chunks)
+
+    # too short -> nothing
+    assert segment_series(np.arange(500.0), 8192, 1280) == []
+
+    # a stream of mixed lengths yields only exact-length chunks
+    stream = [np.arange(20_000.0), np.arange(900.0), np.arange(9000.0)]
+    out = list(iter_dense_chunks(stream, chunk_length=8192, min_length=1280))
+    assert all(c.shape == (8192,) for c in out)
+    assert np.stack(out).dtype != object
+
+
+def test_lotsa_drops_non_finite_chunks():
+    """LOTSA has gappy series; a NaN poisons RevIN and the loss."""
+    import numpy as np
+    from timejepa.data.lotsa import iter_dense_chunks
+
+    good = np.arange(4096.0)
+    bad = np.arange(4096.0).copy()
+    bad[10] = np.nan
+    out = list(iter_dense_chunks([bad, good], chunk_length=4096, min_length=1280))
+    assert len(out) == 1
+    assert np.isfinite(out[0]).all()
+
+
+def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
+    """
+    A subset missed here is a benchmark seen during pretraining, and a zero-shot
+    claim that is not one. The Monash corpus has exactly that defect
+    (electricity-hourly IS the Nixtla electricity benchmark), which the LOTSA
+    protocol avoids by construction.
+    """
+    from timejepa.data.lotsa import (
+        is_eval_overlap, NIXTLA_OVERLAP_PATTERNS, GIFT_EVAL_OVERLAP_PATTERNS,
+        EVAL_OVERLAP_PATTERNS,
+    )
+
+    nixtla = ["ett_h1", "ETTm2", "electricity_15min", "traffic_hourly",
+              "weather", "exchange_rate", "illness"]
+    # The 28 directories of the official GIFT-Eval repository, verbatim, read
+    # from https://huggingface.co/api/datasets/Salesforce/GiftEval/tree/main
+    # on 2026-08-13. Missing one means a benchmark seen during pretraining and
+    # a zero-shot claim that is not one.
+    gift = ["LOOP_SEATTLE", "M_DENSE", "SZ_TAXI", "bitbrains_fast_storage",
+            "bitbrains_rnd", "bizitobs_application", "bizitobs_l2c",
+            "bizitobs_service", "car_parts_with_missing", "covid_deaths",
+            "electricity", "ett1", "ett2", "hierarchical_sales", "hospital",
+            "jena_weather", "kdd_cup_2018_with_missing", "m4_daily", "m4_hourly",
+            "m4_monthly", "m4_quarterly", "m4_weekly", "m4_yearly", "restaurant",
+            "saugeenday", "solar", "temperature_rain_with_missing", "us_births"]
+    assert len(gift) == 28
+    for name in nixtla + gift:
+        assert is_eval_overlap(name), f"{name} must be excluded"
+
+    # ...without excluding the corpus that makes LOTSA worth having
+    for name in ["azure_vm_traces", "borg_cluster_data", "alibaba_cluster_trace",
+                 "cmip6_1850", "era5_1989", "godaddy", "favorita_sales",
+                 "residential_load_power", "buildings_900k", "PEMS_BAY",
+                 "largest_2017", "uber_tlc_hourly", "m5"]:
+        assert not is_eval_overlap(name), f"{name} must be kept"
+
+    # beijing_air_quality / china_air_quality ARE kdd_cup_2018 (Beijing air
+    # quality 2017-2018), which GIFT-Eval evaluates on — near-duplicates that
+    # must not sit in the pretraining corpus.
+    for name in ["beijing_air_quality", "china_air_quality"]:
+        assert is_eval_overlap(name), f"{name} duplicates kdd_cup_2018"
+
+    # The union is what the converter uses; the two sources stay separable
+    # because they are verified differently (Nixtla is what we measure today,
+    # GIFT-Eval is from the benchmark's published composition).
+    assert set(EVAL_OVERLAP_PATTERNS) == set(NIXTLA_OVERLAP_PATTERNS) | set(
+        GIFT_EVAL_OVERLAP_PATTERNS)
+
+
+def test_write_dense_npy_is_memmappable_and_truncated(tmp_path):
+    import numpy as np
+    from timejepa.data.lotsa import write_dense_npy
+
+    chunks = [np.full(512, float(i), dtype=np.float32) for i in range(5)]
+    out = tmp_path / "subset.npy"
+    n = write_dense_npy(iter(chunks), out, chunk_length=512, max_chunks=100)
+
+    assert n == 5
+    arr = np.load(out, mmap_mode="r")          # the mode training will use
+    assert arr.shape == (5, 512)               # truncated, not 100
+    assert arr.dtype == np.float32
+    assert float(arr[3][0]) == 3.0
+    assert not (tmp_path / "subset.tmp.npy").exists()
+
+
+def test_use_mmap_defaults_off_and_rejects_object_arrays(tmp_path):
+    """
+    Additive by construction: every existing config must load exactly as before,
+    and the mmap path must refuse the object arrays it cannot handle.
+    """
+    import numpy as np
+    from timejepa.data.dataset import TimeSeriesDataset
+
+    dense = tmp_path / "dense.npy"
+    np.save(dense, np.sin(np.arange(4 * 4096.0).reshape(4, 4096)).astype(np.float32))
+
+    plain = TimeSeriesDataset(str(dense), context_length=512, prediction_length=256)
+    mapped = TimeSeriesDataset(str(dense), context_length=512, prediction_length=256,
+                               use_mmap=True)
+    assert len(plain) == len(mapped)
+    assert torch.allclose(plain[0]["context"], mapped[0]["context"])
+
+    ragged = tmp_path / "ragged.npy"
+    arr = np.empty(2, dtype=object)
+    arr[0] = np.arange(5000.0); arr[1] = np.arange(4000.0)
+    np.save(ragged, arr, allow_pickle=True)
+    with pytest.raises(ValueError, match="dense array"):
+        TimeSeriesDataset(str(ragged), context_length=512, prediction_length=256,
+                          use_mmap=True)
+
+
+def test_lotsa_configs_do_not_disturb_existing_ones():
+    """LOTSA configs are additions; tiny_geo must be untouched by their presence."""
+    base = _compose("tiny_geo")
+    assert base.data.get("use_mmap", False) is False
+    assert "lotsa" not in str(base.data.data_dir).lower()
+
+    pre = _compose("lotsa_tiny")
+    assert pre.data.use_mmap is True
+    assert "lotsa" in str(pre.data.data_dir)
+    assert pre.data.datasets is None          # glob the directory
+    assert pre.model.seq_length == base.model.seq_length      # same geometry
+    assert pre.model.patch_length == base.model.patch_length
+
+    ft = _compose("lotsa_tiny_finetune")
+    assert ft.training.mode == "finetune"
+    # The domain-adapted arm stays on the Monash corpus (contaminated, documented)
+    assert ft.data.data_dir == base.data.data_dir
+    assert ft.data.get("use_mmap", False) is False
+    assert len(ft.data.datasets_finetune) == len(base.data.datasets_finetune)
+
+    # The zero-shot arm — the primary protocol — must train its decoder on LOTSA
+    # only, so that Monash and Nixtla stay unseen at every stage.
+    zs = _compose("lotsa_tiny_zeroshot")
+    assert zs.training.mode == "finetune"
+    assert zs.training.finetune_mode == "full_finetune"
+    assert zs.data.datasets_finetune is None      # glob the LOTSA directory
+    assert "lotsa" in str(zs.data.data_dir)
+    assert zs.data.use_mmap is True
+    assert zs.model.name != ft.model.name         # separate checkpoint trees
+
+    # The eval config must carry the TRAINING geometry but the EVALUATION data.
+    # If the two ever diverge, this breaks here rather than silently producing
+    # wrong numbers: at eval time a geometry mismatch only WARNS.
+    ev = _compose("lotsa_tiny_eval")
+    for key in ("seq_length", "prediction_length", "patch_length", "stride"):
+        assert ev.model[key] == zs.model[key], f"eval/{key} drifted from the trained model"
+    assert ev.model.decoder.type == zs.model.decoder.type
+    # ...and it must evaluate on the held-out corpus, never on LOTSA
+    assert ev.data.data_dir == base.data.data_dir
+    assert "lotsa" not in str(ev.data.data_dir).lower()
+    assert ev.data.get("use_mmap", False) is False
+
+
+# =============================================================================
 # B22 — uniform-length survivors of the length filter became object arrays
 # =============================================================================
 
@@ -956,7 +1131,9 @@ def test_internal_decoder_emits_the_full_horizon(patch, stride):
                                          "tiny_deep_predictor", "tiny_geo",
                                          "tiny_geo_p32", "tiny_geo_vicreg",
                                          "tiny_geo_scratch", "tiny_geo_lowdata",
-                                         "tiny_geo_scratch_lowdata"])
+                                         "tiny_geo_scratch_lowdata",
+                                         "lotsa_tiny", "lotsa_tiny_finetune",
+                                         "lotsa_tiny_zeroshot", "lotsa_tiny_eval"])
 def test_experiment_configs_are_runnable(config_name):
     """
     Every shipped config must build a model whose geometry works at the NOMINAL

@@ -144,6 +144,10 @@ def main(cfg: DictConfig):
         # (a bare "Killed", no traceback). Make it tunable.
         num_workers=int(cfg.data.get('num_workers', 4)),
         persistent_workers=bool(cfg.data.get('persistent_workers', False)),
+        # LOTSA-scale corpora: read the .npy files without loading them into RAM.
+        # Absent from every existing config, so it defaults to False and nothing
+        # changes for them.
+        use_mmap=bool(cfg.data.get('use_mmap', False)),
     )
     
     # Prepare data

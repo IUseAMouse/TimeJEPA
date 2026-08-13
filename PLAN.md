@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-12 — G4.6 + robustesse : le pretraining améliore le TRANSFERT (-8,7 % de MASE) mais pas l'ajustement au domaine d'aval, où le scratch fait mieux. Prochaine étape : LOTSA.
+**Dernière mise à jour :** 2026-08-13 — contamination du corpus par les benchmarks découverte (§5) ; protocole bascule en zero-shot, entraînement intégral sur LOTSA. Configs et liste d'exclusion Nixtla+GIFT-Eval livrées.
 
 ---
 
@@ -599,6 +599,29 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
       ⚠️ Ce que G4.5 ne teste PAS, et qu'il ne faut pas lui faire dire : l'arm scratch
       utilise la MÊME architecture (encodeur + prédicteur + décodeur). Une égalité ne dit
       donc rien sur « encodeur vs decoder-only » — les deux bras sont le même encodeur.
+
+- [ ] **G5.0 ⚠️ PROTOCOLE ZERO-SHOT — décidé le 2026-08-13, conditionne tout G5**
+      Le corpus Monash **contient** les benchmarks : `electricity-hourly` EST le Nixtla
+      `electricity` (derniers 20 %), `traffic-hourly` EST `traffic`. Le split étant séquentiel
+      par série, l'entraînement les voit sur toute leur durée. Les chiffres traffic et
+      electricity ne sont donc pas publiables, et le gain de transfert d'E12 — porté par
+      traffic — devient suspect. Détail au §5 du registre expérimental.
+      **Correction : pretrain ET finetune sur LOTSA, évaluation zero-shot sur Monash/Nixtla.**
+      Corpus d'entraînement et d'évaluation disjoints par construction.
+      - [x] Liste d'exclusion étendue : Nixtla (7 motifs) + GIFT-Eval (23), séparées et
+            testées sur 27 noms de sources.
+      - [x] `configs/model/lotsa_tiny_zeroshot.yaml` — finetune sur LOTSA. **Protocole
+            principal.** `lotsa_tiny_finetune` reste comme borne haute, avec son caveat.
+      - [x] ✅ Liste GIFT-Eval **vérifiée** (2026-08-13) contre le dépôt officiel
+            `huggingface.co/api/datasets/Salesforce/GiftEval/tree/main` : les 28 répertoires
+            sont couverts, test de non-régression sur les noms verbatim.
+            Note : GIFT-Eval autorise l'entraînement sur LEUR split de train ; exclure le
+            dataset entier est plus conservateur que le minimum requis — choix assumé.
+      - [x] `configs/model/lotsa_tiny_eval.yaml` — géométrie d'entraînement + données
+            d'évaluation. Ni lotsa_tiny (data_dir = corpus d'entraînement) ni tiny_geo
+            (couplage fragile) ne conviennent ; un test verrouille la non-dérive.
+      - [ ] Attendre une BAISSE des chiffres absolus vs les runs Monash : c'est la
+            disparition d'un artefact, pas une régression.
 
 - [ ] **G5. Corpus LOTSA** — *le premier régime où pretrain >> finetune, donc le test décisif du pari.*
       [LOTSA](https://huggingface.co/datasets/Salesforce/lotsa_data) (corpus de pretrain de
