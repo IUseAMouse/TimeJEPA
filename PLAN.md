@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-13 — contamination du corpus par les benchmarks découverte (§5) ; protocole bascule en zero-shot, entraînement intégral sur LOTSA. Configs et liste d'exclusion Nixtla+GIFT-Eval livrées.
+**Dernière mise à jour :** 2026-08-15 — E14 : premier zero-shot LOTSA. MASE moyenne 1.150 (contre 1.193 geo), ETTm1 de -37 % à -8,4 % de skill. Suite : pretrain sur corpus complet.
 
 ---
 

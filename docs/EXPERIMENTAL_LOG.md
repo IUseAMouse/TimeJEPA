@@ -562,9 +562,189 @@ wind-farms-minutely, rideshare, fred-md, sunspot-daily, melbourne-pedestrian-cou
 lignes sont de l'**in-domaine**, pas du zero-shot. La section Nixtla, elle, est intégralement
 propre — c'est celle qui porte les chiffres publiables.
 
-**Validé de bout en bout, sans résultat d'entraînement** : `--list` tourne contre le Hub,
-la conversion d'`era5_1989` produit un `(1000, 8192)` float32 fini et memmappable.
-**Aucun chiffre de performance à ce stade.**
+**Validé de bout en bout** : `--list` tourne contre le Hub, la conversion produit des
+tableaux denses memmappables. Corpus obtenu : **83,3 M de fenêtres d'entraînement sur 112
+sous-ensembles** (contre 50,6 M pour Monash), et le plus gros contributeur est ramené à
+**7,1 % du batch** par l'échantillonnage par température — à comparer aux 48,7 % d'E10.
+Volume : **~3-4 Md d'observations**, soit ~8-10× Monash, et non 1000× : les plafonds
+prélèvent ~12 % de LOTSA. Ils achètent de la DIVERSITÉ plutôt que du volume, ce que E10
+désigne comme la contrainte réellement mordante.
+
+---
+
+### E13a — Premier pretrain LOTSA : trois enseignements, aucun résultat downstream
+
+Run `tiny` sur 3× RTX 3090, 3 époques, ~750 k pas, ~6 h l'époque. **Interrompu** : le
+diagnostic ci-dessous montre qu'il ne pouvait pas converger.
+
+**1. La calibration du rang effectif ne transfère pas d'un corpus à l'autre.**
+Sur Monash, `collapse/effective_rank` lisait 3,7-4,8 à l'init. Sur LOTSA il lit **43 à 87** —
+un ordre de grandeur au-dessus. La dimension intrinsèque des représentations suit la richesse
+du corpus, ce qui valide au passage que LOTSA apporte bien de la diversité et pas seulement
+du volume. **Conséquence : toute alarme « collapse » doit être calibrée PAR CORPUS.** Un 43
+lu ici aurait été catastrophique sur Monash ; il est ordinaire sur LOTSA.
+
+Diagnostic du run : rang 87 → 43 (contraction réelle), mais `context_std` **plat à 0,88-0,96**
+et `pred_var` **non monotone** (0,63 → 0,48 → 0,57 — un collapse ne remonte pas). Verdict :
+contraction modérée depuis un pic élevé, **pas de collapse**.
+
+**2. La `val_loss` composite est polluée par son terme de régularisation.**
+Décomposée, elle dit l'inverse de son agrégat :
+
+| terme | trajectoire |
+|---|---|
+| `val_loss/mse` | 0,38 (pic 120 k) → **0,26 à 580 k** → 0,29 |
+| `val_loss/sigreg_context` | 0,04 (creux 100 k) → **0,13** puis plateau |
+
+La partie qui compte pour l'aval **a continué de s'améliorer jusqu'à 580 k**, bien après le
+« plafond » apparent à 270 k. Écart train/val du terme SIGReg : **0,005 contre 0,13**, un
+facteur 25 — attendu (les projections sont retirées à chaque batch) mais bruyant. C'est E12
+sous une forme plus précise : la `val_loss` composite est un mauvais critère de sélection,
+ici parce que son régularisateur dérive et noie le signal prédictif.
+
+**3. Le scheduler doit être calibré sur le budget RÉEL, pas sur un défaut.**
+`max_epochs` héritait 40 de `tiny.yaml` ; le cosinus était donc étalé sur dix jours de calcul
+pour un run de trois époques. Mesuré : **le LR n'a décru que de 0,000749 à 0,000740 en
+400 000 pas**. Le modèle a tourné à LR maximal du début à la fin.
+
+Un modèle à LR constant maximal n'oscille pas autour d'un optimum : il ne s'y pose jamais.
+Cela explique l'ensemble des symptômes — `val_loss` rebondissant entre 0,345 et 0,445 sans
+tendance, `train_loss_epoch` descendant proprement (0,47 → 0,395), et un « meilleur
+checkpoint » tombant sur un creux de bruit, **systématiquement vers le milieu de l'époque 1**.
+
+**Corollaire opérationnel sur la sélection de checkpoint.**
+- Run **recuit** (`max_epochs` = budget réel) : prendre le **dernier**. Le cosinus descend
+  vers ~0, la fin EST le point de convergence, et le meilleur `val_loss` y coïncide.
+- Run **non recuit** : ni le dernier ni le meilleur `val_loss` ne sont légitimes. Évaluer
+  plusieurs checkpoints en aval et laisser le benchmark trancher (E12).
+
+`max_epochs: 5` est désormais dans `lotsa_tiny` (hérité par `mini` et `base`), et **8 dans
+`tiny_geo`** (hérité par p32, vicreg, scratch), avec le raisonnement en commentaire.
+
+⚠️ **Portée rétrospective sur les résultats geo.** Les pretrains du round géométrie se sont
+arrêtés à 5 époques sur 40 par early stopping : eux non plus n'ont donc **jamais été
+recuits**. Les conclusions E5, E7 et E9 restent valides — tous les arms partageaient
+exactement le même handicap, donc les comparaisons appariées tiennent — mais **les niveaux
+absolus sont ceux de modèles jamais recuits**, et un run recuit devrait les améliorer sans
+changer les classements. À énoncer comme tel dans un article, et à re-mesurer si un chiffre
+absolu doit être publié.
+
+**Aucun chiffre de performance downstream à ce stade.**
+
+---
+
+### E13b — Second pretrain, recuit : le corpus est épuisé en une époque
+
+Même run relancé avec `max_epochs: 5`, donc un cosinus qui décroît réellement (0,0007 → 0,0002).
+Le recuit a fait son travail — et a révélé ce que le bruit du premier run masquait.
+
+**Train qui descend, validation qui monte.**
+
+| | run 1 (LR constant) | run 2 (recuit) |
+|---|---|---|
+| `val_loss` | oscille 0,345-0,445 | 0,345 à 250 k → **monte à 0,51** |
+| `val_loss/mse` | 0,26 à 580 k | 0,25 à 250 k → **remonte à 0,37** |
+| `train_loss_epoch` | 0,47 → 0,395 | 0,475 → 0,428 |
+
+Ce n'est plus une marche aléatoire : la divergence est monotone une fois le bruit du LR
+constant retiré.
+
+**La représentation se dégrade, elle ne compresse pas.** Tout se contracte — `target_var`
+0,90 → 0,78, `context_var` 0,95 → 0,80, `pred_var` 0,58 → 0,47, `context_std` 0,925 → 0,84,
+rang effectif 66 → 46 — **et le cosinus baisse aussi** (0,87 → 0,81). C'est la différence
+décisive avec le run 1, où le cosinus MONTAIT pendant la contraction : une contraction avec
+alignement préservé est défendable, une contraction qui perd l'alignement ne l'est pas.
+
+Signature complémentaire : `val_loss/sigreg_context` monte à 0,17 alors que la version train
+reste à **0,005** — un facteur 34. L'encodeur satisfait le régularisateur **uniquement sur la
+distribution d'entraînement**.
+
+**Les deux runs concordent : le meilleur checkpoint est à ~200-250 k pas, soit ~1 époque.**
+Deux schedulers différents, même verdict — ce n'est donc pas un creux de bruit.
+
+**Interprétation.** Les 83 M de fenêtres sont trompeuses : elles proviennent de **~800 k
+morceaux distincts** (stride 8 sur des morceaux de 2048 = 97 fenêtres largement redondantes
+chacun). Le contenu réellement indépendant est bien plus petit que le compte de fenêtres.
+Le modèle épuise ce corpus en une passe, puis se spécialise.
+
+**Ce que cela établit.** La réponse n'est pas plus d'époques mais **plus de données
+distinctes** — ce qui valide, par la mesure et non par principe, la décision de passer au
+corpus LOTSA complet (~20-25 Md d'observations après exclusions, contre ~3-4 Md ici).
+
+**Deux corrections appliquées.**
+- `max_oversample_ratio` 6,0 → 3,0 sur les configs LOTSA. Le défaut venait de Monash et ses
+  24 datasets ; sur 112 sous-ensembles il faisait repasser des datasets de 648 échantillons
+  **six fois par époque**. Contributeur direct au surapprentissage, gratuit à supprimer.
+- `configs/model/lotsa_tiny_full.yaml` avec **`max_epochs: 1`** : sur le corpus complet une
+  époque vaut des dizaines d'heures, et laisser 5 reproduirait le défaut d'E13a (un LR qui ne
+  décroît jamais). Une passe unique recuite est aussi le régime standard des modèles de
+  fondation.
+
+⚠️ **À auditer après conversion sans plafonds** : rien ne garantit alors qu'une famille ne
+domine pas, ce qui est exactement le défaut mesuré en E10. Script d'audit dans l'en-tête de
+`lotsa_tiny_full.yaml` ; viser aucune famille au-dessus de ~15 %.
+
+---
+
+### E14 — Premier modèle zero-shot LOTSA : ETTm1 cède enfin (2026-08-15)
+
+**Protocole.** Pretrain ET finetune quantile sur LOTSA seul (corpus plafonné, ~3-4 Md
+d'observations), évaluation à contexte 1024 sur des benchmarks **jamais vus à aucune étape**.
+Premier résultat du projet dont la section Nixtla est du zero-shot authentique.
+
+**MASE moyenne**, contre les meilleurs arms du round géométrie :
+
+| dataset | geo 16/8 | p32 | **LOTSA 0-shot** | écart vs geo |
+|---|---|---|---|---|
+| **ettm1** | 1.369 | 1.315 | **1.139** | **−16,8 %** |
+| etth2 | 1.722 | 1.528 | 1.645 | −4,5 % |
+| etth1 | 1.265 | 1.247 | **1.215** | −3,9 % |
+| ettm2 | 1.231 | 1.232 | **1.189** | −3,3 % |
+| electricity | 1.029 | 1.056 | 1.029 | ±0 |
+| traffic | **0.768** | 0.777 | 0.779 | +1,5 % |
+| weather | 0.966 | **0.960** | 1.053 | +8,9 % |
+| **moyenne** | 1.193 | 1.159 | **1.150** | **−3,6 %** |
+
+**L'agrégat sous-estime le résultat, et la décomposition dit pourquoi.** Les arms geo étaient
+finetunés sur les 24 datasets Monash — dont les équivalents d'electricity, traffic et
+weather — et **contaminés** sur electricity et traffic (§5). Le modèle LOTSA n'a vu aucun des
+sept.
+
+| | geo (finetuné, parfois contaminé) | LOTSA (jamais vu) |
+|---|---|---|
+| electricity, traffic, weather — *geo à domicile* | **0.921** | 0.954 |
+| etth1/2, ettm1/2 — *hors domaine des deux côtés* | 1.397 | **1.297 (−7,2 %)** |
+
+**À terrain neutre LOTSA gagne de 7 % ; là où l'adversaire jouait à domicile avec une fuite
+en prime, il fait jeu égal.**
+
+**ETTm1 : la prédiction faite d'avance se vérifie.** Skill −37 % → **−8,4 %**, MASE −16,8 %.
+C'était le dernier échec structurel du projet, présent depuis E0, insensible à la géométrie
+(E5), au patch (E5), au contexte (E7), au régularisateur (E5). L'explication retenue était le
+corpus sous-quotidien — Monash n'a essentiellement rien à 15 minutes — et le pari était que
+LOTSA le débloquerait. C'est ce qui s'est produit. **C'est la confirmation la plus nette du
+levier « données » de tout le projet.**
+
+`weather` régresse de 8,9 % : le revers attendu du zero-shot, puisque geo le finetunait et
+que LOTSA l'exclut.
+
+**Monash local : 7 datasets sur 8 battus, en zero-shot intégral** (seul bitcoin résiste, ce
+qui est attendu d'une marche aléatoire).
+⚠️ **Mais ces marges sont flattées** : la table de saisonnalité ne couvre pas les datasets
+Monash locaux, donc `m=1` et `seasonal_naive` **=** `naive_last` (4.640 identiques sur les
+huit). Ces chiffres disent « meilleur que la persistance », pas « meilleur qu'une baseline
+saisonnière ». Seule la section Nixtla porte les bonnes saisonnalités (m=96, 24, 144) et donc
+des chiffres publiables. **Compléter la table de saisonnalité locale reste à faire.**
+
+**Ce que cela établit.** Un modèle entraîné intégralement sur un corpus disjoint égale ou bat,
+en zero-shot, des modèles finetunés sur le domaine cible — et résout au passage l'échec
+structurel que quatre rounds d'ablations architecturales n'avaient pas entamé. C'est la
+première fois que les chiffres du projet sont **comparables à la littérature** (Chronos,
+Moirai, TimesFM, Toto), le protocole étant maintenant le leur.
+
+**Réserves.** Corpus plafonné (~3-4 Md) et une seule graine ; le run sur corpus complet
+(~20-25 Md) est la suite directe. Et le harness GIFT-Eval (P2.6) reste à écrire : sans lui,
+aucune position dans un classement publié n'est mesurable.
 
 ---
 
@@ -594,8 +774,27 @@ Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
    `val_loss` de finetune (0.1594 vs 0.1807) et une MOINS BONNE performance sur tous les
    benchmarks (−8,7 % de MASE moyenne en faveur du pré-entraîné). Cohérent avec E8, où le
    domaine d'aval contenait les benchmarks (E11 + E12).
-10. **La `val_loss` de finetune est un mauvais critère de sélection** pour un modèle de
-   fondation : elle désigne le modèle qui généralise le moins bien (E12).
+10. **La `val_loss` est un mauvais critère de sélection** pour un modèle de fondation, pour
+   deux raisons distinctes : au finetune elle désigne le modèle qui généralise le moins bien
+   (E12) ; au pretrain sa composante de régularisation dérive et noie le signal prédictif —
+   mesuré, `val_loss/mse` continuait de s'améliorer 300 k pas après le « plafond » de
+   l'agrégat (E13a).
+11. **Le rang effectif doit être calibré par corpus** : 3,7-4,8 à l'init sur Monash contre
+   43-87 sur LOTSA. Une même valeur signifie le collapse dans un cas et l'ordinaire dans
+   l'autre (E13a).
+12. **Le scheduler de LR doit être calibré sur le budget réel.** Un cosinus étalé sur 40
+   époques pour un run de 3 laisse le LR à son maximum, et produit un plateau bruyant dont
+   le « meilleur » checkpoint est un creux de bruit (E13a).
+13. **Le corpus de pretrain est le levier de l'échec ETTm1**, là où l'architecture ne l'était
+   pas : skill −37 % → −8,4 % en passant de Monash à LOTSA, après quatre rounds d'ablations
+   géométriques sans effet sur ce dataset (E14).
+14. **Un modèle entraîné sur un corpus disjoint égale en zero-shot des modèles finetunés sur
+   le domaine cible** : −7,2 % de MASE là où le terrain est neutre, parité là où l'adversaire
+   disposait du domaine et d'une fuite (E14).
+15. **Le nombre de fenêtres n'est pas une mesure de la taille du corpus.** 83 M de fenêtres
+   issues de ~800 k morceaux distincts s'épuisent en une époque : deux pretrains à
+   schedulers différents désignent le même optimum vers 250 k pas, puis divergent
+   (train ↓ / val ↑). Compter les échantillons INDÉPENDANTS (E13b).
 
 ## 4. Ce qui n'est PAS établi
 
@@ -909,6 +1108,18 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-15 (suite)** — ajout de **E14** : premier modèle zero-shot LOTSA. MASE moyenne
+  1.150 contre 1.193 (geo) et 1.159 (p32), et surtout **ETTm1 de −37 % à −8,4 % de skill** —
+  l'échec structurel du projet cède au corpus, pas à l'architecture. Affirmations 13 et 14
+  ajoutées au §3.
+- **2026-08-15** — ajout de **E13b** : le recuit révèle un surapprentissage net à partir
+  d'une époque, concordant entre les deux runs. Affirmation 13 ajoutée au §3.
+  `max_oversample_ratio` ramené à 3,0 et `lotsa_tiny_full` (max_epochs 1) créé pour le
+  passage au corpus complet.
+- **2026-08-14** — ajout de **E13a** : premier pretrain LOTSA interrompu, avec trois
+  enseignements méthodologiques (calibration du rang effectif par corpus, `val_loss`
+  polluée par son régularisateur, scheduler à caler sur le budget réel). Affirmations 10 à
+  12 du §3 mises à jour. `max_epochs: 5` inscrit dans les configs LOTSA.
 - **2026-08-13 (suite)** — ajout de **E13** : ingestion LOTSA et protocole zero-shot mis en
   place et validés de bout en bout (47 exclus / 123 retenus, conversion vérifiée), sans
   résultat d'entraînement. B22 ajouté au tableau du §5, §6 complété des configs LOTSA.

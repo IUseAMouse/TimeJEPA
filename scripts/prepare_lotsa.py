@@ -32,6 +32,7 @@ Dépendances : `datasets` et `huggingface_hub`, déclarées dans pyproject.toml.
 
 import argparse
 import logging
+from collections import Counter
 import sys
 from pathlib import Path
 
@@ -41,6 +42,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.data.lotsa import (  # noqa: E402
     EVAL_OVERLAP_PATTERNS,
+    ChunkStats,
+    choose_chunk_length,
+    family_of,
     is_eval_overlap,
     iter_dense_chunks,
     write_dense_npy,
@@ -96,18 +100,34 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=Path("data/processed/lotsa"))
-    ap.add_argument("--chunk-length", type=int, default=8192,
-                    help="Longueur des morceaux denses. Doit dépasser largement "
-                         "context+prediction (1280 pour tiny_geo).")
+    ap.add_argument("--chunk-length", type=int, default=2048,
+                    help="Longueur des morceaux denses. Arbitrage : plus c'est "
+                         "long, plus il y a de positions de fenêtre par morceau, "
+                         "mais toute série plus courte est PERDUE. À 8192, des "
+                         "sous-ensembles entiers (métros, traces de VM) ne "
+                         "produisaient rien. 2048 garde ~13 positions par morceau "
+                         "pour une fenêtre de 1280, et bien plus de séries.")
     ap.add_argument("--min-length", type=int, default=1280,
                     help="Séries plus courtes ignorées (= fenêtre requise).")
     ap.add_argument("--max-chunks-per-subset", type=int, default=200_000,
-                    help="Plafond anti-domination (E10).")
+                    help="Plafond par sous-ensemble.")
+    ap.add_argument("--max-chunks-per-family", type=int, default=None,
+                    help="Plafond par FAMILLE, réparti entre ses membres. Défaut : "
+                         "3x le plafond par sous-ensemble. Indispensable parce que "
+                         "cmip6 (33 tranches annuelles) et era5 (30) sont 63 des "
+                         "123 sous-ensembles : sans ce plafond, la moitié du corpus "
+                         "serait de la réanalyse climatique. E10 avait déjà mesuré "
+                         "ce déséquilibre à plus petite échelle.")
     ap.add_argument("--subsets", nargs="*", default=None,
                     help="Restreindre à ces sous-ensembles (défaut : tous).")
     ap.add_argument("--list", action="store_true", help="Inventaire seul.")
     ap.add_argument("--resume", action="store_true",
                     help="Sauter les sous-ensembles déjà convertis.")
+    ap.add_argument("--max-nan-fraction", type=float, default=0.05,
+                    help="Fraction de valeurs manquantes tolérée dans un morceau, "
+                         "comblée par interpolation linéaire. Au-delà, le morceau "
+                         "est renoncé plutôt qu'inventé. Rejeter tout morceau "
+                         "contenant un NaN coûtait 100 %% de HZMETRO et SHMETRO.")
     args = ap.parse_args()
 
     logger.info(f"Sous-ensembles LOTSA depuis {REPO_ID}…")
@@ -132,6 +152,26 @@ def main():
         print(f"  ✓ {n}")
     print()
 
+    # Budget par sous-ensemble, réduit pour les familles nombreuses. Calculé
+    # AVANT le retour de --list : c'est exactement ce qu'on veut inspecter avant
+    # de convertir quoi que ce soit.
+    family_cap = args.max_chunks_per_family or 3 * args.max_chunks_per_subset
+    members = Counter(family_of(n) for n in kept)
+    budget = {
+        n: min(args.max_chunks_per_subset,
+               max(1, family_cap // members[family_of(n)]))
+        for n in kept
+    }
+    shared = {f: c for f, c in members.items() if c > 1}
+    if shared:
+        print("=" * 72)
+        print(f"FAMILLES partageant un budget (plafond {family_cap:,} morceaux chacune)")
+        print("=" * 72)
+        for f, c in sorted(shared.items(), key=lambda kv: -kv[1]):
+            example = next(n for n in kept if family_of(n) == f)
+            print(f"  {f:<28} {c:>3} tranches → {budget[example]:,} morceaux chacune")
+        print()
+
     if args.list:
         print("--list : aucune conversion effectuée.")
         return
@@ -146,17 +186,51 @@ def main():
 
         logger.info(f"[{i}/{len(kept)}] {subset} → {out_path.name}")
         try:
+            # `--chunk-length` est un MAXIMUM. On échantillonne les premières
+            # séries pour choisir la longueur effective du sous-ensemble : chaque
+            # fichier étant un tableau dense indépendant, rien n'oblige deux
+            # sous-ensembles à partager la même. Sans ça, BEIJING_SUBWAY_30MIN
+            # (552 séries de 1572 pas) ne produisait rien face à un chunk de 2048.
+            stream = series_iter(subset)
+            sample = []
+            for series in stream:
+                sample.append(series)
+                if len(sample) >= 200:
+                    break
+
+            effective = choose_chunk_length(
+                [len(x) for x in sample], args.chunk_length, args.min_length
+            )
+            if effective is None:
+                logger.warning(
+                    f"    séries trop courtes (médiane < {args.min_length}) — "
+                    f"sous-ensemble inutilisable pour cette géométrie"
+                )
+                continue
+            if effective != args.chunk_length:
+                logger.info(f"    longueur de morceau adaptée : {effective}")
+
+            def _chained(buffered=sample, rest=stream):
+                yield from buffered
+                yield from rest
+
+            stats = ChunkStats()
             chunks = iter_dense_chunks(
-                series_iter(subset),
-                chunk_length=args.chunk_length,
+                _chained(),
+                chunk_length=effective,
                 min_length=args.min_length,
-                max_chunks=args.max_chunks_per_subset,
+                max_chunks=budget[subset],
+                max_nan_fraction=args.max_nan_fraction,
+                stats=stats,
             )
             written = write_dense_npy(
                 chunks, out_path,
-                chunk_length=args.chunk_length,
-                max_chunks=args.max_chunks_per_subset,
+                chunk_length=effective,
+                max_chunks=budget[subset],
             )
+            # Toujours loggué, y compris (surtout) quand rien n'est écrit :
+            # c'est la seule façon de savoir POURQUOI un sous-ensemble est vide.
+            logger.info(f"    {stats.summary(effective, args.min_length)}")
             total += written
         except Exception as exc:  # un sous-ensemble cassé ne doit pas tuer le run
             logger.error(f"  ✗ {subset} échoué : {type(exc).__name__}: {exc}")

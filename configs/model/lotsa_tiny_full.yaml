@@ -1,0 +1,69 @@
+# @package _global_
+#
+# G5 — PRETRAIN sur le corpus LOTSA COMPLET (plafonds de conversion désactivés).
+#
+#   # 1. conversion sans plafonds — 80 à 150 Go, vérifier df -h d'abord
+#   make lotsa-download CHUNKS=1000000
+#
+#   # 2. pretrain
+#   make train CONFIG=lotsa_tiny_full ARGS="wandb.run_name=lotsa-full"
+#
+# Pourquoi ce régime existe
+# -------------------------
+# E13b : DEUX pretrains successifs (l'un à LR constant, l'autre recuit) désignent
+# indépendamment leur meilleur checkpoint à ~250 k pas, soit environ UNE époque,
+# et divergent ensuite — train qui descend, val qui monte. Le modèle épuise le
+# corpus en une passe.
+#
+# Les 83 M de fenêtres du corpus plafonné sont trompeuses : elles proviennent de
+# ~800 k morceaux distincts seulement (stride 8 sur des morceaux de 2048 produit
+# 97 fenêtres largement redondantes par morceau). Le contenu réellement
+# indépendant est bien plus petit que le compte de fenêtres ne le suggère.
+#
+# La réponse n'est donc pas plus d'époques, c'est plus de données distinctes.
+#
+# max_epochs = 1
+# -------------
+# Sur le corpus complet, une époque vaut déjà ~10x celle du corpus plafonné,
+# soit plusieurs dizaines d'heures. Le scheduler cosinus étant étalé sur
+# `max_epochs`, le laisser à 5 reproduirait exactement le défaut d'E13a : un LR
+# qui ne décroît jamais. À 1, le recuit se fait sur la passe unique — ce qui est
+# aussi le régime standard des modèles de fondation, entraînés une seule fois sur
+# un corpus qu'ils ne revoient pas.
+#
+# ⚠️ Après la conversion, AUDITER l'équilibre avant de lancer. Sans les plafonds,
+# rien ne garantit qu'une famille ne domine pas — c'est précisément le défaut
+# qu'E10 avait mesuré sur Monash (deux datasets à 48,7 % du batch) :
+#
+#   python -c "
+#   import numpy as np, glob, os, re
+#   from collections import Counter
+#   tot, files = Counter(), Counter()
+#   for f in glob.glob('data/processed/lotsa/*.npy'):
+#       fam = re.sub(r'_(18|19|20)\d{2}$', '', os.path.basename(f)[:-4])
+#       a = np.load(f, mmap_mode='r'); tot[fam] += a.shape[0]*a.shape[1]; files[fam] += 1
+#   g = sum(tot.values())
+#   print(f'{g/1e9:.2f} Md observations, {sum(files.values())} fichiers')
+#   for fam, n in tot.most_common(12): print(f'  {fam:<30} {100*n/g:5.1f} %  ({files[fam]} fichiers)')
+#   "
+#
+# Aucune famille au-dessus de ~15 % : sinon, reconvertir celle-là avec un plafond
+# (`--subsets <noms> --max-chunks-per-subset N`).
+defaults:
+  - lotsa_tiny
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_full"
+
+training:
+  max_epochs: 2
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "pretrain"
+    - "full-corpus"

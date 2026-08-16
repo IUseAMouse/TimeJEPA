@@ -88,6 +88,21 @@ model:
     type: "quantile"
 
 training:
+  # Le scheduler cosinus est étalé sur `max_epochs`. Le défaut de tiny.yaml est
+  # 40, mais les pretrains geo se sont arrêtés à 5 par early stopping : le LR n'y
+  # a donc quasiment pas décru, et ces runs ont tourné à LR maximal de bout en
+  # bout. Mesuré sur le pretrain LOTSA, où le défaut valait dix jours de calcul :
+  # 0,000749 → 0,000740 en 400 000 pas (E13a du registre expérimental).
+  # Un modèle à LR constant maximal ne se pose jamais — d'où des val_loss
+  # bruyantes dont le « meilleur » checkpoint est un creux de bruit.
+  # 8 correspond au budget réellement consommé, avec de la marge : le cosinus
+  # décroît alors pour de bon.
+  # ⚠️ Les résultats geo antérieurs (E5, E7, E9) ont été obtenus SANS ce recuit.
+  # Ils restent valides — tous les arms partageaient le handicap, donc les
+  # comparaisons appariées tiennent — mais les niveaux absolus sont ceux de
+  # modèles jamais recuits.
+  max_epochs: 8
+
   # Le defaut de tiny.yaml est "vicreg" : chaque pretrain geo a du le
   # surcharger a la main. L'arm VICReg a sa propre config (tiny_geo_vicreg).
   loss:

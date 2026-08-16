@@ -1,0 +1,32 @@
+# @package _global_
+#
+# G5 — FINETUNE SUR LOTSA, échelle mini. Protocole zero-shot.
+#
+#   python scripts/train.py --config-name lotsa_mini_zeroshot \
+#       trainer.accumulate_grad_batches=2 \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini/pretrain_True/<ckpt>"'
+#
+# Le décodeur n'est entraîné que sur LOTSA : Monash et Nixtla restent inédits à
+# TOUTES les étapes, ce qui rend l'évaluation comparable à Chronos / Moirai /
+# TimesFM / Toto. Voir `lotsa_tiny_zeroshot` pour le raisonnement complet.
+defaults:
+  - lotsa_mini
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags:
+    - "mini"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "zeroshot"

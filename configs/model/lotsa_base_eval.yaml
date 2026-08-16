@@ -1,0 +1,50 @@
+# @package _global_
+#
+# G5 — ÉVALUATION ZERO-SHOT, échelle base.
+#
+#   python scripts/evaluate.py --config-name lotsa_base_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_base_zs/pretrain_False/<ckpt>
+#
+# Géométrie et capacité du modèle entraîné, mais données d'ÉVALUATION (corpus
+# Monash). Ni `lotsa_base` ni `lotsa_base_zeroshot` ne conviennent : leur
+# `data_dir` pointe sur LOTSA, donc la section « datasets locaux » porterait sur
+# le corpus d'entraînement.
+#
+# ⚠️ Comme pour `lotsa_tiny_eval` : la section « Nixtla » est intégralement
+# zero-shot, la section « Local datasets » ne l'est pas pour sept entrées
+# (london-smart-meters, bitcoin, wind-farms-minutely, rideshare, fred-md,
+# sunspot-daily, melbourne-pedestrian-count) qui ont un équivalent RETENU dans
+# LOTSA. Ce sont les chiffres Nixtla qui sont publiables.
+#
+# Un test verrouille l'identité de géométrie ET de capacité avec
+# `lotsa_base_zeroshot` : à l'évaluation une forme incompatible ne fait que
+# WARNER avant de sortir des chiffres silencieusement faux.
+defaults:
+  - tiny_geo
+  - _self_
+
+model:
+  name: "timejepa_lotsa_base_zs"
+  encoder:
+    d_model: 384
+    n_heads: 8
+    n_layers: 8
+    d_ff: 1536
+  predictor:
+    d_model: 384
+    n_heads: 8
+    n_layers: 4
+    d_ff: 1536
+  decoder:
+    d_model: 384
+    hidden_dim: 768
+    n_layers: 4
+
+wandb:
+  tags:
+    - "base"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "zeroshot"
+    - "eval"

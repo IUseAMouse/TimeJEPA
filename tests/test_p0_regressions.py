@@ -480,17 +480,188 @@ def test_lotsa_segmentation_produces_dense_chunks():
     assert np.stack(out).dtype != object
 
 
-def test_lotsa_drops_non_finite_chunks():
-    """LOTSA has gappy series; a NaN poisons RevIN and the loss."""
-    import numpy as np
-    from timejepa.data.lotsa import iter_dense_chunks
+@pytest.mark.parametrize("size,reference", [("mini", "mini"), ("base", "base")])
+def test_lotsa_scale_configs_match_their_reference_dimensions(size, reference):
+    """
+    The dimensions are written out rather than inherited from mini.yaml/base.yaml,
+    because those carry their own data block which would clobber the LOTSA
+    corpus. Written-out values drift; this pins them.
+    """
+    ref = _compose(reference)
+    pre = _compose(f"lotsa_{size}")
+    for block in ("encoder", "predictor"):
+        for key in ("d_model", "n_layers", "d_ff"):
+            assert pre.model[block][key] == ref.model[block][key], f"{block}.{key}"
+    # ...while the corpus and geometry stay those of the LOTSA round
+    base = _compose("lotsa_tiny")
+    assert pre.data.data_dir == base.data.data_dir
+    assert pre.data.use_mmap is True
+    assert pre.model.seq_length == base.model.seq_length
+    assert pre.model.decoder.type == "quantile"
+    assert pre.training.loss.type == "sigreg"
 
-    good = np.arange(4096.0)
-    bad = np.arange(4096.0).copy()
-    bad[10] = np.nan
-    out = list(iter_dense_chunks([bad, good], chunk_length=4096, min_length=1280))
-    assert len(out) == 1
-    assert np.isfinite(out[0]).all()
+
+@pytest.mark.parametrize("size", ["tiny", "mini", "base"])
+def test_lotsa_eval_config_matches_the_trained_model(size):
+    """
+    A shape mismatch at eval time only WARNS before producing silently wrong
+    numbers — the trap already hit on the p32 arm. Capacity must match too, not
+    just geometry.
+    """
+    zs = _compose(f"lotsa_{size}_zeroshot")
+    ev = _compose(f"lotsa_{size}_eval")
+
+    for key in ("seq_length", "prediction_length", "patch_length", "stride"):
+        assert ev.model[key] == zs.model[key], f"eval/{key} drifted"
+    for block in ("encoder", "predictor"):
+        for key in ("d_model", "n_layers", "d_ff"):
+            assert ev.model[block][key] == zs.model[block][key], f"eval/{block}.{key}"
+    assert ev.model.decoder.type == zs.model.decoder.type
+
+    # The eval config reads the HELD-OUT corpus, never LOTSA
+    assert "lotsa" not in str(ev.data.data_dir).lower()
+    assert ev.data.get("use_mmap", False) is False
+
+    # The zero-shot arm trains its decoder on LOTSA only
+    assert zs.data.datasets_finetune is None
+    assert "lotsa" in str(zs.data.data_dir)
+
+
+def test_lotsa_configs_share_one_effective_batch_regime():
+    """
+    Effective batch is batch x accumulation x GPUs. tiny_geo used accumulation 6
+    on one or two cards; inheriting it here gave 6144 across four, a learning-rate
+    regime unrelated to any previous run, and forced an override on every command.
+    All three scales are now calibrated for four GPUs.
+    """
+    effective = {
+        size: _compose(f"lotsa_{size}").data.batch_size
+        * _compose(f"lotsa_{size}").trainer.accumulate_grad_batches
+        * 4
+        for size in ("tiny", "mini", "base")
+    }
+    assert all(1000 <= v <= 2048 for v in effective.values()), effective
+
+
+def test_memmapped_windows_yield_writable_tensors(tmp_path):
+    """
+    B23. With use_mmap, np.load(mmap_mode="r") is read-only, ascontiguousarray on
+    a contiguous slice does not copy, and .float() on float32 is a no-op — so the
+    tensor aliased the mapping. Augmentations run right after, and an in-place
+    write to a read-only mapping is a segfault at best and silent corruption of
+    the .npy on disk at worst.
+    """
+    import numpy as np
+    from timejepa.data.dataset import TimeSeriesDataset
+
+    path = tmp_path / "dense.npy"
+    np.save(path, np.sin(np.arange(4 * 4096.0).reshape(4, 4096)).astype(np.float32))
+    original = np.load(path).copy()
+
+    ds = TimeSeriesDataset(str(path), context_length=512, prediction_length=256,
+                           use_mmap=True)
+    item = ds[0]
+    ctx = item["context"]
+
+    # An in-place write must be safe and must NOT reach the file
+    ctx.add_(1.0)
+    assert np.array_equal(np.load(path), original), "in-place write reached the .npy"
+
+    # The non-mmap path is unchanged
+    plain = TimeSeriesDataset(str(path), context_length=512, prediction_length=256)
+    plain[0]["context"].add_(1.0)
+    assert np.array_equal(np.load(path), original)
+
+
+def test_family_grouping_prevents_one_domain_dominating():
+    """
+    The per-subset cap protects nothing when one domain is split across many
+    subsets. LOTSA ships cmip6 as 33 annual slices and era5 as 30, which is 63
+    of the 123 kept subsets: at an equal cap each, half the pretraining corpus
+    would be smooth seasonal climate reanalysis. E10 already measured that
+    failure mode at smaller scale (two datasets holding 48.7% of the batch).
+    """
+    from timejepa.data.lotsa import family_of
+
+    assert family_of("cmip6_1850") == family_of("cmip6_2010") == "cmip6"
+    assert family_of("era5_1989") == family_of("era5_2018") == "era5"
+    assert family_of("largest_2017") == family_of("largest_2021") == "largest"
+    assert family_of("gfc12_load") == family_of("gfc17_load") == "gfc_load"
+
+    # Subsets whose trailing number is not a year stay distinct
+    assert family_of("PEMS03") != family_of("PEMS04")
+    # ...and a lone year-suffixed subset is its own family, not merged away
+    assert family_of("azure_vm_traces_2017") == "azure_vm_traces"
+    assert family_of("borg_cluster_data_2011") == "borg_cluster_data"
+    assert family_of("m5") == "m5"
+
+
+def test_chunk_stats_explain_an_empty_subset():
+    """
+    A subset that yields nothing must say WHY. Series shorter than chunk_length
+    are dropped to keep the output dense, so a series of 5000 steps — perfectly
+    usable for a 1280-step window — is lost at chunk_length 8192. Without the
+    breakdown, that is indistinguishable from a subset whose series are simply
+    too short, and the two call for opposite decisions.
+    """
+    import numpy as np
+    from timejepa.data.lotsa import iter_dense_chunks, ChunkStats
+
+    series = [np.arange(20000.0), np.arange(5000.0), np.arange(900.0), np.arange(3000.0)]
+
+    wide = ChunkStats()
+    list(iter_dense_chunks(series, chunk_length=8192, min_length=1280, stats=wide))
+    assert wide.series == 4
+    assert wide.too_short == 1              # the 900-step one, genuinely unusable
+    assert wide.lost_to_chunking == 2       # 5000 and 3000: recoverable
+    assert "PERDUES" in wide.summary(8192, 1280)
+
+    narrow = ChunkStats()
+    list(iter_dense_chunks(series, chunk_length=2048, min_length=1280, stats=narrow))
+    assert narrow.lost_to_chunking == 0
+    assert narrow.emitted > wide.emitted    # 12 against 2 on identical input
+    assert "PERDUES" not in narrow.summary(2048, 1280)
+
+
+def test_short_gaps_are_imputed_and_structural_ones_refused():
+    """
+    Rejecting a whole chunk over one NaN is untenable on a real corpus: measured
+    on LOTSA, HZMETRO lost 160/160 chunks and SHMETRO 2304/2304. Short gaps get
+    interpolated; large ones are refused rather than invented.
+
+    The refusal matters as much as the imputation. Those metro subsets carry
+    ~23% NaN in REGULAR 23-step blocks — the nightly service closure. Filling
+    that would fabricate 3am ridership, so raising the threshold would be a
+    mistake rather than a fix, and the summary says so.
+    """
+    import numpy as np
+    from timejepa.data.lotsa import iter_dense_chunks, ChunkStats
+
+    short_gap = np.arange(4096.0, dtype=np.float32)
+    short_gap[10:13] = np.nan          # 0.07%, well under the threshold
+    clean = np.arange(4096.0, dtype=np.float32)
+
+    st = ChunkStats()
+    out = list(iter_dense_chunks([short_gap, clean], chunk_length=4096,
+                                 min_length=1280, stats=st))
+    assert len(out) == 2               # both kept, one imputed
+    assert st.imputed == 1
+    assert all(np.isfinite(c).all() for c in out)
+    assert float(out[0][11]) == 11.0   # linear interpolation, not a constant
+
+    # A metro-shaped series: regular 23-step blocks, ~23% missing
+    structural = np.arange(4096.0, dtype=np.float32)
+    for start in range(0, 4096, 100):
+        structural[start:start + 23] = np.nan
+
+    st2 = ChunkStats()
+    out2 = list(iter_dense_chunks([structural], chunk_length=4096,
+                                  min_length=1280, stats=st2))
+    assert out2 == []
+    assert st2.non_finite == 1
+    summary = st2.summary(4096, 1280)
+    assert "STRUCTURELS" in summary
+    assert "ne pas monter --max-nan-fraction" in summary
 
 
 def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
@@ -1133,7 +1304,11 @@ def test_internal_decoder_emits_the_full_horizon(patch, stride):
                                          "tiny_geo_scratch", "tiny_geo_lowdata",
                                          "tiny_geo_scratch_lowdata",
                                          "lotsa_tiny", "lotsa_tiny_finetune",
-                                         "lotsa_tiny_zeroshot", "lotsa_tiny_eval"])
+                                         "lotsa_tiny_zeroshot", "lotsa_tiny_eval",
+                                         "lotsa_mini", "lotsa_mini_zeroshot",
+                                         "lotsa_mini_eval", "lotsa_base",
+                                         "lotsa_base_zeroshot", "lotsa_base_eval",
+                                         "lotsa_tiny_full"])
 def test_experiment_configs_are_runnable(config_name):
     """
     Every shipped config must build a model whose geometry works at the NOMINAL

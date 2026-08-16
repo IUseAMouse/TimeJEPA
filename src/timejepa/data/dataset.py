@@ -76,6 +76,28 @@ def _pack_series(series_list):
     return out
 
 
+def _to_tensor(window: np.ndarray) -> "torch.Tensor":
+    """
+    Convertit une fenêtre en tenseur, en garantissant qu'elle est INSCRIPTIBLE.
+
+    B23. Avec `use_mmap=True`, `np.load(mmap_mode="r")` renvoie un tableau en
+    lecture seule. `np.ascontiguousarray` sur une tranche déjà contiguë ne copie
+    PAS, et `.float()` sur du float32 est un no-op : le tenseur partage donc la
+    mémoire du mapping (vérifié : `t.data_ptr()` égale l'adresse du tableau).
+    PyTorch le signale — « writing to this tensor will result in undefined
+    behavior » — et les augmentations sont appliquées juste après.
+
+    Une écriture en place sur un mapping read-only, c'est au mieux un segfault,
+    au pire une corruption silencieuse du `.npy` sur disque. La copie n'a lieu
+    que si nécessaire : sur le chemin non-memmap, le tableau est déjà
+    inscriptible et rien ne change.
+    """
+    arr = np.ascontiguousarray(window)
+    if not arr.flags.writeable:
+        arr = arr.copy()
+    return torch.from_numpy(arr).float()
+
+
 class TimeSeriesDataset(Dataset):
     """
     Dataset for time series with sliding windows.
@@ -467,8 +489,8 @@ class TimeSeriesDataset(Dataset):
             target = window[self.context_length:self.context_length + self.prediction_length]
 
         if self.return_tensor:
-            context = torch.from_numpy(np.ascontiguousarray(context)).float()
-            target = torch.from_numpy(np.ascontiguousarray(target)).float()
+            context = _to_tensor(context)
+            target = _to_tensor(target)
 
         return {
             'context': context,

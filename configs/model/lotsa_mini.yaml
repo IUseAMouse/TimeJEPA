@@ -1,0 +1,66 @@
+# @package _global_
+#
+# G5 — PRETRAIN LOTSA, échelle mini (5,1 M paramètres).
+#
+#   make train CONFIG=lotsa_mini ARGS="trainer.accumulate_grad_batches=2 wandb.run_name=lotsa-mini"
+#
+# La cible du projet : 5 M paramètres, c'est-à-dire SOUS le plus petit
+# concurrent sérieux (Chronos-Bolt-Tiny ~9 M, Moirai-small ~14 M,
+# TiRex ~35 M). Un modèle de cette taille bien entraîné sur un corpus
+# divers est un candidat crédible pour la catégorie petite taille ;
+# viser le n°1 absolu, non — le haut du classement tient entre 35 M et
+# 500 M.
+#
+# Hérite de `lotsa_tiny` pour TOUT ce qui n'est pas la taille du modèle : corpus
+# converti, memmap, exclusions, stride, géométrie 1024/256, loss sigreg, décodeur
+# quantile. La seule variable est la capacité — c'est ce qui rend la comparaison
+# entre échelles interprétable.
+#
+# Les dimensions sont écrites EXPLICITEMENT plutôt qu'héritées de `mini.yaml` :
+# celui-ci porte aussi son propre bloc `data`, qui écraserait le corpus LOTSA.
+# Un test vérifie qu'elles restent identiques à la référence.
+#
+# Batch et accumulation
+# ---------------------
+# batch 384 x accumulation 1 x 3 GPU = 1152 de batch effectif, dans l'ordre
+# de grandeur des 1536 des runs de référence. À VALIDER par un run court : ces
+# valeurs sont un point de départ pour 24 Go à contexte 1024, pas une mesure.
+#   +trainer.max_steps=5000 pour borner le smoke test.
+defaults:
+  - lotsa_tiny
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini"
+  encoder:
+    d_model: 192
+    n_heads: 6
+    n_layers: 4
+    d_ff: 768
+  predictor:
+    d_model: 192
+    n_heads: 6
+    n_layers: 3
+    d_ff: 768
+  decoder:
+    d_model: 192
+    hidden_dim: 384
+    n_layers: 4
+
+training:
+  optimizer:
+    learning_rate: 0.0004
+
+data:
+  batch_size: 384
+
+trainer:
+  accumulate_grad_batches: 1
+
+wandb:
+  tags:
+    - "mini"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "pretrain"

@@ -123,6 +123,25 @@ def is_eval_overlap(name: str, patterns: Sequence[str] = EVAL_OVERLAP_PATTERNS) 
     return any(p in lowered for p in patterns)
 
 
+def family_of(name: str) -> str:
+    """
+    Regroupe les sous-ensembles LOTSA qui ne sont qu'une tranche temporelle d'un
+    même corpus : `cmip6_1850`…`cmip6_2010`, `era5_1989`…`era5_2018`,
+    `largest_2017`…`largest_2021`, `gfc12_load`/`gfc14_load`/`gfc17_load`.
+
+    Sans ce regroupement, le plafond par sous-ensemble ne protège de rien : E10 a
+    mesuré que deux datasets pesaient 48,7 % du batch de pretrain, et LOTSA
+    referait pire à plus grande échelle — cmip6 (33 tranches) et era5 (30) sont
+    63 sous-ensembles sur 123, soit la moitié du corpus en réanalyse climatique,
+    un signal lisse et saisonnier très éloigné des séries des benchmarks.
+    """
+    import re
+    # suffixe d'année : _1850, _2018, ou collé comme gfc12_load
+    base = re.sub(r"_(18|19|20)\d{2}$", "", name)
+    base = re.sub(r"^gfc\d{2}_", "gfc_", base)
+    return base
+
+
 def segment_series(
     series: np.ndarray,
     chunk_length: int,
@@ -159,31 +178,172 @@ def _finite(chunk: np.ndarray) -> bool:
     return bool(np.isfinite(chunk).all())
 
 
+def impute_gaps(chunk: np.ndarray, max_nan_fraction: float) -> Optional[np.ndarray]:
+    """
+    Comble les trous par interpolation linéaire, ou renonce si le morceau est
+    trop troué.
+
+    Rejeter un morceau entier pour un seul NaN est intenable sur un corpus réel :
+    mesuré sur LOTSA, HZMETRO perdait 160/160 morceaux et SHMETRO 2304/2304 —
+    100 % du sous-ensemble pour quelques valeurs manquantes. Les trous sont la
+    norme, pas l'exception (plusieurs sous-ensembles portent « _with_missing »
+    dans leur nom).
+
+    L'interpolation linéaire sur des trous courts est la pratique standard et
+    reste honnête ; sur des trous longs elle fabrique du signal. D'où le seuil :
+    au-delà de `max_nan_fraction`, on préfère perdre le morceau que l'inventer.
+
+    Renvoie le morceau comblé, ou None s'il est trop troué / entièrement NaN.
+    """
+    finite = np.isfinite(chunk)
+    n_missing = chunk.shape[0] - int(finite.sum())
+    if n_missing == 0:
+        return chunk
+    if n_missing / chunk.shape[0] > max_nan_fraction:
+        return None
+    if not finite.any():
+        return None
+
+    filled = chunk.copy()
+    idx = np.arange(chunk.shape[0])
+    # np.interp étend par la valeur de bord, ce qui traite aussi les trous en
+    # début et fin de morceau (un ffill/bfill implicite).
+    filled[~finite] = np.interp(idx[~finite], idx[finite], chunk[finite])
+    return filled
+
+
+def choose_chunk_length(
+    sample_lengths: Sequence[int],
+    requested: int,
+    min_length: int,
+) -> Optional[int]:
+    """
+    Choisit la longueur de morceau EFFECTIVE d'un sous-ensemble.
+
+    `chunk_length` est un MAXIMUM, pas une valeur imposée : chaque sous-ensemble
+    produit son propre fichier dense, donc rien n'oblige deux sous-ensembles à
+    partager la même longueur. Mesuré sur LOTSA : BEIJING_SUBWAY_30MIN n'a que
+    des séries de 1572 pas et perdait ses 552 séries face à un chunk fixé à 2048.
+
+    Règle : la médiane des longueurs observées, plafonnée par `requested` et
+    plancher à `min_length`. Renvoie None si la médiane est sous `min_length` —
+    le sous-ensemble ne peut alors produire aucune fenêtre utilisable.
+    """
+    if not sample_lengths:
+        return None
+    median = int(np.median(np.asarray(sample_lengths)))
+    if median < min_length:
+        return None
+    return min(requested, median)
+
+
+class ChunkStats:
+    """
+    Compte ce qui entre et ce qui sort de la segmentation.
+
+    Sans ça, un sous-ensemble qui ne produit rien est indistinguable d'un
+    sous-ensemble dont les séries sont trop courtes pour être utiles : le script
+    disait « aucun morceau écrit » et laissait deviner. Or les deux cas appellent
+    des décisions opposées — baisser `chunk_length`, ou accepter la perte.
+    """
+
+    __slots__ = ("series", "too_short", "lost_to_chunking", "non_finite", "imputed",
+                 "emitted", "min_len", "max_len", "_nan_frac_sum")
+
+    def __init__(self):
+        self.series = 0
+        self.too_short = 0          # < min_length : inutilisable de toute façon
+        self.lost_to_chunking = 0   # >= min_length mais < chunk_length : RÉCUPÉRABLE
+        self.non_finite = 0     # trop troués : renoncés
+        self.imputed = 0        # trous courts : comblés par interpolation
+        self.emitted = 0
+        self.min_len = None
+        self.max_len = None
+        self._nan_frac_sum = 0.0
+
+    def summary(self, chunk_length: int, min_length: int) -> str:
+        if self.series == 0:
+            return "aucune série lue (sous-ensemble vide ou colonne absente)"
+        lengths = f"longueurs {self.min_len}–{self.max_len}"
+        parts = [f"{self.series:,} séries ({lengths})",
+                 f"{self.emitted:,} morceaux"]
+        if self.too_short:
+            parts.append(f"{self.too_short:,} trop courtes (<{min_length})")
+        if self.lost_to_chunking:
+            parts.append(
+                f"⚠️ {self.lost_to_chunking:,} PERDUES entre {min_length} et "
+                f"{chunk_length} — baisser --chunk-length les récupérerait"
+            )
+        if self.imputed:
+            parts.append(f"{self.imputed:,} morceaux comblés (trous courts)")
+        if self.non_finite:
+            mean_frac = 100 * self._nan_frac_sum / self.non_finite
+            parts.append(
+                f"{self.non_finite:,} rejetés (trous : {mean_frac:.0f} % en moyenne)"
+            )
+            if mean_frac > 15:
+                # Mesuré sur LOTSA : HZMETRO/SHMETRO ont ~23 % de NaN en blocs
+                # RÉGULIERS de 23 pas — la fermeture nocturne du métro. Interpoler
+                # y fabriquerait de la fréquentation à 3 h du matin. Monter le
+                # seuil serait donc une erreur, pas une solution.
+                parts.append(
+                    "→ trous probablement STRUCTURELS (fermeture nocturne, "
+                    "capteur hors service) : ne pas monter --max-nan-fraction, "
+                    "ce sous-ensemble est inutilisable sans gestion des manquants"
+                )
+        return " | ".join(parts)
+
+
 def iter_dense_chunks(
     series_iter: Iterable[np.ndarray],
     chunk_length: int,
     min_length: int,
     max_chunks: Optional[int] = None,
-    drop_non_finite: bool = True,
+    max_nan_fraction: float = 0.05,
+    stats: Optional[ChunkStats] = None,
 ) -> Iterator[np.ndarray]:
     """
     Transforme un flux de séries de longueurs quelconques en un flux de morceaux
     de longueur EXACTEMENT `chunk_length`, prêts à être empilés en dense.
 
-    Les séries plus courtes que `chunk_length` sont écartées ici : les mélanger
-    obligerait à un tableau `object`, ce que la contrainte 1 interdit. Elles
-    restent accessibles via un second passage à `chunk_length` plus court, ce que
-    fait `prepare_subset` en choisissant automatiquement la longueur.
+    Les séries plus courtes que `chunk_length` sont écartées : les mélanger
+    obligerait à un tableau `object`, ce que la contrainte 1 du module interdit.
+    C'est un vrai coût — une série de 5 000 pas est utilisable pour une fenêtre
+    de 1 280 mais sera perdue si `chunk_length` vaut 8 192 — d'où `ChunkStats`,
+    qui le rend visible au lieu de le laisser deviner.
     """
     emitted = 0
     for series in series_iter:
-        for chunk in segment_series(series, chunk_length, min_length):
+        arr = np.asarray(series, dtype=np.float32).ravel()
+        n = arr.shape[0]
+        if stats is not None:
+            stats.series += 1
+            stats.min_len = n if stats.min_len is None else min(stats.min_len, n)
+            stats.max_len = n if stats.max_len is None else max(stats.max_len, n)
+            if n < min_length:
+                stats.too_short += 1
+            elif n < chunk_length:
+                stats.lost_to_chunking += 1
+
+        for chunk in segment_series(arr, chunk_length, min_length):
             if chunk.shape[0] != chunk_length:
                 continue
-            if drop_non_finite and not _finite(chunk):
-                continue
+            if not _finite(chunk):
+                filled = impute_gaps(chunk, max_nan_fraction)
+                if filled is None:
+                    if stats is not None:
+                        stats.non_finite += 1
+                        stats._nan_frac_sum += float(
+                            1.0 - np.isfinite(chunk).mean()
+                        )
+                    continue
+                chunk = filled
+                if stats is not None:
+                    stats.imputed += 1
             yield chunk
             emitted += 1
+            if stats is not None:
+                stats.emitted = emitted
             if max_chunks is not None and emitted >= max_chunks:
                 return
 

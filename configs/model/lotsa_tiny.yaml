@@ -52,8 +52,42 @@ defaults:
 model:
   name: "timejepa_lotsa_tiny"
 
+training:
+  # ⚠️ LE RÉGLAGE LE PLUS IMPORTANT DE CETTE CONFIG, et le moins évident.
+  #
+  # Le scheduler est un cosinus calibré sur `max_epochs`. Le défaut hérité de
+  # tiny.yaml est 40 — soit, à 6 h l'époque sur ce corpus, DIX JOURS. Le premier
+  # run LOTSA en a fait 3, donc le LR n'a décru que de 0,000749 à 0,000740 en
+  # 400 000 pas : le modèle a tourné à LR maximal du début à la fin.
+  #
+  # Un modèle à LR constant maximal ne converge pas, il oscille. Mesuré sur ce
+  # run : val_loss rebondissant entre 0,345 et 0,445 sans tendance, alors que
+  # train_loss_epoch descendait proprement (0,47 → 0,395) — et un « meilleur
+  # checkpoint » qui tombait donc sur un creux de bruit, systématiquement vers le
+  # milieu de l'époque 1.
+  #
+  # `max_epochs` doit refléter le BUDGET RÉEL. À 5, le cosinus décroît jusqu'à ~0
+  # et la fin de run devient une vraie convergence.
+  #
+  # Corollaire pour la sélection de checkpoint : avec un recuit correct, prendre
+  # le DERNIER. Sans recuit, ni le dernier ni le meilleur val_loss ne sont
+  # légitimes — il faut en évaluer plusieurs (voir E13 du registre).
+  max_epochs: 5
+
 data:
   data_dir: "data/processed/lotsa"
+
+  # Mesuré sur 3x RTX 3090 : à batch 256, seulement 3 Go de VRAM (11 %) et 53-74 %
+  # d'occupation GPU — le goulot est le chargement, pas le calcul. Un batch plus
+  # gros amortit le coût par itération et remplit les cartes, et 512 retombe
+  # exactement sur le batch effectif 1536 des runs de référence (3 GPU).
+  # À revalider par un run court : ~6 Go attendus, il reste de la marge.
+  batch_size: 512
+
+  # 3 GPU x 8 = 24 workers. À 11 % de VRAM et 60 % d'occupation, c'est le nombre
+  # de workers qui limite, pas la mémoire. Garder persistent_workers à false
+  # (défaut) : c'est ce qui avait fait tuer un run par l'OOM killer (B19).
+  num_workers: 8
   # null => prend tous les .npy du répertoire, donc pas de liste à maintenir
   # au fil des versions de LOTSA.
   datasets: null
@@ -64,14 +98,40 @@ data:
   # (--max-chunks-per-subset) ; la température reste le second garde-fou.
   sampling_temperature: 0.5
 
-  # Les morceaux LOTSA font 8192 pas : un stride de 8 produirait ~900 fenêtres
-  # par morceau, soit un facteur de redondance élevé pour un corpus déjà énorme.
-  # 64 garde ~110 fenêtres par morceau, largement assez pour la diversité.
-  stride: 64
+  # 6.0 était le défaut de tiny.yaml, calibré pour 24 datasets Monash. Sur 112
+  # sous-ensembles LOTSA, le log montre des datasets de 648 échantillons repassés
+  # SIX fois par époque — 18 passes en 3 époques. E13b a mesuré du surapprentissage
+  # net (train qui descend, val qui monte, à partir d'environ une époque) ; ce
+  # sur-échantillonnage en est un contributeur direct et gratuit à supprimer.
+  max_oversample_ratio: 3.0
+
+  # Le stride doit suivre la longueur des morceaux, qui n'est PAS 8192.
+  # La conversion choisit la longueur par sous-ensemble (médiane des séries,
+  # plafonnée) et sort surtout du ~2048, parce qu'un chunk fixe à 8192 jetait des
+  # sous-ensembles entiers — alibaba y perdait 108 852 de ses 116 818 séries.
+  #
+  # Fenêtres par morceau = (longueur − 1280) / stride :
+  #   morceau 2048, stride 64  ->  12   ← l'époque serait 5x plus PETITE que Monash
+  #   morceau 2048, stride  8  ->  96   ← comparable aux 50 M de fenêtres Monash
+  #
+  # 8 est donc le bon réglage ici, et le raisonnement « corpus énorme donc stride
+  # large » ne tient plus : les plafonds par famille prélèvent ~12 % de LOTSA,
+  # soit ~10x Monash en observations, pas 1000x.
+  stride: 8
 
   # Multi-résolution off : LOTSA apporte les fréquences en nature.
   multi_resolution_factors: [1]
   p_multi_resolution: 0.0
+
+trainer:
+  # Batch effectif = batch_size x accumulation x nombre de GPU.
+  #   512 x 1 x 3 GPU = 1536  ← exactement le régime des runs de référence
+  #   512 x 1 x 4 GPU = 2048
+  # tiny_geo utilisait accumulation 6 parce qu'il tournait sur 1 ou 2 cartes ;
+  # hériter cette valeur donnait 6144 ici, un régime de LR sans rapport avec
+  # aucun run précédent, et forçait un override sur chaque commande.
+  # ⚠️ Sur 1 GPU, remettre accumulate_grad_batches=3.
+  accumulate_grad_batches: 1
 
 wandb:
   tags:
