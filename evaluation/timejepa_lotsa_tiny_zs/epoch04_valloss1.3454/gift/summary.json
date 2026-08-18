@@ -1,0 +1,16 @@
+{
+  "checkpoint": "checkpoints/timejepa_lotsa_tiny_zs/pretrain_False/epoch04_valloss1.3454.ckpt",
+  "n_configs": 3,
+  "vs_official_seasonal_naive": {
+    "geomean_MASE_ratio": 0.8701918526239606,
+    "n_configs_MASE": 3,
+    "geomean_CRPS_ratio": 0.591763758105625,
+    "n_configs_CRPS": 3
+  },
+  "vs_local_seasonal_naive": {
+    "geomean_MASE_ratio": 0.8701918557865613,
+    "n_configs_MASE": 3,
+    "geomean_CRPS_ratio": 0.5755703667463972,
+    "n_configs_CRPS": 3
+  }
+}

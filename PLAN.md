@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-18 — E15 : l'ablation d'objectif ne confirme PAS la thèse (1,4 %, recon gagne 17/28 cellules). La contribution devient E14, le zero-shot à petite échelle.
+**Dernière mise à jour :** 2026-08-18 — E16 : GIFT-Eval 0.979 MASE / 0.677 CRPS à ~1M params en zero-shot ; signal d'horizon G6 répliqué. G7 : courbe d'échelle sur corpus complet.
 
 ---
 
@@ -676,7 +676,11 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
 - [ ] **P2.3** Décodeur flatten-head PatchTST-style (remplace l'overlap-add, B14)
 - [x] **P2.4** Rollout correct (B10) : tout dans l'espace normalisé, `revin.freeze()` implémenté
 - [ ] **P2.5** Données synthétiques : KernelSynth-like (compositions de noyaux GP) + TSMixup
-- [ ] **P2.6** Harness GIFT-Eval complet (23 datasets, 97 configs)
+- [x] **P2.6** Harness GIFT-Eval complet (23 datasets, 97 configs) — livré 2026-08-18.
+      Protocole transcrit du data.py officiel dans `src/timejepa/evaluation/gift.py`
+      (37 tests), CLI `scripts/evaluate_gift.py`, sortie au format CSV du leaderboard
+      + agrégat geomean vs Seasonal Naive officiel ET local. Données : `make gift-download`.
+      `python scripts/evaluate_gift.py --config-name lotsa_tiny_eval +checkpoint_path=<ckpt>`
 - [ ] **P2.7** Packaging HF : `PyTorchModelHubMixin` + safetensors,
       `TimeJEPA.from_pretrained("timejepa-tiny")`, `model.forecast(y, horizon, quantiles)`
 - [ ] **P2.8** Model card + `examples/quickstart.ipynb`
@@ -740,6 +744,149 @@ Conséquences, à traiter avant d'écrire quoi que ce soit :
       reste de 1,4 %. La variance de représentation ne porte donc pas le transfert : isoler le
       régularisateur n'apprendrait plus grand-chose.
 
+---
+
+## G7 — Courbe d'échelle sur le corpus complet (tiny ~1M, mini ~5M)
+
+E16 situe le tiny plafonné à 0.979/0.677 sur GIFT-Eval — à 3,3 points de Moirai-small qui a
+14× ses paramètres. Les échecs sont concentrés sur les fréquences sous-représentées du corpus
+plafonné (10S, 10T) : exactement le profil qu'E14 avait sur ETTm1 avant LOTSA. G7 teste les
+deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE variable par run.
+
+- [ ] **G7.1** Conversion complète (en cours) : `make lotsa-download CHUNKS=1000000 OUT=data/processed/lotsa_full`
+      puis AUDIT d'équilibre (en-tête de lotsa_tiny_full.yaml) — aucune famille > ~15 %.
+      Si une famille domine (cmip6/era5 probables sans plafonds) : reconvertir CETTE famille
+      seule via `--subsets <tranches> --max-chunks-per-subset N` après avoir retiré ses .npy
+      de lotsa_full — seul cas où un effacement est nécessaire, à faire à la main.
+- [ ] **G7.1b** DÉNOMBRER LE CORPUS EXACT de chaque pretrain, et le consigner au registre.
+      Le nombre d'observations réellement vues est l'axe X de toute courbe de scaling, et il
+      n'est écrit nulle part aujourd'hui — « ~12 % de LOTSA » est une estimation, pas une
+      mesure. À produire pour les DEUX corpus (plafonné et complet), et à répéter pour tout
+      corpus futur :
+      `python -c "import numpy as np, glob; a=[np.load(f, mmap_mode='r') for f in glob.glob('data/processed/lotsa*/*.npy')]"`
+      — plus précisément, pour chaque répertoire : nombre de fichiers, de morceaux, longueur
+      de morceau, total d'observations, et le total distinct RÉELLEMENT vu par époque
+      (fenêtres = (L−1280)/stride par morceau × morceaux, à distinguer du nombre
+      d'observations : E13b a montré que 83 M de fenêtres venaient de ~800 k morceaux seulement).
+      Consigner les deux chiffres — observations et fenêtres distinctes — pour chaque run du
+      papier. Sans cela, la courbe d'échelle n'a pas d'abscisse défendable.
+- [ ] **G7.2** Tiny sur corpus complet :
+      `make train CONFIG=lotsa_tiny_full ARGS="wandb.run_name=tiny-full"`
+      ⚠️ Sélection : prendre le DERNIER checkpoint, pas le meilleur val_loss — avec un recuit
+      correct sur max_epochs=2 le dernier est le légitime (E12/E13).
+- [ ] **G7.3** Finetune zero-shot + evals :
+      `python scripts/train.py --config-name lotsa_tiny_full_zeroshot \`
+      `    +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_full/pretrain_True/<ckpt>`
+      puis `evaluate.py`/`evaluate_gift.py --config-name lotsa_tiny_eval` sur
+      `checkpoints/timejepa_lotsa_tiny_full_zs/pretrain_False/<ckpt>`
+- [ ] **G7.3b** POINT DE CONTRÔLE avant de payer le run mini : comparer les deux evals de
+      G7.3 à E14 (Nixtla) et E16 (GIFT, ratio global vs 0.979). Regarder spécifiquement
+      `bizitobs/10S` et `solar/10T` — la prédiction écrite ici AVANT le run est que le corpus
+      complet les corrige comme LOTSA a corrigé ETTm1. Si tiny-full ne bouge pas, comprendre
+      pourquoi avant de lancer G7.4.
+- [ ] **G7.4** Mini sur corpus complet :
+      `make train CONFIG=lotsa_mini_full ARGS="wandb.run_name=mini-full"`
+- [ ] **G7.5** Finetune zero-shot mini + evals (config `lotsa_mini_full_zeroshot`, eval avec
+      `lotsa_mini_eval`)
+
+### G8 — Fermer l'écart fréquentiel (issu d'E17, à ordonnancer après G7)
+
+E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08 sur 5T, ×2,42 sur
+10S) et non l'horizon. Par effet attendu décroissant :
+
+- [ ] **G8.1** Aligner les motifs d'exclusion sur `GiftEvalPretrain` (152 sous-ensembles) plutôt
+      que sur une liste maison plus stricte : `solar_power`, `taxi_30min`, `kdd2022`, `LOS_LOOP`,
+      `covid19_energy` y sont AUTORISÉS et nous les excluons. Vérifier un par un qu'il n'y a pas
+      de recoupement réel avec un dataset d'éval avant de les réintégrer.
+- [ ] **G8.2** Conditionnement fréquentiel explicite (façon FlowState `scale_factor`) — réponse
+      architecturale directe au mode d'échec mesuré.
+- [ ] **P2.5 (remonté)** Données synthétiques : couvrir les fréquences absentes du corpus.
+- [ ] **G8.3** Contexte 2048 (contre 1024) — à évaluer coût attention vs gain.
+- [ ] **G8.4** Scaler robuste (arcsinh) en alternative à RevIN, dont le plancher epsilon est une
+      pathologie mesurée (G6).
+
+### G9 — Équivariance d'échelle : la justification architecturale de JEPA
+
+**Le constat.** E17 corrigé isole une faiblesse sub-horaire réelle (10T/15T dégradent sur
+solar, jena_weather, ett1, ett2 ; le 5T va bien). FlowState (IBM, 9,1M, #2 du leaderboard)
+règle ce problème par construction : son SSM est à temps continu, `Ā = e^{AΔ}`, et il suffit
+de poser `Δ̄ = s_Δ·Δ` avec `s_Δ = 24/saisonnalité` pour qu'un cycle journalier occupe le même
+angle dans l'espace d'état quelle que soit la fréquence. Limites déclarées par le papier
+(arXiv:2508.05287) : équivariance APPROXIMATIVE et non prouvée, et `s_Δ` est fourni de
+l'extérieur au niveau du dataset — il faut connaître la saisonnalité.
+
+**Ce que nous pouvons faire, et que la reconstruction ne peut pas.** Le pendant transformer
+de Δ existe déjà : RoPE tourne de `m·θᵢ`, un SSM diagonal de `ω·Δ` — c'est la même opération,
+et mettre les positions à l'échelle est la « position interpolation » connue des LLM. Mais
+surtout, **comparer des LATENTS permet d'imposer l'équivariance par l'objectif** : contexte à
+la résolution k₁, encodeur cible voyant le même futur PHYSIQUE à la résolution k₂, prédicteur
+conditionné par w = k₂/k₁. Avec une loss de reconstruction c'est impossible — deux résolutions
+n'ont pas les mêmes valeurs cibles. **C'est la première justification proprement
+architecturale du choix JEPA**, plus forte que le signal d'horizon d'E16.
+
+⚠️ Viser l'ÉQUIVARIANCE (le latent dépend de l'échelle, le prédicteur est informé de
+l'échelle cible), pas l'INVARIANCE (latent identique quelle que soit l'échelle) : une série à
+5 min et sa décimation horaire diffèrent réellement, et exiger l'égalité détruirait de
+l'information. C'est aussi pourquoi le paramètre `w` est nécessaire et non un ajout cosmétique.
+
+⚠️ Ce que G9 ne règlera PAS : les écarts de DOMAINE mesurés en E17 (bizitobs ×2,4 à 10S mais
+aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là relèvent du corpus.
+
+- [ ] **G9.0** Rallumer la multi-résolution au pretrain LOTSA — config seule, mécanisme DÉJÀ
+      présent dans `datamodule.py`. `tiny.yaml` l'utilise (`[1,2,3,4]`, p=0.35) depuis toujours ;
+      seul `lotsa_tiny.yaml` l'a coupée, et c'est le seul modèle avec le trou sub-horaire.
+      Proposé : `multi_resolution_factors: [1,2,3,4,6]`, `p_multi_resolution: 0.3`.
+- [ ] **G9.1** Mise à l'échelle RoPE À L'INFÉRENCE SEULE, `s_Δ` dérivé de la saisonnalité que
+      `evaluation/gift.py` calcule déjà. Aucun réentraînement : testable sur le checkpoint
+      actuel en une soirée. Répond à la question qui conditionne tout le reste — « le modèle
+      ne sait pas représenter cette échelle » ou « il ne l'a jamais vue » ?
+- [ ] **G9.2** JEPA inter-résolution : k₁/k₂ tirés indépendamment, `w = k₂/k₁` conditionnant
+      le prédicteur, cible = `target_encoder(futur décimé à k₂)`. SIGReg empêche la solution
+      dégénérée. Arm additif, aucune config existante modifiée.
+- [ ] **G9.3** Ablation : G9.2 contre G9.0 seul — l'équivariance par l'objectif bat-elle
+      l'augmentation par décimation ? C'est ça, le résultat publiable.
+
+**Critère de sortie G9 :** un écart 10T/15T ramené au niveau du 5T, et une réponse chiffrée à
+« l'objectif latent permet-il une équivariance que la reconstruction ne permet pas ».
+
+---
+
+### P3 — Plan de release : versions successives et critères de publication
+
+L'API d'inférence dépend de la classe `TimeJEPA` et de `forecast()`. Tant que le NOM de la
+classe et la SIGNATURE de ses méthodes ne bougent pas, changer de modèle ne casse rien — les
+nouveaux paramètres (ex. `scale_factor` de G9) s'ajoutent avec une valeur par défaut qui
+reproduit le comportement actuel. Les deux vraies sources de rupture sont ailleurs :
+1. **les clés du state_dict** — conditionner le prédicteur (G9.2) ajoute des poids, donc un
+   checkpoint ancien ne charge pas une architecture nouvelle. D'où un numéro de version dans
+   le checkpoint, et `load_checkpoint` qui refuse explicitement plutôt que de charger
+   partiellement en silence (le mode d'échec de B20).
+2. **la géométrie** (contexte, patch) — déjà une source de chiffres faux en silence.
+
+**Critères de release, à trancher AVANT chaque publication de poids :**
+
+| version | modèle | critère de sortie |
+|---|---|---|
+| v0.1 | tiny-full (G7.3) | ratio CRPS GIFT < 0.65 ET aucune régression vs 0.677 |
+| v0.2 | mini-full (G7.5) | < 0.60, et dominer TTM-R2 sur les deux métriques |
+| v0.3 | + équivariance (G9) | 10T/15T au niveau du 5T |
+| v1.0 | publication HF | ≥3 graines, calibration traitée (G4.2), model card honnête |
+
+- [ ] **P3.1** Couche d'inférence : `TimeJEPA.from_pretrained()` + `forecast(y, horizon,
+      quantiles)` sur numpy nu, sans Hydra ni Lightning, en réutilisant `evaluation/loading.py`.
+      À écrire PENDANT les runs G7 (le code ne bouge pas, les GPU tournent).
+- [ ] **P3.2** Version de checkpoint + refus explicite au chargement si incompatible.
+- [ ] **P3.3** HF (`PyTorchModelHubMixin` + safetensors) UNIQUEMENT au premier checkpoint qui
+      passe un critère de release ci-dessus. Publier des poids dont la perf n'est pas située
+      est ce que le §« Décisions actées » interdit depuis le début.
+
+---
+
+**Critère de sortie G7 :** trois points de courbe (tiny-plafonné 0.979 / tiny-complet /
+mini-complet) sur GIFT-Eval, protocole identique, CHACUN avec sa taille de corpus mesurée
+(G7.1b) — sans abscisse, ce n'est pas une courbe d'échelle. Si le corpus complet corrige bizitobs/solar
+comme LOTSA a corrigé ETTm1, la thèse « le levier est le corpus » a sa troisième réplication.
+
 
 ---
 
@@ -755,6 +902,11 @@ Conséquences, à traiter avant d'écrire quoi que ce soit :
 
 ## Journal
 
+- 2026-08-18 (suite 2) — E17 corrigé (fréquence/domaine étaient confondus). G8.1 : 20
+  sous-ensembles LOTSA réadmis. G9 ajouté (équivariance d'échelle) et P3 (plan de release).
+- 2026-08-18 (suite) — E16 : GIFT-Eval livré et mesuré (0.979/0.677 à ~1M, zero-shot). Le
+  signal d'horizon de G6 se réplique (monotone sur 97 configs). G7 ajouté : courbe d'échelle
+  tiny/mini sur corpus complet.
 - 2026-08-18 — G6 tranché, négativement (E15). La contribution du papier bascule de l'objectif
   vers le passage à l'échelle du corpus (E14). Priorité suivante : le harness GIFT-Eval (P2.6),
   sans lequel « battre le SOTA » reste non mesurable.

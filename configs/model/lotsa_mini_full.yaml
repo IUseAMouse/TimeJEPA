@@ -1,0 +1,36 @@
+# @package _global_
+#
+# G7 — PRETRAIN du MINI (~5M) sur le corpus LOTSA COMPLET.
+#
+#   python scripts/train.py --config-name lotsa_mini_full wandb.run_name=mini-full
+#
+# Hérite de lotsa_mini (architecture 192/4+3, LR 4e-4, batch 384) et ne change
+# que ce que lotsa_tiny_full change pour le tiny : le corpus et le budget
+# d'époques. Toute divergence supplémentaire entre les régimes tiny-full et
+# mini-full rendrait leur comparaison ininterprétable — c'est la courbe
+# d'échelle du papier, elle ne vaut que si SEULE la taille du modèle bouge.
+#
+# max_epochs: 2 — même logique qu'E13a/lotsa_tiny_full : le cosinus est étalé
+# sur max_epochs, et sur le corpus complet une époque est déjà énorme. Voir
+# l'en-tête de lotsa_tiny_full pour l'audit d'équilibre À FAIRE avant tout run.
+defaults:
+  - lotsa_mini
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_full"
+
+data:
+  data_dir: "data/processed/lotsa_full"
+
+training:
+  max_epochs: 2
+
+wandb:
+  tags:
+    - "mini"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "pretrain"
+    - "full-corpus"

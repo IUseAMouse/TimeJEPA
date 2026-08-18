@@ -43,10 +43,16 @@ mlruns/
 data/raw/**
 data/processed/**
 data/cache/**
+# GIFT-Eval benchmark snapshot (1.5 GB of arrow files, make gift-download)
+data/gift_eval/**
 *.npy
 *.npz
 *.tsf
 *.csv
+# EXCEPTION : les données vendues avec le package (baseline officielle GIFT-Eval,
+# nécessaire à la normalisation leaderboard). La règle *.csv l'avait silencieusement
+# exclue du commit — le harness marchait localement et cassait partout ailleurs.
+!src/timejepa/evaluation/assets/*.csv
 *.parquet
 !data/.gitkeep
 !data/raw/.gitkeep

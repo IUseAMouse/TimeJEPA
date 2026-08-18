@@ -1775,3 +1775,62 @@ def test_reconstruction_loss_is_robust_to_the_revin_epsilon_floor():
     assert components['target_absmax'] > 6000, \
         "l'amplitude des cibles doit rester observable malgré la loss robuste"
 
+
+
+# ---------------------------------------------------------------------------
+# G8.1 — réadmission ciblée de sous-ensembles LOTSA (E17).
+#
+# Les motifs d'exclusion sont des sous-chaînes grossières ; EVAL_SAFE_OVERRIDES
+# réadmet des homonymes sans rapport avec l'éval. C'est la zone du projet où une
+# erreur invalide TOUS les chiffres d'un coup — d'où un test qui épingle les
+# deux sens : ce qui doit rester dehors, et ce qui doit être rentré.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", [
+    # datasets d'évaluation GIFT-Eval
+    "m4_yearly", "m4_hourly", "m4_daily", "m4_monthly", "m4_quarterly", "m4_weekly",
+    "SZ_TAXI", "LOOP_SEATTLE", "M_DENSE", "covid_deaths", "hospital", "restaurant",
+    "saugeenday", "us_births", "car_parts_with_missing", "hierarchical_sales",
+    "kdd_cup_2018_with_missing", "temperature_rain_with_missing",
+    # datasets d'évaluation Nixtla
+    "traffic_hourly", "traffic_weekly", "weather", "oikolab_weather",
+    "cdc_fluview_ilinet",
+    # datasets d'évaluation Monash locale
+    "solar_power", "wiki-rolling_nips", "extended_web_traffic_with_missing",
+    "kaggle_web_traffic_weekly",
+])
+def test_eval_datasets_stay_excluded_from_pretraining(name):
+    """Un seul de ces noms au pretrain invaliderait tous les chiffres du projet."""
+    from timejepa.data.lotsa import is_eval_overlap
+    assert is_eval_overlap(name), f"{name} FUIT dans le corpus de pré-entraînement"
+
+
+@pytest.mark.parametrize("name", [
+    "m1_monthly", "m1_quarterly", "m1_yearly",
+    "monash_m3_monthly", "monash_m3_other", "monash_m3_quarterly", "monash_m3_yearly",
+    "tourism_monthly", "tourism_quarterly", "tourism_yearly",
+    "nn5_daily_with_missing", "nn5_weekly",
+    "taxi_30min", "kdd2022", "covid19_energy", "covid_mobility",
+    "Q-TRAFFIC", "australian_electricity_demand",
+    "beijing_air_quality", "china_air_quality",
+])
+def test_safe_overrides_are_readmitted(name):
+    """
+    Ces sous-ensembles sont dans GiftEvalPretrain (corpus sanctionné par le
+    benchmark) et n'ont de contrepartie dans AUCUNE de nos trois suites d'éval.
+    Les exclure coûtait de la couverture fréquentielle pour rien (E17).
+    """
+    from timejepa.data.lotsa import is_eval_overlap
+    assert not is_eval_overlap(name), f"{name} devrait être réadmis"
+
+
+def test_overrides_match_exactly_never_as_substring():
+    """
+    Un override doit être une égalité de nom, jamais une sous-chaîne : sinon
+    'taxi_30min' réadmettrait 'sz_taxi_30min_variant' et rouvrirait par
+    l'override le trou que le motif ferme.
+    """
+    from timejepa.data.lotsa import is_eval_overlap
+    assert is_eval_overlap("taxi_30min_extended")
+    assert is_eval_overlap("m1_monthly_v2")
+    assert is_eval_overlap("pre_kdd2022")

@@ -1,0 +1,44 @@
+# @package _global_
+#
+# G7 — FINETUNE zero-shot du tiny pré-entraîné sur le corpus COMPLET.
+#
+#   python scripts/train.py --config-name lotsa_tiny_full_zeroshot \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_full/pretrain_True/<ckpt> \
+#       wandb.run_name=tiny-full-zeroshot
+#
+#   # eval Nixtla/Monash (la géométrie est celle de lotsa_tiny_eval) :
+#   python scripts/evaluate.py --config-name lotsa_tiny_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_full_zs/pretrain_False/<ckpt>
+#   # eval GIFT :
+#   python scripts/evaluate_gift.py --config-name lotsa_tiny_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_full_zs/pretrain_False/<ckpt>
+#
+# Même protocole que lotsa_tiny_zeroshot — full_finetune, décodeur entraîné sur
+# le corpus de pretrain, zéro donnée du domaine d'éval — mais sur lotsa_full,
+# hérité de lotsa_tiny_full : le finetune doit voir LE MÊME corpus que le
+# pretrain, sinon la comparaison tiny-plafonné vs tiny-complet mélange deux
+# variables. Nom distinct pour la même raison que lotsa_tiny_recon_zeroshot :
+# train.py dérive le répertoire de checkpoints de model.name, et mélanger les
+# sorties de deux arms est le mode d'échec le plus cher qui existe.
+defaults:
+  - lotsa_tiny_full
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_full_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "zeroshot"
+    - "full-corpus"

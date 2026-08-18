@@ -116,10 +116,104 @@ EVAL_OVERLAP_PATTERNS: Tuple[str, ...] = tuple(
     dict.fromkeys(NIXTLA_OVERLAP_PATTERNS + GIFT_EVAL_OVERLAP_PATTERNS)
 )
 
+# Sous-ensembles RÉADMIS malgré un motif qui les attrape (G8.1).
+# -------------------------------------------------------------
+# Les motifs sont des sous-chaînes, donc volontairement grossiers : « taxi »
+# attrape sz_taxi (éval GIFT) ET taxi_30min (New York, sans rapport), « m1 »
+# attrape m1_monthly alors que l'éval ne porte que sur M4. E17 a mesuré ce que
+# coûte cette grossièreté : notre écart au leaderboard suit la couverture
+# fréquentielle, et nous jetions gratuitement des fréquences.
+#
+# Référence de sécurité : `Salesforce/GiftEvalPretrain`, le corpus de
+# pré-entraînement SANCTIONNÉ par le benchmark (152 sous-ensembles). Tout ce qui
+# s'y trouve est déclaré non-fuitant pour GIFT-Eval par ses auteurs.
+#
+# ⚠️ MAIS cela ne suffit pas : nous évaluons aussi sur Nixtla et sur 8 datasets
+# Monash locaux, que GIFT ne connaît pas. Chaque entrée ci-dessous est donc
+# vérifiée contre LES TROIS suites, avec la raison en clair. Ne rien ajouter ici
+# sans faire les trois vérifications.
+EVAL_SAFE_OVERRIDES: Tuple[str, ...] = (
+    # --- compétitions M1/M3 : l'éval ne porte que sur M4 -------------------
+    "m1_monthly", "m1_quarterly", "m1_yearly",
+    "monash_m3_monthly", "monash_m3_other",
+    "monash_m3_quarterly", "monash_m3_yearly",
+    # Séries basse fréquence, précisément là où nos pires MASE se trouvent
+    # (m4_yearly 5.08, m4_quarterly 1.54) : le corpus n'a presque rien
+    # d'annuel ou de trimestriel.
 
-def is_eval_overlap(name: str, patterns: Sequence[str] = EVAL_OVERLAP_PATTERNS) -> bool:
-    """Vrai si le nom du sous-ensemble LOTSA recoupe un benchmark d'évaluation."""
+    # --- tourisme : aucune suite d'éval ne le contient ---------------------
+    "tourism_monthly", "tourism_quarterly", "tourism_yearly",
+
+    # --- nn5 : dans AUCUNE des trois suites d'éval actuelles ---------------
+    # (nn5_daily a servi de corpus de transfert tenu à l'écart en G4.6 ; ce
+    #  round est clos, et il n'apparaît ni dans Nixtla, ni dans les 8 Monash,
+    #  ni dans les 97 configs GIFT.)
+    "nn5_daily_with_missing", "nn5_weekly",
+
+    # --- taxis New York, 30 min : l'éval GIFT porte sur SZ_TAXI (Shenzhen) --
+    "taxi_30min",
+
+    # --- KDD Cup 2022 : éolien à 10 MINUTES --------------------------------
+    # L'éval GIFT porte sur kdd_cup_2018 (qualité de l'air de Pékin) : autre
+    # compétition, autre domaine, autre année. Et c'est notre plus gros gain
+    # attendu : 10T est la fréquence où nous perdons x1,94 (E17).
+    "kdd2022",
+
+    # --- COVID : l'éval GIFT porte sur covid_deaths ------------------------
+    "covid19_energy",     # consommation électrique pendant la pandémie
+    "covid_mobility",     # indices de mobilité
+
+    # --- trafic Baidu (Chine) : l'éval Nixtla porte sur PEMS (Californie) ---
+    "Q-TRAFFIC",
+
+    # --- demande électrique australienne (30 min) --------------------------
+    # L'éval Nixtla « electricity » est UCI/Portugal, l'éval Monash locale est
+    # electricity-hourly (le même UCI). Le marché australien est un jeu
+    # distinct, et GiftEvalPretrain le sanctionne.
+    "australian_electricity_demand",
+
+    # --- qualité de l'air chinoise -----------------------------------------
+    # ⚠️ L'entrée la moins tranchée du lot : l'éval GIFT kdd_cup_2018 est aussi
+    # de la qualité de l'air pékinoise, et un recouvrement de FENÊTRES
+    # TEMPORELLES est concevable. GiftEvalPretrain les inclut tous les deux, ce
+    # qui vaut caution des auteurs du benchmark. À retirer d'ici au moindre
+    # doute — le gain (horaire, fréquence déjà bien couverte) est faible et ne
+    # justifie pas un risque de contamination.
+    "beijing_air_quality", "china_air_quality",
+)
+
+# Ce qui reste EXCLU parmi les sous-ensembles pourtant sanctionnés par GIFT, et
+# pourquoi — la liste est aussi importante que la précédente :
+#   traffic_hourly, traffic_weekly  : traffic_hourly EST le Nixtla `traffic` et
+#       le Monash `traffic-hourly`. Contamination mesurée et documentée au §5.
+#   weather                          : EST le Nixtla `weather`.
+#   oikolab_weather                  : réanalyse météo, adjacente à `weather` —
+#       et redondante, le corpus contient déjà era5 (30 tranches).
+#   cdc_fluview_ilinet               : EST la source du Nixtla `illness`/ILI.
+#   solar_power                      : le Monash local évalue solar-10-minute.
+#   extended_web_traffic_with_missing, kaggle_web_traffic_weekly,
+#   wiki-rolling_nips                : le Monash local évalue
+#       wikipedia-web-traffic-extended.
+# Les quatre derniers groupes ne sont bloqués que par la suite Monash LOCALE,
+# dont le §1 note qu'elle tourne à saisonnalité m=1 (donc contre une baseline
+# faible). Si cette suite est abandonnée au profit de GIFT-Eval, ils
+# redeviennent admissibles — décision de périmètre, pas de sécurité.
+
+
+def is_eval_overlap(name: str, patterns: Sequence[str] = EVAL_OVERLAP_PATTERNS,
+                    overrides: Sequence[str] = EVAL_SAFE_OVERRIDES) -> bool:
+    """
+    Vrai si le nom du sous-ensemble LOTSA recoupe un benchmark d'évaluation.
+
+    Un nom listé dans `overrides` est réadmis même s'il correspond à un motif :
+    les motifs sont des sous-chaînes grossières et attrapent des homonymes sans
+    rapport (voir EVAL_SAFE_OVERRIDES). La comparaison est exacte et
+    insensible à la casse — jamais une sous-chaîne, sinon on rouvrirait par
+    l'override le trou que le motif ferme.
+    """
     lowered = name.lower()
+    if lowered in {o.lower() for o in overrides}:
+        return False
     return any(p in lowered for p in patterns)
 
 

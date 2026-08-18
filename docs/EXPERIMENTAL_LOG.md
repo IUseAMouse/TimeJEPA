@@ -811,6 +811,155 @@ survivrait peut-être — la dégradation au long horizon — repose aujourd'hui
 
 ---
 
+### E16 — GIFT-Eval : premier positionnement leaderboard, et le signal d'horizon se réplique (2026-08-18)
+
+**Protocole.** Harness P2.6 (97 configs officielles, fenêtres, saisonnalités et métriques
+transcrites du data.py officiel, 37 tests), agrégation leaderboard = moyenne géométrique des
+ratios par config vs Seasonal Naive officiel. Les deux checkpoints d'E15, une passe GPU de
+3 min 30 chacun. Réserves : notre harness (dérive de convention mesurée : 0 sur MASE, ~2,7 %
+sur CRPS), une graine par arm.
+
+**Positionnement — agrégats calculés par la MÊME formule depuis les CSV officiels du repo
+gift-eval :**
+
+| modèle | params | protocole | MASE ratio | CRPS ratio |
+|---|---|---|---|---|
+| TimesFM-2.0 | 500M | zero-shot* | 0.758 | 0.550 |
+| Chronos-Bolt small | ~48M | zero-shot* | 0.822 | 0.577 |
+| VisionTS | ~100M | zero-shot | 0.863 | 0.755 |
+| Moirai small | 14M | zero-shot | 0.946 | 0.650 |
+| **TimeJEPA lotsa_tiny_zs** | **~1M** | **zero-shot** | **0.979** | **0.677** |
+| TiDE | — | supervisé par dataset | 1.091 | 0.772 |
+| Naive | — | — | 1.270 | 1.591 |
+| DeepAR | — | supervisé par dataset | 1.343 | 0.853 |
+
+*(\* le leaderboard note lui-même des recoupements de pretrain pour certains gros modèles.)*
+
+**Sous 1,0 sur les deux métriques, en zero-shot intégral, à ~1M de paramètres, sur un corpus
+plafonné à ~12 % de LOTSA.** Le modèle bat des baselines SUPERVISÉES entraînées sur chaque
+dataset cible (TiDE, DeepAR) et se tient à 3,3 points de Moirai-small — 14× ses paramètres,
+même corpus. Le probabiliste porte le modèle : 84/97 configs sous 1,0 en CRPS (65/97 en MASE),
+CRPS 0.677 devant VisionTS (0.755). Les échecs sont concentrés sur les fréquences
+sous-représentées au pretrain (bizitobs 10S, solar 10T, M4 yearly à 19 pas de contexte) —
+le même diagnostic qu'ETTm1 avant E14, et donc la prédiction pour le corpus complet.
+
+**G6 sur GIFT-Eval — le duel d'objectifs à plus grande échelle :**
+
+| | MASE ratio | CRPS ratio |
+|---|---|---|
+| JEPA (extrapolation latente) | **0.979** | 0.6766 |
+| reconstruction | 1.003 | **0.6764** |
+
+MASE : JEPA meilleur de 2,4 %, et la ligne qualitative compte — **JEPA bat le Seasonal Naive,
+la reconstruction non** (1.003). CRPS : égalité parfaite. Par config, recon gagne 37/97 en
+MASE, 40/97 en CRPS.
+
+**Le signal d'horizon d'E15 se réplique — c'est le résultat de l'entrée.** Sur E15 il
+reposait sur deux cellules ; ici il est monotone sur 97 configs, benchmark indépendant :
+
+| terme | n | MASE JEPA | MASE recon | écart |
+|---|---|---|---|---|
+| short | 55 | 0.914 | 0.921 | +0,8 % |
+| medium | 21 | 1.056 | 1.089 | +3,1 % |
+| long | 21 | 1.084 | 1.155 | **+6,6 %** |
+
+L'écart croît strictement avec l'horizon, dans la direction que prédit la thèse (la
+reconstruction paie l'imprévisible, et l'imprévisible croît avec l'horizon). Deux benchmarks
+indépendants, même direction, ampleur croissante. Toujours une graine par arm — la
+formulation défendable passe de « non confirmé » (E15) à : **« l'extrapolation latente et la
+reconstruction sont indiscernables à court horizon ; l'avantage de la latente croît avec
+l'horizon (+0,8 % → +3,1 % → +6,6 % sur GIFT-Eval), répliqué sur deux benchmarks, une graine
+par arm ».** C'est plus étroit que la thèse d'origine, et c'est mesuré.
+
+**Ce que cela change pour le papier.** Le pitch cesse d'être « JEPA bat la reconstruction »
+(faux en l'état) pour devenir : (1) un modèle ~1M en zero-shot au niveau de baselines
+supervisées et à portée de Moirai-small/14M — E14+E16 ; (2) l'objectif latent gagne
+spécifiquement AU LONG HORIZON — E15+E16 ; (3) le levier dominant est le corpus — E12+E14.
+Prochain point de la courbe : tiny puis mini (~5M) sur le corpus complet (G7).
+
+---
+
+### E17 — Diagnostic compétitif : d'où vient l'écart au leaderboard (2026-08-18)
+
+**Contexte.** E16 situait TimeJEPA-tiny à 0.677 CRPS. Le leaderboard HF complet (123 modèles,
+contre la poignée du repo GitHub) le place **105e/123 en CRPS, 107e en MASE** — la classe des
+petits modèles est bien plus dense qu'estimé : Toto-2.0-**4m** 0.524, Metamorph-**4.5M** 0.555,
+FlowState-**9.1M** 0.502, Kairos-**10m** 0.554. t0-alpha (The Forecasting Company) est à 0.494
+mais fait **102M** paramètres — ce n'est pas un concurrent de catégorie.
+
+**Méthode.** Comparaison config par config contre Toto-2.0-4m (4,14M), le voisin le plus
+gênant, en décomposant l'écart selon trois axes.
+
+| axe | résultat |
+|---|---|
+| **terme** (short/medium/long) | ×1,28 / ×1,32 / ×1,29 — **plat** |
+| **nombre de variates** | ×1,22 (univarié) / ×1,38 (2-7) / ×1,36 (>7) |
+| **fréquence** | ×1,08 (5T) ×1,16 (H) … ×1,94 (10T) **×2,42 (10S)** |
+
+**Ce que cela élimine.** L'écart n'est PAS un problème d'horizon ni de rollout : il est plat
+sur les termes, et la corrélation entre profondeur de rollout et ratio CRPS vaut −0,03.
+Hypothèse plausible, testée, morte.
+
+**Ce que cela semblait établir** (corrigé plus bas) : un écart dominé par la couverture
+fréquentielle, facteur 2,2 entre meilleure et pire fréquence. Le multivarié compte, mais
+au second ordre (~13 % d'écart supplémentaire contre un facteur 2,2 pour la fréquence).
+
+**Le résultat positif, et il est fort.** Sur les fréquences que le corpus couvre bien,
+TimeJEPA à 1M **bat** Toto-2.0-4m : electricity/H aux trois termes (×0,91-0,96), m_dense/H aux
+trois termes (×0,82-0,89), loop_seattle/5T/medium, solar/W. Le bucket horaire (n=31, le plus
+gros) n'est qu'à ×1,16. **Là où les données sont là, 1M de paramètres égalent 4M.** Les pires
+écarts sont tous sur des fréquences quasi absentes du corpus plafonné : bizitobs/10S (×4,09),
+solar/10T (×2,77), us_births.
+
+**Sur-exclusion mesurée.** `GiftEvalPretrain` (corpus de pretrain SANCTIONNÉ par le benchmark,
+152 sous-ensembles) contient `solar_power`, `taxi_30min`, `kdd2022`, `LOS_LOOP`, `covid19_energy`
+— que nos motifs excluent. Il ne contient PAS bizitobs, jena_weather, us_births, ett : les
+autres modèles ne trichent donc pas, mais **nous jouons plus strictement que le benchmark ne
+l'exige**, et nous perdons de la couverture pour rien.
+
+**⚠️ CORRECTION (même jour) — la décomposition par fréquence était CONFONDUE.** Le bucket
+« 10S » ne contient que bizitobs, le bucket « 10T » que solar et jena_weather : fréquence et
+domaine y sont inséparables. Refait à DATASET CONSTANT (même dataset, plusieurs fréquences),
+ce qui est le seul test propre de l'effet fréquence :
+
+| dataset | écart CRPS par fréquence |
+|---|---|
+| solar | 10T ×2,31 · D ×1,12 · H ×1,10 · W ×0,80 |
+| jena_weather | 10T ×1,62 · D ×1,26 · H ×1,17 |
+| ett1 | 15T ×1,36 · H ×1,13 · D ×1,04 · W ×1,01 |
+| ett2 | 15T ×1,32 · H ×1,12 · D ×1,06 |
+| loop_seattle | **5T ×0,97** · H ×1,14 · D ×1,27 |
+| bizitobs_l2c | **5T ×1,05** · H ×2,04 |
+
+Lecture corrigée, en deux effets distincts :
+1. **Faiblesse sub-horaire réelle mais ÉTROITE** — 10T et 15T dégradent systématiquement sur
+   quatre datasets indépendants (solar, jena_weather, ett1, ett2). Mais **5T va très bien**
+   (loop_seattle ×0,97 — on gagne, bitbrains ×1,14-1,21, bizitobs_l2c ×1,05). Ce n'est donc
+   pas « haute fréquence = mauvais » : c'est une couverture de corpus précise. Le 5 minutes
+   est bien servi par la famille PEMS ; le 10 et 15 minutes ne le sont pas, d'autant qu'on
+   excluait solar_power et kdd2022 (éolien à 10 min).
+2. **Écarts de DOMAINE, sans rapport avec la fréquence** — bizitobs ×2,47/×2,37 à 10S mais
+   aussi ×2,04 à l'heure, une fréquence bien couverte : c'est du CloudOps, le domaine
+   propriétaire de Datadog, dont Toto est issu. us_births ×2,07 sur D/M/W indifféremment.
+   Aucune invariance d'échelle ne comblera ces deux-là.
+
+L'affirmation « l'écart suit la couverture fréquentielle avec un facteur 2,2 » est donc à
+remplacer par : **un effet fréquence réel et localisé sur 10T/15T, plus des écarts de domaine
+sur bizitobs et us_births qui relèvent du corpus, pas de l'architecture.**
+
+**Leviers identifiés, par ordre d'effet attendu.**
+1. Corpus complet + arrêt de la sur-exclusion (aligner les motifs sur GiftEvalPretrain).
+2. **Conditionnement fréquentiel** — FlowState (9,1M, 0.502) est « timescale-invariant » via un
+   `scale_factor` explicite. C'est une réponse architecturale directe à notre mode d'échec.
+3. **Données synthétiques** (CauKer chez FlowState, KernelSynth chez Chronos) — c'est P2.5 du
+   plan, jamais fait : la façon de couvrir des fréquences qu'on n'a pas.
+4. **Contexte plus long** — FlowState 2048-4096 contre nos 1024.
+5. **Scaler robuste** — Toto utilise un arcsinh ; notre RevIN a une pathologie MESURÉE (plancher
+   epsilon, cibles à 1000 sigma, cf. G6).
+6. Multivarié — réel mais second ordre.
+
+---
+
 ## 3. Ce qui est établi
 
 Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
@@ -1184,6 +1333,12 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-18 (suite 2)** — ajout de **E17** : diagnostic compétitif sur 123 modèles. L'écart
+  au leaderboard suit la COUVERTURE FRÉQUENTIELLE (facteur 2,2), pas l'horizon (plat) ni le
+  multivarié (second ordre). Sur les fréquences couvertes, 1M bat un 4M SOTA.
+- **2026-08-18 (suite)** — ajout de **E16** : premier positionnement GIFT-Eval (MASE ratio
+  0.979, CRPS 0.677 à ~1M params, zero-shot, 97/97 configs) et réplication du signal
+  d'horizon de G6 (écart JEPA-recon monotone : +0,8/+3,1/+6,6 % en short/medium/long).
 - **2026-08-18** — ajout de **E15** : G6 tranche, et NÉGATIVEMENT. L'extrapolation latente ne
   se distingue pas de la reconstruction (1,4 % de MASE, recon gagnant 17/28 cellules). La
   thèse centrale sort du papier ; la contribution devient E14. Affirmation 14 ajoutée au §3,

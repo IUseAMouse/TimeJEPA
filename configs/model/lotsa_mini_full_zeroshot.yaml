@@ -1,0 +1,37 @@
+# @package _global_
+#
+# G7 — FINETUNE zero-shot du mini pré-entraîné sur le corpus COMPLET.
+#
+#   python scripts/train.py --config-name lotsa_mini_full_zeroshot \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_mini_full/pretrain_True/<ckpt> \
+#       wandb.run_name=mini-full-zeroshot
+#
+#   # eval (lotsa_mini_eval porte la géométrie mini) :
+#   python scripts/evaluate.py --config-name lotsa_mini_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_mini_full_zs/pretrain_False/<ckpt>
+#   python scripts/evaluate_gift.py --config-name lotsa_mini_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_mini_full_zs/pretrain_False/<ckpt>
+#
+# Voir lotsa_tiny_full_zeroshot pour le raisonnement — ceci est son miroir mini.
+defaults:
+  - lotsa_mini_full
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_full_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags:
+    - "mini"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "zeroshot"
+    - "full-corpus"

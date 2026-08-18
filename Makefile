@@ -41,17 +41,26 @@ lotsa-list: ## Inventory LOTSA subsets and show what would be EXCLUDED (writes n
 	@echo "🔎 LOTSA inventory — review the exclusion list before converting"
 	python scripts/prepare_lotsa.py --list
 
-lotsa-download: ## Convert LOTSA to the TimeJEPA format (usage: make lotsa-download [CHUNKS=30000])
+lotsa-download: ## Convert LOTSA to the TimeJEPA format (usage: make lotsa-download [CHUNKS=30000] [OUT=data/processed/lotsa])
 	@echo "📥 Converting LOTSA (this is long — streaming, constant RAM)"
 	@echo "   ⚠️  ~250 MB per subset at CHUNKS=30000 (chunk length 2048)."
 	@echo "      123 subsets => ~30 GB. Raise CHUNKS for a larger corpus."
+	@echo "   ⚠️  --resume is always on: existing files are NEVER reconverted."
+	@echo "      To GROW the corpus (higher CHUNKS), point OUT at a NEW directory:"
+	@echo "        make lotsa-download CHUNKS=1000000 OUT=data/processed/lotsa_full"
 	@echo "   ⚠️  Re-read the EXCLUDED list it prints: pretraining on an eval"
 	@echo "      benchmark would invalidate every number in the project."
 	python scripts/prepare_lotsa.py \
-		--out data/processed/lotsa \
+		--out $(or $(OUT),data/processed/lotsa) \
 		--max-chunks-per-subset $(or $(CHUNKS),30000) \
 		--resume
 	@echo "✓ LOTSA ready — pretrain with: make train CONFIG=lotsa_tiny"
+
+gift-download: ## Download the GIFT-Eval benchmark data (~a few GB, once)
+	@echo "📥 Downloading Salesforce/GiftEval to data/gift_eval"
+	hf download Salesforce/GiftEval --repo-type=dataset --local-dir data/gift_eval \
+		|| huggingface-cli download Salesforce/GiftEval --repo-type=dataset --local-dir data/gift_eval
+	@echo "✓ GIFT-Eval ready — evaluate with: python scripts/evaluate_gift.py"
 
 count-data: ## Count total datapoints in processed datasets
 	@echo "📊 Counting datapoints..."
