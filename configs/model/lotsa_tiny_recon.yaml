@@ -1,0 +1,121 @@
+# @package _global_
+#
+# G6 — ABLATION D'OBJECTIF : reconstruction contre extrapolation latente.
+#
+#   # pretrain de l'arm reconstruction
+#   python scripts/train.py --config-name lotsa_tiny_recon wandb.run_name=recon-pretrain
+#
+#   # finetune zero-shot — protocole IDENTIQUE à l'arm JEPA, nom de sortie distinct
+#   # (lotsa_tiny_zeroshot enverrait les checkpoints dans le répertoire de l'arm
+#   #  JEPA : même model.name, donc même dossier. Voir lotsa_tiny_recon_zeroshot.)
+#   python scripts/train.py --config-name lotsa_tiny_recon_zeroshot \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_recon/pretrain_True/<ckpt> \
+#       wandb.run_name=recon-zeroshot
+#
+#   # eval
+#   python scripts/evaluate.py --config-name lotsa_tiny_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_recon_zs/pretrain_False/<ckpt>
+#
+# Pourquoi cette expérience est la plus importante qui reste
+# ---------------------------------------------------------
+# E12 a établi que pré-entraîner améliore le transfert (−8,7 %). E14 a établi
+# qu'un corpus plus large et plus divers le creuse (ETTm1, −16,8 %). Aucun des
+# deux ne dit quoi que ce soit de la LOSS : le bras de comparaison d'E12 est
+# l'ABSENCE de pré-entraînement, pas un objectif concurrent.
+#
+# Autrement dit, « l'extrapolation latente bat la reconstruction » — la thèse du
+# projet — figure au §4 du registre, la liste de ce qui n'est PAS établi. Rien
+# dans les résultats actuels n'exclut qu'un objectif de reconstruction, à budget
+# identique, fasse aussi bien ou mieux. C'est l'hypothèse par défaut d'un
+# relecteur, puisque c'est ce que font Moirai et Moment, et que ça marche.
+#
+# Ce qui change, et c'est UNE seule variable
+# ------------------------------------------
+#   JEPA       : le prédicteur régresse vers target_encoder(patchs futurs)
+#   cet arm    : le prédicteur régresse vers les patchs futurs BRUTS
+#
+# La tâche reste passé -> futur. Le corpus, la géométrie, le budget,
+# l'optimiseur, le scheduler, le stride, les plafonds : tous hérités de
+# lotsa_tiny sans exception. Seul l'espace dans lequel le prédicteur est noté
+# bouge, de latent à observations.
+#
+# On ne teste PAS la reconstruction masquée façon Moirai, et c'est délibéré :
+# elle changerait deux variables à la fois (l'espace de la cible ET la forme de
+# la tâche, extrapolation -> interpolation), ce qui rendrait le résultat
+# ininterprétable. L'objectif retenu ici est par ailleurs celui de TimesFM,
+# donc une baseline que les relecteurs identifient.
+#
+# Pourquoi Huber et pas MSE — mesuré, pas supposé
+# -----------------------------------------------
+# RevIN normalise la cible avec les statistiques du CONTEXTE, et son échelle est
+# sqrt(var + 1e-5). Sur un contexte quasi constant (capteur à plat, compteur
+# hors service, solaire la nuit), ce plancher vaut 0.00316 : le moindre
+# mouvement dans la fenêtre future atterrit à des MILLIERS de sigma. Mesuré sur
+# le premier run de cet arm : target_std à 3000 et target_var à 4e7, contre ~1
+# sur un batch sain, avec pred_std qui grimpait de 1 à 6 en les poursuivant.
+#
+# Sous MSE, un tel batch pèse plus que des dizaines de millions de batchs
+# normaux : l'objectif devient celui des fenêtres dégénérées. L'arm JEPA ne
+# montrait rien de tel parce que ses cibles sont des sorties d'encodeur, que le
+# LayerNorm garde en O(1) — la pathologie était donc DANS LES DONNÉES depuis le
+# début, simplement absorbée.
+#
+# Huber borne la contribution de chaque élément au gradient et conserve toutes
+# les fenêtres, donc les deux arms voient exactement les mêmes données.
+# `train_loss/target_absmax` garde l'amplitude visible plutôt que masquée par la
+# loss robuste.
+#
+# ⚠️ Cet arm diffère donc de JEPA par la FORME de la loss autant que par
+# l'espace de la cible. Dit plutôt que caché : une MSE non bornée en espace des
+# valeurs n'est pas un objectif bien posé ici, le « strictement toutes choses
+# égales » n'était pas disponible.
+#
+# Comment lire le résultat — les deux issues sont utiles
+# -----------------------------------------------------
+# Le run est falsifiable dans les deux sens, et c'est le but :
+#   * JEPA gagne  -> la thèse du papier tient, et on a enfin le contrôle qui la
+#                    soutient plutôt qu'une intuition.
+#   * recon gagne -> le levier réel est le corpus et l'échelle (E14), pas la
+#                    loss. On recadre le papier là-dessus AVANT la review, pas
+#                    pendant.
+# ⚠️ La comparaison ne vaut que si les deux arms sont évalués avec le MÊME
+# finetune et le MÊME protocole : lotsa_tiny_zeroshot puis lotsa_tiny_eval.
+# Comparer ce pretrain à un finetune Monash de l'autre arm ne mesurerait rien.
+#
+# ⚠️ Ce qui n'est PAS comparable entre les deux arms : les `val_loss` de
+# pretrain. L'un est une MSE en espace latent, l'autre en espace des valeurs —
+# des grandeurs sans rapport, sur des cibles différentes. Seules les MASE/WQL
+# après finetune se comparent. Même remarque pour le rang effectif : il reste
+# loggué (l'encodeur reste un encodeur) mais sa calibration Monash/LOTSA ne
+# s'applique pas ici, aucune alarme d'effondrement n'y étant attendue — les
+# cibles brutes sont fixes, il n'y a rien à effondrer.
+defaults:
+  - lotsa_tiny
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_recon"
+
+training:
+  # Le seul drapeau qui distingue cet arm. Absent de toutes les autres configs,
+  # dont le comportement est donc inchangé au bit près.
+  reconstruction_target: true
+
+  loss:
+    # `_compute_loss` court-circuite `jepa_loss` en mode reconstruction et
+    # applique un HUBER nu : les termes anti-effondrement existent parce que les
+    # cibles latentes sont APPRISES et peuvent dégénérer, ce qui n'est pas le
+    # cas de patchs bruts. Les ajouter régulariserait contre un mode d'échec
+    # inexistant et confondrait la comparaison.
+    # Cette ligne ne pilote donc rien — elle évite qu'un lecteur (ou le log de
+    # démarrage, qui imprime `loss_type`) croie que SIGReg tourne encore.
+    type: "smooth_l1"
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "pretrain"
+    - "ablation-objectif"

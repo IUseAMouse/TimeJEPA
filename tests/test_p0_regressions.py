@@ -1617,3 +1617,161 @@ def test_extended_metrics_include_benchmark_keys():
 
     with_ctx = compute_forecasting_metrics_extended(pred, tgt, context=ctx, season_length=24)
     assert "mase" in with_ctx
+
+
+# ---------------------------------------------------------------------------
+# G6 — ablation d'objectif : reconstruction contre extrapolation latente.
+#
+# L'arm reconstruction re-déroule les patchs futurs à la main dans le module de
+# pretrain, parce que `Patching` projette vers d_model et ne rend jamais les
+# valeurs brutes. Deux sources de vérité pour la géométrie des patchs, c'est
+# exactement ce qui dérive en silence — d'où ces tests.
+# ---------------------------------------------------------------------------
+
+# Horizons ALIGNÉS sur le pas de patch uniquement. Sur un horizon non aligné
+# (ex. 100 avec patch 16 / stride 8), `Patching` rembourre et rend 12 patchs
+# alors que `model.num_target_patches`, calculé à la construction sans padding,
+# en annonce 11 — et le prédicteur, dont la table de requêtes est dimensionnée
+# sur ce compte, refuse la géométrie. Contrainte PRÉEXISTANTE du modèle, sans
+# rapport avec cette ablation ; toutes les configs réelles (96, 128, 192, 256)
+# sont alignées.
+@pytest.mark.parametrize("pred_len,patch,stride", [
+    (96, 16, 8), (256, 16, 8), (128, 32, 16), (192, 16, 8), (96, 16, 16),
+])
+def test_reconstruction_patches_match_patching_geometry(pred_len, patch, stride):
+    """Le nombre de patchs bruts doit égaler celui que produit `Patching`."""
+    from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
+
+    model = JEPATST(input_length=384, prediction_length=pred_len,
+                    patch_size=patch, stride=stride, d_model=32,
+                    num_layers=1, num_heads=4, d_ff=64,
+                    predictor_num_layers=1, predictor_num_heads=4,
+                    predictor_d_ff=64, decoder_type="mlp")
+    module = JEPAPretrainModule(model=model, reconstruction_target=True,
+                                loss_type='mse')
+
+    target = torch.randn(4, pred_len, 1)
+    # On passe par le chemin RÉEL plutôt que par une prédiction fabriquée :
+    # c'est `outputs['predictions']` que `_scored_pair` reçoit en production, et
+    # son nombre de patchs vient du patching à l'exécution.
+    outputs = model.forward_pretrain(torch.randn(4, 384, 1), target)
+    preds, patches = module._scored_pair(target, outputs)
+
+    expected = model.patching.get_num_patches(pred_len)
+    assert patches.shape[1] == expected, (
+        f"patchs bruts {patches.shape[1]} != Patching {expected}"
+    )
+    assert patches.shape == preds.shape, "les deux côtés de la MSE doivent coïncider"
+    assert patches.shape[-1] == patch, "un patch brut porte patch_size valeurs"
+
+
+def test_reconstruction_targets_live_in_revin_space():
+    """
+    Les cibles brutes doivent être normalisées avec les stats du CONTEXTE, comme
+    `forward_pretrain` le fait. Sinon la loss suit l'échelle de chaque série au
+    lieu de sa forme.
+    """
+    from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
+
+    model = JEPATST(input_length=384, prediction_length=96, patch_size=16,
+                    stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                    predictor_num_layers=1, predictor_num_heads=4,
+                    predictor_d_ff=64, decoder_type="mlp")
+    module = JEPAPretrainModule(model=model, reconstruction_target=True,
+                                loss_type='mse')
+
+    context = torch.randn(4, 384, 1) * 50 + 1000     # échelle volontairement absurde
+    target = torch.randn(4, 96, 1) * 50 + 1000
+    model.forward_pretrain(context, target)
+
+    predictions = torch.randn(4, model.num_target_patches, 32)
+    _, patches = module._scored_pair(target, {'predictions': predictions})
+
+    assert patches.abs().max() < 20, (
+        f"cibles non normalisées (max {patches.abs().max():.1f}) — "
+        "la MSE mesurerait l'échelle, pas la forme"
+    )
+
+
+def test_jepa_arm_is_untouched_by_the_ablation_flag():
+    """Par défaut, la paire notée reste strictement celle de JEPA."""
+    from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
+
+    model = JEPATST(input_length=384, prediction_length=96, patch_size=16,
+                    stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                    predictor_num_layers=1, predictor_num_heads=4,
+                    predictor_d_ff=64, decoder_type="mlp")
+    module = JEPAPretrainModule(model=model)
+
+    assert module.reconstruction_target is False
+    assert not hasattr(module, 'recon_head'), \
+        "aucun paramètre supplémentaire ne doit exister hors ablation"
+
+    outputs = {'predictions': torch.randn(2, 3, 32), 'targets': torch.randn(2, 3, 32)}
+    preds, targets = module._scored_pair(torch.randn(2, 96, 1), outputs)
+    assert preds is outputs['predictions'] and targets is outputs['targets']
+
+
+def test_reconstruction_loss_bypasses_the_anti_collapse_terms():
+    """En mode reconstruction, la loss est un Huber nu — pas de SIGReg."""
+    from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
+    import torch.nn.functional as F
+
+    model = JEPATST(input_length=384, prediction_length=96, patch_size=16,
+                    stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                    predictor_num_layers=1, predictor_num_heads=4,
+                    predictor_d_ff=64, decoder_type="mlp")
+    module = JEPAPretrainModule(model=model, reconstruction_target=True,
+                                loss_type='mse',
+                                sigreg_config={'weight': 25.0})
+
+    preds, targets = torch.randn(4, 11, 16), torch.randn(4, 11, 16)
+    loss, components = module._compute_loss(
+        preds, targets, {'context_embeddings': torch.randn(4, 47, 32)}
+    )
+
+    assert torch.allclose(loss, F.smooth_l1_loss(preds, targets)), \
+        "un terme de régularisation s'est glissé dans l'objectif de reconstruction"
+    assert 'reconstruction_huber' in components
+
+
+def test_reconstruction_loss_is_robust_to_the_revin_epsilon_floor():
+    """
+    RevIN normalise avec sqrt(var + 1e-5). Sur un contexte quasi constant le
+    plancher vaut 0.00316, et la cible normalisée part à des milliers de sigma.
+    Sous MSE, un tel batch écrase tous les autres dans le gradient et l'objectif
+    devient celui des fenêtres dégénérées — ce qui confondrait G6.
+    """
+    from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
+    import torch.nn.functional as F
+
+    model = JEPATST(input_length=384, prediction_length=96, patch_size=16,
+                    stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                    predictor_num_layers=1, predictor_num_heads=4,
+                    predictor_d_ff=64, decoder_type="mlp")
+    module = JEPAPretrainModule(model=model, reconstruction_target=True,
+                                loss_type='smooth_l1')
+
+    preds = torch.zeros(4, 11, 16)
+    sane = torch.randn(4, 11, 16)
+    outlier = sane.clone()
+    outlier[0, 0, 0] = 6300.0                      # une fenêtre au plancher epsilon
+
+    sane_loss, _ = module._compute_loss(preds, sane, {})
+    outlier_loss, components = module._compute_loss(preds, outlier, {})
+    huber_ratio = (outlier_loss / sane_loss).item()
+
+    # La grandeur qui compte n'est pas un seuil absolu — elle dépend de la
+    # taille du batch — mais le rapport à ce que MSE aurait fait : quadratique
+    # contre linéaire. Sur ce mini-batch de 704 éléments, MSE amplifie ~56 000x,
+    # Huber ~22x ; en batch réel (90 k éléments) la contribution de l'aberration
+    # tombe à ~0.07, donc négligeable.
+    mse_ratio = (F.mse_loss(preds, outlier) / F.mse_loss(preds, sane)).item()
+
+    assert huber_ratio < mse_ratio / 100, (
+        f"Huber amplifie x{huber_ratio:.0f} contre x{mse_ratio:.0f} pour MSE — "
+        "la borne sur la contribution par élément ne joue pas"
+    )
+    assert components['target_absmax'] > 6000, \
+        "l'amplitude des cibles doit rester observable malgré la loss robuste"
+

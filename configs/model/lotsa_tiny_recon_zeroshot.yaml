@@ -1,0 +1,42 @@
+# @package _global_
+#
+# G6 — FINETUNE zero-shot de l'arm RECONSTRUCTION.
+#
+#   python scripts/train.py --config-name lotsa_tiny_recon_zeroshot \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_recon/pretrain_True/<ckpt> \
+#       wandb.run_name=recon-zeroshot
+#
+# Pourquoi cette config existe alors qu'elle ne change qu'un nom
+# -------------------------------------------------------------
+# `scripts/train.py:262` dérive le répertoire de checkpoints de `model.name` :
+#
+#   checkpoints/{model.name}/pretrain_{True|False}/
+#
+# Finetuner les deux arms avec `lotsa_tiny_zeroshot` leur donne donc le MÊME
+# `model.name` (timejepa_lotsa_tiny_zs) et le même répertoire de sortie. Les
+# checkpoints des deux bras s'y mélangent, distingués par rien d'autre que
+# l'epoch et la val_loss dans le nom de fichier — et à l'évaluation, plus aucun
+# moyen de savoir de quel pretrain vient le poids qu'on charge.
+#
+# Pour une expérience dont le seul livrable est une COMPARAISON entre deux
+# bras, confondre leurs sorties est le mode d'échec le plus coûteux possible :
+# il ne produit pas d'erreur, juste un résultat faux.
+#
+# Rien d'autre n'est redéclaré : le protocole de finetune doit rester
+# rigoureusement celui de l'arm JEPA, sinon la comparaison ne mesure plus
+# l'objectif de pretraining.
+defaults:
+  - lotsa_tiny_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_recon_zs"
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "finetune"
+    - "ablation-objectif"

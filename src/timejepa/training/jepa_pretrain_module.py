@@ -49,6 +49,22 @@ class JEPAPretrainModule(pl.LightningModule):
         # encoding the future window in isolation.
         contextualized_targets: bool = True,
 
+        # ABLATION ARM (G6) — regress onto the RAW future patches instead of the
+        # target encoder's latents. This is the control the whole thesis needs:
+        # every other pretraining result in the project compares JEPA against NO
+        # pretraining (E12), never against a competing objective, so "latent
+        # extrapolation beats reconstruction" sits in §4 of the log — the list of
+        # things NOT established.
+        #
+        # It changes exactly ONE variable. The task stays past -> future, the
+        # geometry, corpus, budget and optimiser are untouched; only the space
+        # the predictor is scored in moves from latent to observation. That makes
+        # the result interpretable, and it is also the TimesFM-style objective,
+        # so reviewers recognise the baseline.
+        #
+        # Off by default => every existing config is bit-identical.
+        reconstruction_target: bool = False,
+
         # Input-geometry randomization. scripts/diagnose_ettm.py shows skill
         # peaks exactly at the training context length and collapses on both
         # sides (electricity: +28.5% at ctx=384, -103.8% at ctx=768), i.e. the
@@ -108,6 +124,19 @@ class JEPAPretrainModule(pl.LightningModule):
         self.regularize_context = regularize_context
         self.contextualized_targets = contextualized_targets
 
+        # Reconstruction head: d_model -> patch_size * num_features, i.e. exactly
+        # the inverse shape of the patch projection, so it is derived from the
+        # model rather than re-declared (a second source of truth for the patch
+        # geometry is how these two silently drift apart).
+        # It is NOT part of JEPATST: the finetune loads the checkpoint by
+        # component name (`online_encoder`, `predictor`, `patching`, `revin`), so
+        # this head lands in the file and is ignored without a line of code.
+        self.reconstruction_target = bool(reconstruction_target)
+        if self.reconstruction_target:
+            proj = model.patching.projection
+            self.recon_head = nn.Linear(proj.out_features, proj.in_features)
+            print("  ⚠️  ABLATION: reconstruction target (raw patches), NOT latent")
+
         self.context_lengths = list(context_lengths) if context_lengths else None
         self.p_random_context = float(p_random_context)
         self.horizon_lengths = list(horizon_lengths) if horizon_lengths else None
@@ -162,12 +191,90 @@ class JEPAPretrainModule(pl.LightningModule):
 
         return context, target
 
+    def _scored_pair(self, target, outputs):
+        """
+        The (prediction, target) pair the loss is computed on.
+
+        JEPA: the predictor's latents against the target encoder's latents.
+        Ablation: the same latents pushed through `recon_head` into value space,
+        against the RAW future patches.
+
+        Two details that matter and are easy to get wrong:
+        * The raw patches are taken in the model's NORMALISED space. RevIN stores
+          the context statistics on the module during `forward_pretrain`, and
+          `forward_pretrain` normalises the target with those same statistics —
+          scoring against un-normalised values would make the loss track each
+          series' scale instead of its shape.
+        * The patch spans are those of the standalone target window, which is
+          also what sets `num_target_patches` on the JEPA path. So both arms
+          predict the same number of patches covering the same timesteps, and
+          `contextualized_targets` changes nothing here.
+        """
+        if not self.reconstruction_target:
+            return outputs['predictions'], outputs['targets']
+
+        patching = self.model.patching
+        revin = self.model.revin
+        x = (target - revin.mean) / revin.std if revin is not None else target
+
+        # Mirrors Patching.forward's padding rule. Guarded by
+        # test_reconstruction_patches_match_patching_geometry: if the two ever
+        # drift, that test fails rather than the arm silently scoring a
+        # different number of patches than the JEPA arm.
+        if patching.padding:
+            remainder = (x.shape[1] - patching.patch_size) % patching.stride
+            if remainder != 0:
+                pad = patching.stride - remainder
+                x = torch.cat([x, x[:, -1:, :].repeat(1, pad, 1)], dim=1)
+
+        patches = x.unfold(dimension=1, size=patching.patch_size, step=patching.stride)
+        patches = patches.transpose(2, 3).reshape(x.shape[0], patches.shape[1], -1)
+
+        return self.recon_head(outputs['predictions']), patches
+
     def _compute_loss(self, predictions, targets, outputs):
         """
         Single entry point used by BOTH training_step and validation_step, so
         the two can never diverge again (see B8: validation_step used to omit
         vicreg_weights and silently score a different objective).
         """
+        if self.reconstruction_target:
+            # Deliberately NOT routed through jepa_loss: the anti-collapse terms
+            # exist because latent targets are LEARNED and can degenerate. Raw
+            # patches are fixed, so there is nothing to collapse — adding SIGReg
+            # here would regularise against a non-existent failure mode.
+            #
+            # Huber rather than MSE, and this is not a detail. RevIN normalises
+            # the target with the CONTEXT's statistics, and its scale is
+            # sqrt(var + 1e-5): on a near-constant context (a flat sensor, an
+            # off-hours counter, solar at night) that floors at 0.00316, so any
+            # movement in the future window lands at thousands of sigma.
+            # Measured on the first run: target_std spiking to 3000, target_var
+            # to 4e7, against ~1 on a healthy batch.
+            #
+            # Under MSE one such batch outweighs tens of millions of normal ones
+            # and the objective becomes whatever the degenerate windows say. The
+            # JEPA arm never showed this because its targets are encoder outputs
+            # — LayerNorm keeps them O(1) — so the pathology was always in the
+            # data and was simply absorbed. Huber bounds each element's gradient
+            # contribution, which is the standard answer for heavy-tailed
+            # regression targets and keeps every window in the training set,
+            # so both arms still see EXACTLY the same data.
+            #
+            # ⚠️ This does make the arm differ from JEPA in loss SHAPE as well as
+            # target space. Stated in the log rather than hidden: an unbounded
+            # value-space MSE is not a well-posed objective here, so "pure
+            # like-for-like" was never actually on the table.
+            loss = torch.nn.functional.smooth_l1_loss(predictions, targets)
+
+            # Keep the pathology visible instead of letting the robust loss hide
+            # it: if this climbs into the thousands, the corpus is feeding
+            # degenerate windows and that is worth knowing when reading the run.
+            with torch.no_grad():
+                absmax = targets.abs().max()
+            return loss, {'loss': loss, 'reconstruction_huber': loss,
+                          'target_absmax': absmax}
+
         return jepa_loss(
             predictions,
             targets,
@@ -214,8 +321,7 @@ class JEPAPretrainModule(pl.LightningModule):
             context, target, contextualized_targets=self.contextualized_targets
         )
 
-        predictions = outputs['predictions']  # [B, num_target_patches, d_model]
-        targets = outputs['targets']          # [B, num_target_patches, d_model]
+        predictions, targets = self._scored_pair(target, outputs)
 
         # Compute JEPA loss
         loss, components = self._compute_loss(predictions, targets, outputs)
@@ -257,8 +363,7 @@ class JEPAPretrainModule(pl.LightningModule):
             context, target, contextualized_targets=self.contextualized_targets
         )
 
-        predictions = outputs['predictions']
-        targets = outputs['targets']
+        predictions, targets = self._scored_pair(target, outputs)
 
         # Same objective as training — see _compute_loss
         loss, components = self._compute_loss(predictions, targets, outputs)

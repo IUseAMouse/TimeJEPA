@@ -177,6 +177,9 @@ def main(cfg: DictConfig):
             sigreg_config=sigreg_cfg,
             regularize_context=cfg.training.loss.get('regularize_context', True),
             contextualized_targets=cfg.training.get('contextualized_targets', True),
+            # G6 ablation arm; absent from every other config, so they are
+            # unaffected. See configs/model/lotsa_tiny_recon.yaml.
+            reconstruction_target=cfg.training.get('reconstruction_target', False),
 
             # Input-geometry randomization (train split only)
             context_lengths=list(cfg.training.get('context_lengths') or []),

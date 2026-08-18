@@ -748,6 +748,69 @@ aucune position dans un classement publié n'est mesurable.
 
 ---
 
+### E15 — G6 : l'ablation d'objectif ne confirme PAS la thèse (2026-08-18)
+
+**Protocole.** Deux pretrains LOTSA identiques en tout — corpus plafonné, géométrie, budget,
+optimiseur, scheduler — sauf l'espace où le prédicteur est noté : latent (JEPA) contre patchs
+futurs bruts (reconstruction). Puis le MÊME finetune zero-shot et la MÊME évaluation. Les deux
+checkpoints comparés sont à l'epoch 4, `val_loss` 1.3454 (JEPA) contre 1.3507 (recon), soit
+0,4 % d'écart : les bras sont appariés.
+
+**MASE moyenne :** JEPA **1.150**, reconstruction **1.166** — JEPA meilleur de **1,4 %**.
+
+| dataset | JEPA | recon | écart |
+|---|---|---|---|
+| electricity | 1.029 | **1.028** | −0,1 % |
+| traffic | 0.779 | **0.776** | −0,4 % |
+| ettm1 | **1.139** | 1.142 | +0,2 % |
+| weather | **1.053** | 1.060 | +0,7 % |
+| ettm2 | **1.189** | 1.206 | +1,4 % |
+| etth2 | **1.645** | 1.684 | +2,4 % |
+| etth1 | **1.215** | 1.265 | +4,1 % |
+
+**Et c'est là qu'il faut résister à la moyenne.** Sur les 28 cellules (7 datasets × 4
+horizons), **la reconstruction gagne 17 fois sur 28**, et l'écart MÉDIAN par cellule est de
+**−0,5 % en sa faveur**. La moyenne (+1,1 %) est portée par une poignée de cellules :
+etth1 h720 (+24,3 %), etth2 h336 (+11,7 %), weather h720 (+9,3 %).
+
+C'est la signature d'une **égalité à queues lourdes**, pas d'une victoire. La reconstruction
+est le plus souvent très légèrement meilleure, et occasionnellement bien pire.
+
+**Le signal d'horizon, réel mais fragile.** La reconstruction gagne 11/14 des cellules aux
+horizons courts (96, 192) et seulement 6/14 aux horizons longs (336, 720) — direction
+conforme à la thèse (la reconstruction dépense sa capacité sur l'imprévisible, ce qui coûte
+d'autant plus que l'horizon s'allonge). Mais l'ampleur ne tient pas : l'écart moyen à h720
+passe de **5,1 % à 1,9 %** en retirant la seule cellule etth1. Avec une graine unique, ce
+n'est pas une preuve.
+
+**Monash local :** match nul, 4 datasets chacun. La reconstruction est nettement pire sur
+bitcoin (40,9 contre 35,9), meilleure sur solar-10-minute et saugeenday.
+
+**Ce que cela établit — et c'est un résultat négatif qu'il faut assumer.**
+**L'ablation ne montre pas que l'extrapolation latente bat la reconstruction.** À corpus,
+architecture et budget identiques, les deux objectifs sont à 1,4 % l'un de l'autre sur la
+moyenne, et la reconstruction gagne la majorité des comparaisons appariées. **La thèse
+centrale du projet n'est pas confirmée**, et une graine unique ne permet pas de trancher un
+écart de cette taille.
+
+Conséquence directe pour le papier : **l'objectif n'est pas la contribution.** Le résultat
+solide reste E14 — un modèle de ~1 M paramètres, entraîné sur un corpus disjoint, qui égale
+en zero-shot des modèles finetunés sur le domaine cible et résout ETTm1 par le corpus. C'est
+autour de cela qu'il faut écrire, pas autour de « JEPA plutôt que reconstruction ».
+
+**Sous-produit : la variance de représentation prédit mal le transfert.** Le bras recon n'a
+aucune régularisation de l'encodeur et son `context_var` tombe de 0,80 à ~0,20 — pour 1,4 %
+d'écart en aval. Cela renforce la réserve déjà au §4 sur le rang effectif : ces métriques
+sont des alarmes d'effondrement, pas des prédicteurs de qualité. Et cela retire l'essentiel
+de l'intérêt du troisième bras envisagé (reconstruction + SIGReg sur le contexte) : si la
+variance ne porte pas le transfert, l'isoler n'apprend plus grand-chose.
+
+**Ce qu'il faudrait pour conclure quoi que ce soit sur l'objectif.** Au moins 3 graines par
+bras. Un écart de 1,4 % sur une graine est au niveau du bruit, et le seul signal qui
+survivrait peut-être — la dégradation au long horizon — repose aujourd'hui sur deux cellules.
+
+---
+
 ## 3. Ce qui est établi
 
 Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
@@ -788,10 +851,14 @@ Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
 13. **Le corpus de pretrain est le levier de l'échec ETTm1**, là où l'architecture ne l'était
    pas : skill −37 % → −8,4 % en passant de Monash à LOTSA, après quatre rounds d'ablations
    géométriques sans effet sur ce dataset (E14).
-14. **Un modèle entraîné sur un corpus disjoint égale en zero-shot des modèles finetunés sur
+14. **L'objectif de pretraining n'est PAS le levier** : à corpus, architecture et budget
+   identiques, extrapolation latente et reconstruction sont à 1,4 % l'une de l'autre, la
+   seconde gagnant la majorité des comparaisons appariées (E15). Le levier mesuré est le
+   corpus, pas la loss.
+15. **Un modèle entraîné sur un corpus disjoint égale en zero-shot des modèles finetunés sur
    le domaine cible** : −7,2 % de MASE là où le terrain est neutre, parité là où l'adversaire
    disposait du domaine et d'une fuite (E14).
-15. **Le nombre de fenêtres n'est pas une mesure de la taille du corpus.** 83 M de fenêtres
+16. **Le nombre de fenêtres n'est pas une mesure de la taille du corpus.** 83 M de fenêtres
    issues de ~800 k morceaux distincts s'épuisent en une époque : deux pretrains à
    schedulers différents désignent le même optimum vers 250 k pas, puis divergent
    (train ↓ / val ↑). Compter les échantillons INDÉPENDANTS (E13b).
@@ -807,9 +874,18 @@ Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
 - **La généralité du résultat E12** : une seule graine, un seul couple de datasets d'aval
   (dominé par m4-hourly), un seul modèle tiny. La direction est systématique sur 6 datasets
   d'évaluation, l'ampleur est modeste (−8,7 %).
-- **Que l'extrapolation latente batte la reconstruction masquée** comme objectif de
-  pretraining. Aucune expérience ne les compare ; c'est le pari central du projet et il
-  reste non testé.
+- **Que l'extrapolation latente batte la reconstruction** comme objectif de pretraining.
+  ❌ **MESURÉ ET NON CONFIRMÉ (E15).** L'ablation G6 place les deux objectifs à 1,4 % l'un de
+  l'autre, avec la reconstruction gagnante sur 17 des 28 comparaisons appariées et un écart
+  médian par cellule en SA faveur. Ce n'est pas « JEPA perd » — c'est « on ne peut pas
+  distinguer », ce qui suffit à retirer cette affirmation du papier.
+  Attention au contresens qui a longtemps masqué le trou : E12 oppose le pré-entraînement à
+  SON ABSENCE, pas à un objectif concurrent ; E12 et E14 établissent « pré-entraîner aide » et
+  « plus de données aide », jamais « cette loss-ci aide ».
+  Reste ouvert et testable : la dégradation de la reconstruction au LONG horizon (elle gagne
+  11/14 des cellules à h≤192 et 6/14 à h≥336), conforme à la thèse mais portée par deux
+  cellules sur une graine unique. Il faudrait ≥3 graines par bras pour en dire quoi que ce
+  soit.
 - **Le partage du gain de E5 entre géométrie et correctif B20.** Confondus par construction.
 - **Toute comparaison à la littérature ETTh1/ETTh2** (série unique, voir §1).
 - **Le rang effectif comme prédicteur de qualité downstream.** Instrumenté et calibré,
@@ -1108,6 +1184,10 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-18** — ajout de **E15** : G6 tranche, et NÉGATIVEMENT. L'extrapolation latente ne
+  se distingue pas de la reconstruction (1,4 % de MASE, recon gagnant 17/28 cellules). La
+  thèse centrale sort du papier ; la contribution devient E14. Affirmation 14 ajoutée au §3,
+  §4 mis à jour du verdict.
 - **2026-08-15 (suite)** — ajout de **E14** : premier modèle zero-shot LOTSA. MASE moyenne
   1.150 contre 1.193 (geo) et 1.159 (p32), et surtout **ETTm1 de −37 % à −8,4 % de skill** —
   l'échec structurel du projet cède au corpus, pas à l'architecture. Affirmations 13 et 14

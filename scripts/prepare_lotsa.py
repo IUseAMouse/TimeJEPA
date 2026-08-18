@@ -178,10 +178,12 @@ def main():
 
     args.out.mkdir(parents=True, exist_ok=True)
     total = 0
+    skipped = 0
     for i, subset in enumerate(kept, 1):
         out_path = args.out / f"{subset}.npy"
         if args.resume and out_path.exists():
             logger.info(f"[{i}/{len(kept)}] {subset}: déjà présent, sauté")
+            skipped += 1
             continue
 
         logger.info(f"[{i}/{len(kept)}] {subset} → {out_path.name}")
@@ -236,9 +238,23 @@ def main():
             logger.error(f"  ✗ {subset} échoué : {type(exc).__name__}: {exc}")
 
     print()
-    print(f"Terminé : {total:,} morceaux de {args.chunk_length} pas "
+    print(f"Terminé : {total:,} morceaux ÉCRITS ce run "
           f"≈ {total * args.chunk_length / 1e9:.2f} Md d'observations")
     print(f"Sortie : {args.out}")
+
+    # `total` ne compte QUE les fichiers écrits pendant ce run. Avec --resume et
+    # un corpus déjà converti, il vaut 0 et se lit comme un échec alors que rien
+    # n'a échoué — c'est exactement ce qui s'est produit en relançant avec un
+    # plafond plus haut, et le message a coûté un aller-retour de diagnostic.
+    if skipped:
+        print()
+        print(f"⚠️  {skipped} sous-ensembles SAUTÉS (--resume) : leurs fichiers")
+        print("    existaient déjà et n'ont PAS été reconvertis.")
+        if total == 0:
+            print()
+            print("    Aucun fichier écrit : le corpus est inchangé, à sa taille")
+            print("    d'origine. Si le but était de l'AGRANDIR (plafond relevé),")
+            print("    --resume l'en empêche — reconvertir vers un autre --out.")
     print()
     print("Prochaine étape — pretrain :")
     print("  python scripts/train.py --config-name lotsa_tiny")

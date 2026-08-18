@@ -3,10 +3,27 @@
 # G5 — PRETRAIN sur le corpus LOTSA COMPLET (plafonds de conversion désactivés).
 #
 #   # 1. conversion sans plafonds — 80 à 150 Go, vérifier df -h d'abord
-#   make lotsa-download CHUNKS=1000000
+#   #    ⚠️ vers un répertoire NEUF, pas data/processed/lotsa. Voir ci-dessous.
+#   python scripts/prepare_lotsa.py --out data/processed/lotsa_full \
+#       --max-chunks-per-subset 1000000 --resume
 #
 #   # 2. pretrain
 #   make train CONFIG=lotsa_tiny_full ARGS="wandb.run_name=lotsa-full"
+#
+# Pourquoi un répertoire SÉPARÉ, et pas une reconversion en place
+# --------------------------------------------------------------
+# `make lotsa-download` passe `--resume` en dur. Relancer avec un plafond plus
+# haut sur data/processed/lotsa ne fait donc RIEN : tous les fichiers existent,
+# tous sont sautés, et le script affiche « 0 morceaux » — ce qui se lit comme un
+# échec alors que le corpus est simplement resté à sa taille d'origine.
+#
+# Mais la vraie raison est scientifique, pas ergonomique. data/processed/lotsa
+# est le corpus sur lequel E14 a été obtenu, ET le corpus de contrôle de
+# l'ablation d'objectif (lotsa_tiny_recon). L'écraser rendrait E14
+# irreproductible et casserait la comparaison G6, qui n'a de sens que si les
+# deux arms partagent exactement les mêmes données. Les deux corpus coexistent
+# donc, et `--resume` reste utile ici : il permet de reprendre la conversion
+# longue là où elle s'est arrêtée.
 #
 # Pourquoi ce régime existe
 # -------------------------
@@ -39,7 +56,7 @@
 #   import numpy as np, glob, os, re
 #   from collections import Counter
 #   tot, files = Counter(), Counter()
-#   for f in glob.glob('data/processed/lotsa/*.npy'):
+#   for f in glob.glob('data/processed/lotsa_full/*.npy'):
 #       fam = re.sub(r'_(18|19|20)\d{2}$', '', os.path.basename(f)[:-4])
 #       a = np.load(f, mmap_mode='r'); tot[fam] += a.shape[0]*a.shape[1]; files[fam] += 1
 #   g = sum(tot.values())
@@ -55,6 +72,13 @@ defaults:
 
 model:
   name: "timejepa_lotsa_tiny_full"
+
+data:
+  # Corpus complet, dans son propre répertoire. `Path.glob` n'est PAS récursif
+  # (datamodule.py:636), donc ce répertoire et data/processed/lotsa sont
+  # strictement étanches — et tous deux le sont vis-à-vis des .npy Monash, qui
+  # vivent un niveau au-dessus dans data/processed/.
+  data_dir: "data/processed/lotsa_full"
 
 training:
   max_epochs: 2

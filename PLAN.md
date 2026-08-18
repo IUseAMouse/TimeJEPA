@@ -4,7 +4,7 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-15 — E14 : premier zero-shot LOTSA. MASE moyenne 1.150 (contre 1.193 geo), ETTm1 de -37 % à -8,4 % de skill. Suite : pretrain sur corpus complet.
+**Dernière mise à jour :** 2026-08-18 — E15 : l'ablation d'objectif ne confirme PAS la thèse (1,4 %, recon gagne 17/28 cellules). La contribution devient E14, le zero-shot à petite échelle.
 
 ---
 
@@ -692,6 +692,57 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
 
 ---
 
+## G6 — Ablation d'objectif : extrapolation latente contre reconstruction
+
+**L'expérience la plus importante qui reste**, parce qu'elle teste la thèse du papier plutôt
+qu'un de ses corollaires. E12 a montré que pré-entraîner aide (−8,7 %) et E14 qu'un corpus
+plus large aide (ETTm1, −16,8 %) — mais le bras de comparaison d'E12 est l'ABSENCE de
+pré-entraînement, jamais un objectif concurrent. « L'extrapolation latente bat la
+reconstruction » figure donc au §4 du registre, la liste de ce qui n'est PAS établi.
+
+Une seule variable change : le prédicteur régresse vers les patchs futurs BRUTS au lieu de
+`target_encoder(patchs futurs)`. Tâche passé→futur, corpus, géométrie, budget, optimiseur :
+tous hérités de `lotsa_tiny`. C'est l'objectif de TimesFM, donc une baseline reconnue.
+
+L'arm tourne sur le corpus PLAFONNÉ (`data/processed/lotsa`), celui d'E14 — la comparaison
+n'a de sens que si les deux partagent exactement les mêmes données. Ne pas l'écraser en
+convertissant le corpus complet (voir `lotsa_tiny_full`, qui écrit dans `lotsa_full`).
+
+- [x] **G6.1** Pretrain de l'arm reconstruction
+      `python scripts/train.py --config-name lotsa_tiny_recon wandb.run_name=recon-pretrain`
+- [x] **G6.2** Finetune zero-shot — protocole identique, nom de sortie distinct
+      `python scripts/train.py --config-name lotsa_tiny_recon_zeroshot \`
+      `    +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_recon/pretrain_True/<ckpt> \`
+      `    wandb.run_name=recon-zeroshot`
+- [x] **G6.3** Eval et comparaison à E14
+      `python scripts/evaluate.py --config-name lotsa_tiny_eval \`
+      `    +checkpoint_path=checkpoints/timejepa_lotsa_tiny_recon_zs/pretrain_False/<ckpt>`
+
+⚠️ Ne comparer QUE les MASE/WQL après finetune. Les `val_loss` de pretrain des deux arms sont
+des grandeurs sans rapport (MSE latente contre MSE en espace des valeurs).
+
+**✅ G6 TERMINÉ — verdict NÉGATIF (E15, 2026-08-18).** MASE 1.150 (JEPA) contre 1.166
+(reconstruction), soit 1,4 % — mais la reconstruction gagne **17 des 28** comparaisons
+appariées et l'écart médian par cellule est en sa faveur. Égalité à queues lourdes, pas
+victoire. **La thèse « l'extrapolation latente bat la reconstruction » sort du papier.**
+
+Conséquences, à traiter avant d'écrire quoi que ce soit :
+
+- [ ] **G6.4** Recadrer le positionnement autour d'E14 (zero-shot à ~1 M paramètres sur corpus
+      disjoint, ETTm1 résolu par le corpus) et NON autour de l'objectif. Le §9 du registre est
+      à réécrire.
+- [ ] **G6.5** Si l'on veut malgré tout dire quelque chose sur l'objectif : **≥3 graines par
+      bras**. Un écart de 1,4 % sur une graine est au niveau du bruit. Seul signal
+      éventuellement réel : la reconstruction se dégrade au long horizon (11/14 des cellules à
+      h≤192, 6/14 à h≥336) — mais l'ampleur repose sur deux cellules.
+- [x] ~~**G6.6** Troisième bras reconstruction + SIGReg~~ — ABANDONNÉ. Le bras recon tourne sans
+      aucune régularisation d'encodeur, `context_var` chute de 0,80 à 0,20, et l'écart en aval
+      reste de 1,4 %. La variance de représentation ne porte donc pas le transfert : isoler le
+      régularisateur n'apprendrait plus grand-chose.
+
+
+---
+
 ## Décisions actées
 
 - **Univarié conservé** pour l'instant. Channel-independent bat channel-mixing sur ces benchmarks
@@ -704,4 +755,10 @@ sub-quotidien uniquement (B17 l'a prouvé), ~24 datasets, contre ~10¹² points 
 
 ## Journal
 
+- 2026-08-18 — G6 tranché, négativement (E15). La contribution du papier bascule de l'objectif
+  vers le passage à l'échelle du corpus (E14). Priorité suivante : le harness GIFT-Eval (P2.6),
+  sans lequel « battre le SOTA » reste non mesurable.
+- 2026-08-16 — G6 ajouté : ablation d'objectif (`lotsa_tiny_recon`), le contrôle qui manquait
+  à la thèse. Corpus complet redirigé vers `data/processed/lotsa_full` pour ne pas écraser le
+  corpus d'E14, qui sert de contrôle à G6.
 - 2026-08-09 — Audit complet. Branche `sota-roadmap` créée. PLAN.md initialisé. Démarrage P0.
