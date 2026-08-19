@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, Literal, List
 from pathlib import Path
 import logging
 
-from ..models.jepa_tst import JEPATST, filter_loadable
+from ..models.jepa_tst import JEPATST, filter_loadable, grow_future_query_table
 from .utils.metrics import (
     compute_forecasting_metrics,
     mse,
@@ -67,6 +67,13 @@ class FinetuneModule(pl.LightningModule):
         # default of 0.0.
         context_lengths: Optional[List[int]] = None,
         p_random_context_finetune: float = 0.0,
+
+        # Chantier 2 (horizon natif) — fusionner la table de requêtes d'un
+        # checkpoint à horizon COURT dans un modèle à horizon LONG au lieu de la
+        # dropper. Opt-in : sans ce flag, un mismatch reste un échec bruyant
+        # (critical_missing), le comportement historique. Voir
+        # grow_future_query_table dans jepa_tst.py.
+        extend_horizon_queries: bool = False,
         
         # Optimizer
         learning_rate: float = 1e-4,
@@ -111,6 +118,7 @@ class FinetuneModule(pl.LightningModule):
         # Context-geometry randomization (train only)
         self.context_lengths = list(context_lengths) if context_lengths else None
         self.p_random_context_finetune = float(p_random_context_finetune)
+        self.extend_horizon_queries = bool(extend_horizon_queries)
 
         # Optimizer params
         self.learning_rate = learning_rate
@@ -154,6 +162,13 @@ class FinetuneModule(pl.LightningModule):
         else:
             raise ValueError(f"Unknown checkpoint format. Keys: {list(checkpoint.keys())}")
         
+        # Chantier 2 — extension d'horizon opt-in : fusionner la table de
+        # requêtes courte AVANT filter_loadable, sinon ce dernier la droppe et
+        # le garde critical_missing ci-dessous refuse (comportement voulu hors
+        # extension intentionnelle).
+        if self.extend_horizon_queries:
+            cleaned_state_dict = grow_future_query_table(self.model, cleaned_state_dict)
+
         # Drop entries whose shape does not match — swapping a point decoder for
         # the quantile head reuses the same key path with a different width, and
         # strict=False does NOT tolerate that (it only tolerates missing keys).

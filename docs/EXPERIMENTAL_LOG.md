@@ -1048,6 +1048,13 @@ Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
 
 ## 5. Défauts qui ont invalidé des résultats
 
+> **Risque assumé (2026-08-19)** — `beijing_air_quality` et `china_air_quality` sont au corpus
+> de pretrain alors que GIFT-Eval évalue `kdd_cup_2018` (qualité de l'air, Pékin 2017-2018) :
+> un chevauchement PARTIEL de fenêtres temporelles est concevable. Assumé parce que
+> `GiftEvalPretrain`, le corpus de pré-entraînement publié par les auteurs du benchmark,
+> contient les deux sous-ensembles — aucune entrée du leaderboard n'est pénalisée pour les
+> avoir vus. À retirer (overrides + test, ensemble) si un relecteur le conteste.
+
 Section essentielle pour un article : elle explique pourquoi les résultats antérieurs à
 certaines dates ne sont pas comparables. Chaque entrée a son commit sur `sota-roadmap`.
 
@@ -1333,6 +1340,27 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-19 (run tiny-full, à ~40 % de l'époque)** — Observation à retenir pour la lecture
+  de TOUTES les val_loss de pretrain JEPA : hausse soutenue de la val_loss (0,503 → 0,552 sur
+  4 points consécutifs, ~135k → 270k steps) avec cosine en baisse, ALORS QUE la mémorisation
+  est impossible (~0,85 passe sur le corpus, la hausse commence à ~0,45 passe) et que la
+  représentation est INTACTE : effective_rank stable 42-49 (plage calibrée 43-87), context_std
+  stable 0,85-0,875. Diagnostic : **artefact de cible mouvante** — `val_repr/target_var` monte
+  de 0,75 à 0,79 en parallèle, l'encodeur cible EMA produit des cibles plus riches donc plus
+  dures à prédire, et la loss monte sans que le modèle régresse. La val_loss JEPA n'est pas
+  comparable dans le temps parce que la distribution des CIBLES évolue. Corollaire pratique :
+  ne jamais diagnostiquer un pretrain JEPA sur sa val_loss seule — rank + std + target_var
+  d'abord. (Recoupe E13b, dont la « divergence » après une époque contenait probablement une
+  part de ce même artefact en plus du re-passage.) Vérification restante : la hausse doit
+  s'infléchir quand le recuit mord (dernier tiers) — sinon réexaminer. Décision : à la fin du
+  run, évaluer LES DEUX checkpoints (last + meilleur val ~135k) — l'expérience de sélection
+  que E13 demandait.
+- **2026-08-19** — G9.2 IMPLÉMENTÉ (pas encore couru) : arm inter-résolution — contexte@k1,
+  cible@k2 contiguë, w=k2/k1 par item, FiLM zéro-init sur les requêtes du prédicteur
+  (identité exacte à w=1), cibles standalone obligatoires. Corpus requis : morceaux 8192
+  (synthétique + chronos_extras) — les 2048 n'autorisent que k1=1. Témoin de non-stérilité :
+  `aug/w_neq1_frac` sur wandb. Comparaison à une variable : contre le run CONTRÔLE
+  lotsa_tiny sur le même corpus mixte, jamais contre lotsa_tiny nu.
 - **2026-08-18 (suite 2)** — ajout de **E17** : diagnostic compétitif sur 123 modèles. L'écart
   au leaderboard suit la COUVERTURE FRÉQUENTIELLE (facteur 2,2), pas l'horizon (plat) ni le
   multivarié (second ordre). Sur les fréquences couvertes, 1M bat un 4M SOTA.

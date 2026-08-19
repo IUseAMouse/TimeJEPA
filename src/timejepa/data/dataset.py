@@ -125,6 +125,10 @@ class TimeSeriesDataset(Dataset):
         augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]] = None,
         multi_resolution_factors: Optional[List[int]] = None,
         p_multi_resolution: float = 0.0,
+        # G9.2 — JEPA inter-résolution : contexte décimé à k1, cible à k2,
+        # (k1, k2) tirés indépendamment dans multi_resolution_factors. À False
+        # (toutes les configs existantes), comportement inchangé au bit près.
+        cross_resolution: bool = False,
         use_mmap: bool = False,
     ):
         """
@@ -154,6 +158,7 @@ class TimeSeriesDataset(Dataset):
         self.augmentations = self._setup_augmentations(augmentations)
         self.multi_resolution_factors = list(multi_resolution_factors or [1])
         self.p_multi_resolution = float(p_multi_resolution)
+        self.cross_resolution = bool(cross_resolution)
 
         # Load data
         logger.info(f"Loading data from {self.data_path}")
@@ -309,6 +314,46 @@ class TimeSeriesDataset(Dataset):
         if total == 0 or not factors:
             return
 
+        if self.cross_resolution:
+            # G9.2 — l'exigence n'est plus (ctx+pred)·f mais ctx·k1 + pred·k2.
+            # La paire la moins gourmande pour un facteur f est celle qui ne
+            # décime QUE la cible (k1=1, k2=f) : besoin = ctx + pred·f. Sans
+            # cette branche, le log annoncerait « inactif » sur les morceaux
+            # 2048 alors que les paires k1=1 y vivent très bien — ou pire,
+            # l'inverse : un arm silencieusement stérile.
+            series_ids = self.window_indices[:, 0]
+            starts = self.window_indices[:, 1].astype(np.int64)
+            if self.data.dtype == object:
+                lengths = np.array([x.shape[-1] for x in self.normalized_data],
+                                   dtype=np.int64)[series_ids]
+            else:
+                lengths = np.full(total, self.normalized_data.shape[-1],
+                                  dtype=np.int64)
+            elig_tgt = {f: int((starts + self.context_length
+                                + self.prediction_length * f <= lengths).sum())
+                        for f in factors}
+            elig_ctx = {f: int((starts + self.context_length * f
+                                + self.prediction_length <= lengths).sum())
+                        for f in factors}
+            parts = ", ".join(
+                f"k2={f}:{n / total:.0%}" for f, n in sorted(elig_tgt.items()))
+            parts_c = ", ".join(
+                f"k1={f}:{n / total:.0%}" for f, n in sorted(elig_ctx.items()))
+            coverage = max(elig_tgt.values()) / total
+            if coverage == 0:
+                logger.warning(
+                    "  ⚠️  Inter-résolution INACTIVE ici : aucune paire (k1,k2) "
+                    "ne tient dans les séries — l'arm serait STÉRILE sur ce "
+                    "dataset (il faut des morceaux ≥ ctx + pred·k2)."
+                )
+            else:
+                logger.info(
+                    f"  ✓ Inter-résolution p={self.p_multi_resolution} | "
+                    f"cible décimable: {parts} | contexte décimable: {parts_c} "
+                    f"| taux effectif ≈ {self.p_multi_resolution * coverage:.0%}"
+                )
+            return
+
         # Vectorized: window_indices holds tens of millions of rows on the full
         # corpus, so a Python loop here would take minutes at startup.
         series_ids = self.window_indices[:, 0]
@@ -446,6 +491,33 @@ class TimeSeriesDataset(Dataset):
             return 1
         return int(np.random.choice(eligible))
 
+    def _sample_resolution_pair(self, series_len: int, start_idx: int):
+        """
+        G9.2 — tire (k1, k2) indépendants pour l'arm inter-résolution.
+
+        Le contexte est lu décimé à k1 et la cible à k2 : la fenêtre brute
+        requise est `ctx·k1 + pred·k2`, PAS `(ctx+pred)·f` — la contrainte
+        d'éligibilité en tient compte paire par paire. Repli (1, 1) si aucune
+        paire non triviale ne tient (le cas de TOUS les morceaux 2048 côté k1 :
+        1024·2 + 256 = 2304 > 2048 ; seules les paires k1=1 < k2 y vivent, et
+        l'espace complet exige les morceaux 8192 — synthétique, chronos_extras).
+        """
+        if self.p_multi_resolution <= 0.0 or len(self.multi_resolution_factors) <= 1:
+            return 1, 1
+        if np.random.rand() >= self.p_multi_resolution:
+            return 1, 1
+        pairs = [
+            (k1, k2)
+            for k1 in self.multi_resolution_factors
+            for k2 in self.multi_resolution_factors
+            if (k1, k2) != (1, 1)
+            and start_idx + self.context_length * k1 + self.prediction_length * k2
+            <= series_len
+        ]
+        if not pairs:
+            return 1, 1
+        return pairs[int(np.random.randint(len(pairs)))]
+
     def get_item(self, idx: int, allow_multi_resolution: bool = False) -> Dict[str, Any]:
         """
         Get a single sample (WITHOUT the augmentation pipeline).
@@ -473,32 +545,57 @@ class TimeSeriesDataset(Dataset):
         series = self.normalized_data[series_idx]
         series_len = series.shape[-1]
 
-        factor = self._sample_resolution_factor(series_len, start_idx) \
-            if allow_multi_resolution else 1
-
-        span = (self.context_length + self.prediction_length) * factor
-        window_end = start_idx + span
-
-        if self.is_multivariate:
-            window = series[:, start_idx:window_end:factor]
-            context = window[:, :self.context_length]
-            target = window[:, self.context_length:self.context_length + self.prediction_length]
+        if allow_multi_resolution and self.cross_resolution:
+            # G9.2 — contexte à k1, cible à k2. La cible reste le futur
+            # PHYSIQUEMENT contigu : son premier point brut est exactement
+            # series[start + ctx·k1], quel que soit k2.
+            k1, k2 = self._sample_resolution_pair(series_len, start_idx)
+            ctx_end = start_idx + self.context_length * k1
+            tgt_end = ctx_end + self.prediction_length * k2
+            if self.is_multivariate:
+                context = series[:, start_idx:ctx_end:k1]
+                target = series[:, ctx_end:tgt_end:k2]
+            else:
+                context = series[start_idx:ctx_end:k1]
+                target = series[ctx_end:tgt_end:k2]
+            factor = k1
+            w = float(k2) / float(k1)
         else:
-            window = series[start_idx:window_end:factor]
-            context = window[:self.context_length]
-            target = window[self.context_length:self.context_length + self.prediction_length]
+            factor = self._sample_resolution_factor(series_len, start_idx) \
+                if allow_multi_resolution else 1
+            w = 1.0
+
+            span = (self.context_length + self.prediction_length) * factor
+            window_end = start_idx + span
+
+            if self.is_multivariate:
+                window = series[:, start_idx:window_end:factor]
+                context = window[:, :self.context_length]
+                target = window[:, self.context_length:self.context_length + self.prediction_length]
+            else:
+                window = series[start_idx:window_end:factor]
+                context = window[:self.context_length]
+                target = window[self.context_length:self.context_length + self.prediction_length]
 
         if self.return_tensor:
             context = _to_tensor(context)
             target = _to_tensor(target)
 
-        return {
+        item = {
             'context': context,
             'target': target,
             'series_id': series_idx,
             'start_idx': start_idx,
             'resolution_factor': factor,
         }
+        if self.cross_resolution:
+            # w = k2/k1 par item (G9.2). Émise UNIQUEMENT en mode
+            # inter-résolution : le collate par défaut exige des clés
+            # identiques sur tous les items, et le flag étant un attribut du
+            # dataset, c'est tout ou rien — les configs existantes ne voient
+            # jamais cette clé (dict d'item inchangé, épinglé par test).
+            item['w'] = w
+        return item
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """

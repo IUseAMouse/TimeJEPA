@@ -1,0 +1,84 @@
+# @package _global_
+#
+# G9.2 — ARM JEPA INTER-RÉSOLUTION : l'équivariance d'échelle par l'OBJECTIF.
+#
+#   # 0. corpus mixte (les morceaux 8192 sont indispensables, voir plus bas)
+#   python scripts/generate_synthetic.py --out data/processed/synthetic
+#   python scripts/prepare_chronos.py --out data/processed/chronos_extras
+#   mkdir -p data/processed/lotsa_xres
+#   ln -s $(pwd)/data/processed/lotsa/*.npy data/processed/lotsa_xres/
+#   ln -s $(pwd)/data/processed/synthetic/*.npy data/processed/lotsa_xres/
+#   ln -s $(pwd)/data/processed/chronos_extras/*.npy data/processed/lotsa_xres/
+#
+#   # 1. CONTRÔLE corpus (une variable à la fois) : baseline lotsa_tiny sur le
+#   #    MÊME répertoire mixte — override CLI, pas de config supplémentaire
+#   python scripts/train.py --config-name lotsa_tiny \
+#       data.data_dir=data/processed/lotsa_xres wandb.run_name=xres-control
+#
+#   # 2. l'arm
+#   python scripts/train.py --config-name lotsa_tiny_xres wandb.run_name=xres-pretrain
+#
+#   # 3. finetune zero-shot + évals : protocole standard (lotsa_tiny_zeroshot
+#   #    avec pretrained_encoder_path vers CE pretrain ; noter que le w_film,
+#   #    zéro-init côté requêtes, voyage dans le checkpoint et vaut identité
+#   #    à w=1 — le finetune ne passe jamais w).
+#
+# Le mécanisme
+# ------------
+# Contexte lu décimé à k1, cible (le futur PHYSIQUEMENT contigu) décimée à k2,
+# k1 et k2 tirés indépendamment dans multi_resolution_factors ; le prédicteur
+# reçoit w = k2/k1 par item via un FiLM résiduel zéro-init sur ses requêtes
+# futures. L'objectif force donc l'espace latent à être TRANSPOSABLE entre
+# échelles — ce que FlowState obtient par construction (SSM, Δ̄ = s·Δ,
+# arXiv:2508.05287) mais en devant recevoir la saisonnalité de l'extérieur.
+# Ici l'équivariance est APPRISE, et c'est faisable uniquement parce que la
+# cible est un latent : deux résolutions n'ont pas les mêmes valeurs, une loss
+# de reconstruction n'a pas de cible commune à leur donner. C'est LA
+# justification architecturale du choix JEPA (G9 du plan).
+#
+# ÉQUIVARIANCE, pas invariance : une série à 5 min et sa décimation horaire
+# diffèrent réellement — exiger le même latent détruirait de l'information.
+# D'où le conditionnement w plutôt qu'une contrainte d'égalité.
+#
+# Les deux écarts délibérés à lotsa_tiny (dits, pas cachés)
+# ---------------------------------------------------------
+# 1. contextualized_targets: false — OBLIGATOIRE : la cible contextualisée
+#    concatène [contexte‖cible] en pas d'échantillon, physiquement faux quand
+#    les deux grilles diffèrent. Gardé par ValueError dans le module.
+# 2. Le corpus mixte (lotsa + synthétique + chronos_extras). Les morceaux
+#    LOTSA font 2048 pas : ctx·k1 + pred·k2 ≤ 2048 n'autorise QUE les paires
+#    k1=1 (1024 + 256·k2 ≤ 2048 → k2 ≤ 4) ; l'espace complet (k1>1) exige les
+#    morceaux 8192. Sans eux l'arm est à moitié stérile — la ligne
+#    `aug/w_neq1_frac` de wandb est LE témoin : si elle reste à 0, le run ne
+#    mesure rien.
+#    ⚠️ Conséquence : la comparaison à lotsa_tiny nu change DEUX variables
+#    (objectif + corpus). Le run de CONTRÔLE (commande 1) rétablit la
+#    comparaison à une variable : xres vs contrôle = l'objectif seul.
+defaults:
+  - lotsa_tiny
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_xres"
+  # Une seule clé pilote modèle (FiLM), module (lecture de w) et datamodule
+  # (paires k1/k2) — câblée ainsi dans train.py pour qu'ils ne divergent pas.
+  cross_resolution: true
+
+training:
+  contextualized_targets: false
+
+data:
+  # Réactivés pour cet arm (coupés dans lotsa_tiny au motif — invalidé par
+  # E17 — que LOTSA couvrait nativement les fréquences).
+  multi_resolution_factors: [1, 2, 4]
+  p_multi_resolution: 0.3
+  data_dir: "data/processed/lotsa_xres"
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "pretrain"
+    - "cross-resolution"

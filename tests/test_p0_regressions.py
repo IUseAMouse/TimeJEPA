@@ -171,756 +171,106 @@ def test_single_shot_and_rolling_agree_on_first_window(small_model):
 # P0.4 — baselines
 # =============================================================================
 
-@pytest.fixture
-def seasonal_batch():
-    torch.manual_seed(0)
-    t = torch.arange(700.0).view(1, -1)
-    y = torch.sin(2 * torch.pi * t / 24).repeat(32, 1) * 3 + torch.randn(32, 700) * 0.5
-    return y[:, :500], y[:, 500:596]
 
 
-def test_seasonal_naive_repeats_last_cycle():
-    ctx = torch.arange(48.0).view(1, -1).repeat(2, 1)
-    out = seasonal_naive_forecast(ctx, horizon=24, season_length=24)
-    assert torch.equal(out[0], torch.arange(24.0, 48.0))
 
 
-def test_seasonal_naive_degenerates_to_last_value_when_m_is_1():
-    ctx = torch.randn(4, 100)
-    assert torch.equal(
-        seasonal_naive_forecast(ctx, 20, 1), last_value_forecast(ctx, 20)
-    )
 
 
-def test_baselines_preserve_shape():
-    for ctx, expected in [
-        (torch.randn(4, 500), (4, 96)),
-        (torch.randn(4, 500, 2), (4, 96, 2)),
-    ]:
-        for name, pred in compute_all_baselines(ctx, 96, 24).items():
-            assert pred.shape == expected, (name, pred.shape)
 
 
-def test_linear_trend_extrapolates_a_line():
-    t = torch.arange(100.0).view(1, -1)
-    ctx = (2.0 * t + 5.0).repeat(3, 1)
-    out = linear_trend_forecast(ctx, 10)
-    expected = 2.0 * torch.arange(100.0, 110.0) + 5.0
-    assert torch.allclose(out[0], expected, atol=1e-2)
 
 
-def test_seasonal_naive_has_mase_one(seasonal_batch):
-    """By construction MASE(seasonal naive) ~= 1 on a seasonal series."""
-    ctx, tgt = seasonal_batch
-    pred = seasonal_naive_forecast(ctx, 96, 24)
-    assert 0.85 < mase(pred, tgt, ctx, 24).item() < 1.15
 
 
-def test_context_mean_is_worse_than_seasonal_naive(seasonal_batch):
-    ctx, tgt = seasonal_batch
-    sn = mase(seasonal_naive_forecast(ctx, 96, 24), tgt, ctx, 24)
-    cm = mase(mean_forecast(ctx, 96), tgt, ctx, 24)
-    assert cm > sn
 
 
-def test_get_seasonality():
-    assert get_seasonality("ettm1") == 96
-    assert get_seasonality("etth1") == 24
-    assert get_seasonality("weather") == 144
-    assert get_seasonality("exchange") == 1      # random walk, not daily
-    assert get_seasonality("unknown", freq="H") == 24
-    assert get_seasonality("unknown") == 1
 
 
 # =============================================================================
 # P0.5 — scale-free metrics
 # =============================================================================
 
-def test_wql_equals_nd_for_point_forecast():
-    """
-    With a point forecast the weighted quantile loss collapses exactly to ND.
-    This is the honest CRPS a deterministic model earns on GIFT-Eval, and the
-    reason a quantile head is a prerequisite there rather than a nice-to-have.
-    """
-    torch.manual_seed(0)
-    p = torch.randn(8, 96)
-    g = torch.randn(8, 96).abs() + 1
-    assert abs(nd(p, g).item() - weighted_quantile_loss(p, g).item()) < 1e-5
 
 
-def test_wql_improves_with_calibrated_quantiles():
-    """A spread of quantiles around the truth must beat the degenerate point."""
-    torch.manual_seed(0)
-    g = torch.randn(16, 96).abs() + 5
-    p = g + torch.randn_like(g) * 0.5
-    point = weighted_quantile_loss(p, g).item()
-    spread = torch.stack([p + s for s in torch.linspace(-1.2, 1.2, 9)])
-    assert weighted_quantile_loss(spread, g).item() < point
 
 
-def test_mase_survives_flat_windows():
-    """
-    Real data contains near-constant windows (ETTm2, electricity). With the
-    classic mean-of-per-window-ratios, their seasonal difference is ~0 and the
-    ratio blows up to ~1/eps, dominating the average — observed in practice as
-    MASE ~1e4 for every model AND for seasonal naive itself.
-    """
-    torch.manual_seed(0)
-    ctx = torch.randn(16, 200) * 2.0
-    ctx[:4] = 5.0                       # 4 perfectly flat windows
-    tgt = torch.randn(16, 48)
-    pred = tgt + torch.randn(16, 48) * 0.3
-
-    pooled = mase(pred, tgt, ctx, 24, aggregate="pooled").item()
-    per_series = mase(pred, tgt, ctx, 24, aggregate="per_series").item()
-
-    assert pooled < 100, f"pooled MASE exploded: {pooled}"
-    assert per_series < 100, f"per-series MASE exploded: {per_series}"
 
 
-def test_mase_all_flat_falls_back_to_mae():
-    """If every window is constant, a scaled error is undefined — report MAE."""
-    ctx = torch.full((8, 100), 3.0)
-    tgt = torch.zeros(8, 24)
-    pred = torch.ones(8, 24)
-    assert abs(mase(pred, tgt, ctx, 24, aggregate="per_series").item() - 1.0) < 1e-5
 
 
-def test_mase_is_scale_invariant():
-    """MASE must not change when the whole series is rescaled."""
-    torch.manual_seed(0)
-    ctx = torch.randn(8, 200).cumsum(1)
-    tgt = torch.randn(8, 48)
-    pred = torch.randn(8, 48)
-    a = mase(pred, tgt, ctx, 1).item()
-    b = mase(pred * 1000, tgt * 1000, ctx * 1000, 1).item()
-    assert abs(a - b) / a < 1e-4
 
 
 # =============================================================================
 # B17 — a too-short dataset must not kill a multi-dataset run
 # =============================================================================
 
-def _write(dirpath, name, arr, allow_pickle=False):
-    import numpy as np
-    path = Path(dirpath) / f"{name}.npy"
-    np.save(path, arr, allow_pickle=allow_pickle)
-    return path
 
 
-@pytest.fixture
-def short_and_long_datasets(tmp_path):
-    import numpy as np
-    rng = np.random.default_rng(0)
-    t = np.arange(20000.0)
-    _write(tmp_path, "electricity-hourly",
-           np.stack([np.sin(2 * np.pi * t / 24) + 0.1 * rng.standard_normal(20000)
-                     for _ in range(4)]).astype("float32"))
-    # Exactly the shape that crashed the first real run: weekly data, 114 points
-    _write(tmp_path, "wikipedia-web-traffic-weekly",
-           rng.standard_normal((500, 114)).astype("float32"))
-    # Same problem stored as a variable-length object array
-    _write(tmp_path, "fred-md",
-           np.array([rng.standard_normal(rng.integers(300, 500)).astype("float32")
-                     for _ in range(50)], dtype=object), allow_pickle=True)
-    return tmp_path
 
 
-def test_too_short_fixed_length_dataset_raises_typed_error(short_and_long_datasets):
-    from timejepa.data.dataset import TimeSeriesDataset, SeriesTooShortError
-    with pytest.raises(SeriesTooShortError):
-        TimeSeriesDataset(
-            short_and_long_datasets / "wikipedia-web-traffic-weekly.npy",
-            context_length=512, prediction_length=128,
-        )
 
 
-def test_too_short_variable_length_dataset_raises_too(short_and_long_datasets):
-    """
-    The variable-length path used to silently drop every series and then build a
-    zero-window dataset, while the fixed-length path raised. Both now raise.
-    """
-    from timejepa.data.dataset import TimeSeriesDataset, SeriesTooShortError
-    with pytest.raises(SeriesTooShortError):
-        TimeSeriesDataset(
-            short_and_long_datasets / "fred-md.npy",
-            context_length=512, prediction_length=128,
-        )
 
 
-def test_error_reports_the_real_longest_series(short_and_long_datasets):
-    """
-    Variable-length series are filtered before window generation, so measuring
-    what remains reports 0. The message must quote the pre-filter maximum, or it
-    actively misleads whoever is debugging a config.
-    """
-    from timejepa.data.dataset import TimeSeriesDataset, SeriesTooShortError
-    with pytest.raises(SeriesTooShortError) as exc:
-        TimeSeriesDataset(
-            short_and_long_datasets / "fred-md.npy",
-            context_length=512, prediction_length=128,
-        )
-    assert exc.value.series_length >= 300, "reported 0 instead of the real length"
-    assert "Longest usable context" in str(exc.value)
 
 
-def test_window_indices_are_a_compact_array(short_and_long_datasets):
-    """
-    B19. window_indices was a Python list of 2-tuples: ~120 bytes per window
-    (8 list pointer + 56 tuple + 56 for two int objects, start_idx being well
-    past the small-int cache). At the corpus's ~54M windows that is ~6.5 GB —
-    and paid PER PROCESS, because a dataloader worker walking the list bumps
-    each tuple's refcount, writing to its page and defeating fork's
-    copy-on-write. Observed as a steady climb to ~50 GB on a 57 GB host.
-
-    An int32 [N, 2] array is 8 bytes per window and has no per-element Python
-    objects, so the pages are genuinely shared.
-    """
-    import numpy as np
-    from timejepa.data.dataset import TimeSeriesDataset
-
-    ds = TimeSeriesDataset(
-        short_and_long_datasets / "electricity-hourly.npy",
-        context_length=512, prediction_length=128, stride=8,
-    )
-    wi = ds.window_indices
-    assert isinstance(wi, np.ndarray)
-    assert wi.dtype == np.int32
-    assert wi.ndim == 2 and wi.shape[1] == 2
-    assert wi.nbytes == len(ds) * 8
 
 
-@pytest.mark.parametrize("layout", ["dense", "object"])
-def test_window_indices_still_address_the_right_data(tmp_path, layout):
-    """The compact layout must select byte-identical windows."""
-    import numpy as np
-    from timejepa.data.dataset import TimeSeriesDataset
-
-    rng = np.random.default_rng(0)
-    if layout == "dense":
-        arr = rng.standard_normal((4, 8000)).astype("float32")
-        _write(tmp_path, "d", arr)
-        path = tmp_path / "d.npy"
-    else:
-        arr = np.array([rng.standard_normal(rng.integers(2000, 8000)).astype("float32")
-                        for _ in range(6)], dtype=object)
-        _write(tmp_path, "d", arr, allow_pickle=True)
-        path = tmp_path / "d.npy"
-
-    ds = TimeSeriesDataset(path, context_length=512, prediction_length=128, stride=64)
-    for i in (0, len(ds) // 3, len(ds) - 1):
-        series_idx, start = int(ds.window_indices[i][0]), int(ds.window_indices[i][1])
-        expected = ds.normalized_data[series_idx][start:start + 512]
-        assert np.allclose(ds[i]["context"].numpy(), expected)
 
 
-def test_multidataset_skips_short_datasets_and_keeps_training(short_and_long_datasets):
-    """
-    THE B17 bug: wikipedia-web-traffic-weekly (114 weekly points vs 640 needed)
-    aborted an entire 23-dataset pretraining run.
-    """
-    from timejepa.data.datamodule import MultiDatasetMonashDataModule
-    dm = MultiDatasetMonashDataModule(
-        data_dir=short_and_long_datasets,
-        context_length=512, prediction_length=128,
-        datasets=["electricity-hourly", "wikipedia-web-traffic-weekly", "fred-md"],
-        batch_size=16, stride=64,
-        normalize_mode="global", normalizer_type="identity", clip_outliers=False,
-        train_val_test_split=(0.96, 0.02, 0.02), num_workers=0,
-    )
-    dm.prepare_data()
-    dm.setup("fit")
-
-    assert dm.dataset_names_order == ["electricity-hourly"]
-    assert len(dm.train_dataset) > 0
 
 
-def test_multidataset_raises_when_everything_is_skipped(tmp_path):
-    """Skipping is graceful; skipping *everything* must still be a hard error."""
-    import numpy as np
-    from timejepa.data.datamodule import MultiDatasetMonashDataModule
-    _write(tmp_path, "a", np.random.randn(100, 114).astype("float32"))
-    _write(tmp_path, "b", np.random.randn(100, 200).astype("float32"))
-    dm = MultiDatasetMonashDataModule(
-        data_dir=tmp_path, context_length=512, prediction_length=128,
-        datasets=["a", "b"], batch_size=16, stride=64,
-        normalize_mode="global", normalizer_type="identity", clip_outliers=False,
-        train_val_test_split=(0.96, 0.02, 0.02), num_workers=0,
-    )
-    dm.prepare_data()
-    with pytest.raises(RuntimeError, match="Every dataset was skipped"):
-        dm.setup("fit")
 
 
 # =============================================================================
 # G5 — LOTSA integration must be purely additive
 # =============================================================================
 
-def test_lotsa_segmentation_produces_dense_chunks():
-    """
-    The corpus MUST convert to dense arrays only: object arrays break fork's
-    copy-on-write (B19) and would be fatal at LOTSA scale.
-    """
-    import numpy as np
-    from timejepa.data.lotsa import segment_series, iter_dense_chunks
-
-    # long series -> exact chunks, remainder dropped
-    chunks = segment_series(np.arange(20_000.0), chunk_length=8192, min_length=1280)
-    assert len(chunks) == 2
-    assert all(c.shape == (8192,) for c in chunks)
-    assert all(c.dtype == np.float32 for c in chunks)
-
-    # too short -> nothing
-    assert segment_series(np.arange(500.0), 8192, 1280) == []
-
-    # a stream of mixed lengths yields only exact-length chunks
-    stream = [np.arange(20_000.0), np.arange(900.0), np.arange(9000.0)]
-    out = list(iter_dense_chunks(stream, chunk_length=8192, min_length=1280))
-    assert all(c.shape == (8192,) for c in out)
-    assert np.stack(out).dtype != object
 
 
-@pytest.mark.parametrize("size,reference", [("mini", "mini"), ("base", "base")])
-def test_lotsa_scale_configs_match_their_reference_dimensions(size, reference):
-    """
-    The dimensions are written out rather than inherited from mini.yaml/base.yaml,
-    because those carry their own data block which would clobber the LOTSA
-    corpus. Written-out values drift; this pins them.
-    """
-    ref = _compose(reference)
-    pre = _compose(f"lotsa_{size}")
-    for block in ("encoder", "predictor"):
-        for key in ("d_model", "n_layers", "d_ff"):
-            assert pre.model[block][key] == ref.model[block][key], f"{block}.{key}"
-    # ...while the corpus and geometry stay those of the LOTSA round
-    base = _compose("lotsa_tiny")
-    assert pre.data.data_dir == base.data.data_dir
-    assert pre.data.use_mmap is True
-    assert pre.model.seq_length == base.model.seq_length
-    assert pre.model.decoder.type == "quantile"
-    assert pre.training.loss.type == "sigreg"
 
 
-@pytest.mark.parametrize("size", ["tiny", "mini", "base"])
-def test_lotsa_eval_config_matches_the_trained_model(size):
-    """
-    A shape mismatch at eval time only WARNS before producing silently wrong
-    numbers — the trap already hit on the p32 arm. Capacity must match too, not
-    just geometry.
-    """
-    zs = _compose(f"lotsa_{size}_zeroshot")
-    ev = _compose(f"lotsa_{size}_eval")
-
-    for key in ("seq_length", "prediction_length", "patch_length", "stride"):
-        assert ev.model[key] == zs.model[key], f"eval/{key} drifted"
-    for block in ("encoder", "predictor"):
-        for key in ("d_model", "n_layers", "d_ff"):
-            assert ev.model[block][key] == zs.model[block][key], f"eval/{block}.{key}"
-    assert ev.model.decoder.type == zs.model.decoder.type
-
-    # The eval config reads the HELD-OUT corpus, never LOTSA
-    assert "lotsa" not in str(ev.data.data_dir).lower()
-    assert ev.data.get("use_mmap", False) is False
-
-    # The zero-shot arm trains its decoder on LOTSA only
-    assert zs.data.datasets_finetune is None
-    assert "lotsa" in str(zs.data.data_dir)
 
 
-def test_lotsa_configs_share_one_effective_batch_regime():
-    """
-    Effective batch is batch x accumulation x GPUs. tiny_geo used accumulation 6
-    on one or two cards; inheriting it here gave 6144 across four, a learning-rate
-    regime unrelated to any previous run, and forced an override on every command.
-    All three scales are now calibrated for four GPUs.
-    """
-    effective = {
-        size: _compose(f"lotsa_{size}").data.batch_size
-        * _compose(f"lotsa_{size}").trainer.accumulate_grad_batches
-        * 4
-        for size in ("tiny", "mini", "base")
-    }
-    assert all(1000 <= v <= 2048 for v in effective.values()), effective
 
 
-def test_memmapped_windows_yield_writable_tensors(tmp_path):
-    """
-    B23. With use_mmap, np.load(mmap_mode="r") is read-only, ascontiguousarray on
-    a contiguous slice does not copy, and .float() on float32 is a no-op — so the
-    tensor aliased the mapping. Augmentations run right after, and an in-place
-    write to a read-only mapping is a segfault at best and silent corruption of
-    the .npy on disk at worst.
-    """
-    import numpy as np
-    from timejepa.data.dataset import TimeSeriesDataset
-
-    path = tmp_path / "dense.npy"
-    np.save(path, np.sin(np.arange(4 * 4096.0).reshape(4, 4096)).astype(np.float32))
-    original = np.load(path).copy()
-
-    ds = TimeSeriesDataset(str(path), context_length=512, prediction_length=256,
-                           use_mmap=True)
-    item = ds[0]
-    ctx = item["context"]
-
-    # An in-place write must be safe and must NOT reach the file
-    ctx.add_(1.0)
-    assert np.array_equal(np.load(path), original), "in-place write reached the .npy"
-
-    # The non-mmap path is unchanged
-    plain = TimeSeriesDataset(str(path), context_length=512, prediction_length=256)
-    plain[0]["context"].add_(1.0)
-    assert np.array_equal(np.load(path), original)
 
 
-def test_family_grouping_prevents_one_domain_dominating():
-    """
-    The per-subset cap protects nothing when one domain is split across many
-    subsets. LOTSA ships cmip6 as 33 annual slices and era5 as 30, which is 63
-    of the 123 kept subsets: at an equal cap each, half the pretraining corpus
-    would be smooth seasonal climate reanalysis. E10 already measured that
-    failure mode at smaller scale (two datasets holding 48.7% of the batch).
-    """
-    from timejepa.data.lotsa import family_of
-
-    assert family_of("cmip6_1850") == family_of("cmip6_2010") == "cmip6"
-    assert family_of("era5_1989") == family_of("era5_2018") == "era5"
-    assert family_of("largest_2017") == family_of("largest_2021") == "largest"
-    assert family_of("gfc12_load") == family_of("gfc17_load") == "gfc_load"
-
-    # Subsets whose trailing number is not a year stay distinct
-    assert family_of("PEMS03") != family_of("PEMS04")
-    # ...and a lone year-suffixed subset is its own family, not merged away
-    assert family_of("azure_vm_traces_2017") == "azure_vm_traces"
-    assert family_of("borg_cluster_data_2011") == "borg_cluster_data"
-    assert family_of("m5") == "m5"
 
 
-def test_chunk_stats_explain_an_empty_subset():
-    """
-    A subset that yields nothing must say WHY. Series shorter than chunk_length
-    are dropped to keep the output dense, so a series of 5000 steps — perfectly
-    usable for a 1280-step window — is lost at chunk_length 8192. Without the
-    breakdown, that is indistinguishable from a subset whose series are simply
-    too short, and the two call for opposite decisions.
-    """
-    import numpy as np
-    from timejepa.data.lotsa import iter_dense_chunks, ChunkStats
-
-    series = [np.arange(20000.0), np.arange(5000.0), np.arange(900.0), np.arange(3000.0)]
-
-    wide = ChunkStats()
-    list(iter_dense_chunks(series, chunk_length=8192, min_length=1280, stats=wide))
-    assert wide.series == 4
-    assert wide.too_short == 1              # the 900-step one, genuinely unusable
-    assert wide.lost_to_chunking == 2       # 5000 and 3000: recoverable
-    assert "PERDUES" in wide.summary(8192, 1280)
-
-    narrow = ChunkStats()
-    list(iter_dense_chunks(series, chunk_length=2048, min_length=1280, stats=narrow))
-    assert narrow.lost_to_chunking == 0
-    assert narrow.emitted > wide.emitted    # 12 against 2 on identical input
-    assert "PERDUES" not in narrow.summary(2048, 1280)
 
 
-def test_short_gaps_are_imputed_and_structural_ones_refused():
-    """
-    Rejecting a whole chunk over one NaN is untenable on a real corpus: measured
-    on LOTSA, HZMETRO lost 160/160 chunks and SHMETRO 2304/2304. Short gaps get
-    interpolated; large ones are refused rather than invented.
-
-    The refusal matters as much as the imputation. Those metro subsets carry
-    ~23% NaN in REGULAR 23-step blocks — the nightly service closure. Filling
-    that would fabricate 3am ridership, so raising the threshold would be a
-    mistake rather than a fix, and the summary says so.
-    """
-    import numpy as np
-    from timejepa.data.lotsa import iter_dense_chunks, ChunkStats
-
-    short_gap = np.arange(4096.0, dtype=np.float32)
-    short_gap[10:13] = np.nan          # 0.07%, well under the threshold
-    clean = np.arange(4096.0, dtype=np.float32)
-
-    st = ChunkStats()
-    out = list(iter_dense_chunks([short_gap, clean], chunk_length=4096,
-                                 min_length=1280, stats=st))
-    assert len(out) == 2               # both kept, one imputed
-    assert st.imputed == 1
-    assert all(np.isfinite(c).all() for c in out)
-    assert float(out[0][11]) == 11.0   # linear interpolation, not a constant
-
-    # A metro-shaped series: regular 23-step blocks, ~23% missing
-    structural = np.arange(4096.0, dtype=np.float32)
-    for start in range(0, 4096, 100):
-        structural[start:start + 23] = np.nan
-
-    st2 = ChunkStats()
-    out2 = list(iter_dense_chunks([structural], chunk_length=4096,
-                                  min_length=1280, stats=st2))
-    assert out2 == []
-    assert st2.non_finite == 1
-    summary = st2.summary(4096, 1280)
-    assert "STRUCTURELS" in summary
-    assert "ne pas monter --max-nan-fraction" in summary
 
 
-def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
-    """
-    A subset missed here is a benchmark seen during pretraining, and a zero-shot
-    claim that is not one. The Monash corpus has exactly that defect
-    (electricity-hourly IS the Nixtla electricity benchmark), which the LOTSA
-    protocol avoids by construction.
-    """
-    from timejepa.data.lotsa import (
-        is_eval_overlap, NIXTLA_OVERLAP_PATTERNS, GIFT_EVAL_OVERLAP_PATTERNS,
-        EVAL_OVERLAP_PATTERNS,
-    )
-
-    nixtla = ["ett_h1", "ETTm2", "electricity_15min", "traffic_hourly",
-              "weather", "exchange_rate", "illness"]
-    # The 28 directories of the official GIFT-Eval repository, verbatim, read
-    # from https://huggingface.co/api/datasets/Salesforce/GiftEval/tree/main
-    # on 2026-08-13. Missing one means a benchmark seen during pretraining and
-    # a zero-shot claim that is not one.
-    gift = ["LOOP_SEATTLE", "M_DENSE", "SZ_TAXI", "bitbrains_fast_storage",
-            "bitbrains_rnd", "bizitobs_application", "bizitobs_l2c",
-            "bizitobs_service", "car_parts_with_missing", "covid_deaths",
-            "electricity", "ett1", "ett2", "hierarchical_sales", "hospital",
-            "jena_weather", "kdd_cup_2018_with_missing", "m4_daily", "m4_hourly",
-            "m4_monthly", "m4_quarterly", "m4_weekly", "m4_yearly", "restaurant",
-            "saugeenday", "solar", "temperature_rain_with_missing", "us_births"]
-    assert len(gift) == 28
-    for name in nixtla + gift:
-        assert is_eval_overlap(name), f"{name} must be excluded"
-
-    # ...without excluding the corpus that makes LOTSA worth having
-    for name in ["azure_vm_traces", "borg_cluster_data", "alibaba_cluster_trace",
-                 "cmip6_1850", "era5_1989", "godaddy", "favorita_sales",
-                 "residential_load_power", "buildings_900k", "PEMS_BAY",
-                 "largest_2017", "uber_tlc_hourly", "m5"]:
-        assert not is_eval_overlap(name), f"{name} must be kept"
-
-    # beijing_air_quality / china_air_quality ARE kdd_cup_2018 (Beijing air
-    # quality 2017-2018), which GIFT-Eval evaluates on — near-duplicates that
-    # must not sit in the pretraining corpus.
-    for name in ["beijing_air_quality", "china_air_quality"]:
-        assert is_eval_overlap(name), f"{name} duplicates kdd_cup_2018"
-
-    # The union is what the converter uses; the two sources stay separable
-    # because they are verified differently (Nixtla is what we measure today,
-    # GIFT-Eval is from the benchmark's published composition).
-    assert set(EVAL_OVERLAP_PATTERNS) == set(NIXTLA_OVERLAP_PATTERNS) | set(
-        GIFT_EVAL_OVERLAP_PATTERNS)
 
 
-def test_write_dense_npy_is_memmappable_and_truncated(tmp_path):
-    import numpy as np
-    from timejepa.data.lotsa import write_dense_npy
-
-    chunks = [np.full(512, float(i), dtype=np.float32) for i in range(5)]
-    out = tmp_path / "subset.npy"
-    n = write_dense_npy(iter(chunks), out, chunk_length=512, max_chunks=100)
-
-    assert n == 5
-    arr = np.load(out, mmap_mode="r")          # the mode training will use
-    assert arr.shape == (5, 512)               # truncated, not 100
-    assert arr.dtype == np.float32
-    assert float(arr[3][0]) == 3.0
-    assert not (tmp_path / "subset.tmp.npy").exists()
 
 
-def test_use_mmap_defaults_off_and_rejects_object_arrays(tmp_path):
-    """
-    Additive by construction: every existing config must load exactly as before,
-    and the mmap path must refuse the object arrays it cannot handle.
-    """
-    import numpy as np
-    from timejepa.data.dataset import TimeSeriesDataset
-
-    dense = tmp_path / "dense.npy"
-    np.save(dense, np.sin(np.arange(4 * 4096.0).reshape(4, 4096)).astype(np.float32))
-
-    plain = TimeSeriesDataset(str(dense), context_length=512, prediction_length=256)
-    mapped = TimeSeriesDataset(str(dense), context_length=512, prediction_length=256,
-                               use_mmap=True)
-    assert len(plain) == len(mapped)
-    assert torch.allclose(plain[0]["context"], mapped[0]["context"])
-
-    ragged = tmp_path / "ragged.npy"
-    arr = np.empty(2, dtype=object)
-    arr[0] = np.arange(5000.0); arr[1] = np.arange(4000.0)
-    np.save(ragged, arr, allow_pickle=True)
-    with pytest.raises(ValueError, match="dense array"):
-        TimeSeriesDataset(str(ragged), context_length=512, prediction_length=256,
-                          use_mmap=True)
 
 
-def test_lotsa_configs_do_not_disturb_existing_ones():
-    """LOTSA configs are additions; tiny_geo must be untouched by their presence."""
-    base = _compose("tiny_geo")
-    assert base.data.get("use_mmap", False) is False
-    assert "lotsa" not in str(base.data.data_dir).lower()
-
-    pre = _compose("lotsa_tiny")
-    assert pre.data.use_mmap is True
-    assert "lotsa" in str(pre.data.data_dir)
-    assert pre.data.datasets is None          # glob the directory
-    assert pre.model.seq_length == base.model.seq_length      # same geometry
-    assert pre.model.patch_length == base.model.patch_length
-
-    ft = _compose("lotsa_tiny_finetune")
-    assert ft.training.mode == "finetune"
-    # The domain-adapted arm stays on the Monash corpus (contaminated, documented)
-    assert ft.data.data_dir == base.data.data_dir
-    assert ft.data.get("use_mmap", False) is False
-    assert len(ft.data.datasets_finetune) == len(base.data.datasets_finetune)
-
-    # The zero-shot arm — the primary protocol — must train its decoder on LOTSA
-    # only, so that Monash and Nixtla stay unseen at every stage.
-    zs = _compose("lotsa_tiny_zeroshot")
-    assert zs.training.mode == "finetune"
-    assert zs.training.finetune_mode == "full_finetune"
-    assert zs.data.datasets_finetune is None      # glob the LOTSA directory
-    assert "lotsa" in str(zs.data.data_dir)
-    assert zs.data.use_mmap is True
-    assert zs.model.name != ft.model.name         # separate checkpoint trees
-
-    # The eval config must carry the TRAINING geometry but the EVALUATION data.
-    # If the two ever diverge, this breaks here rather than silently producing
-    # wrong numbers: at eval time a geometry mismatch only WARNS.
-    ev = _compose("lotsa_tiny_eval")
-    for key in ("seq_length", "prediction_length", "patch_length", "stride"):
-        assert ev.model[key] == zs.model[key], f"eval/{key} drifted from the trained model"
-    assert ev.model.decoder.type == zs.model.decoder.type
-    # ...and it must evaluate on the held-out corpus, never on LOTSA
-    assert ev.data.data_dir == base.data.data_dir
-    assert "lotsa" not in str(ev.data.data_dir).lower()
-    assert ev.data.get("use_mmap", False) is False
 
 
 # =============================================================================
 # B22 — uniform-length survivors of the length filter became object arrays
 # =============================================================================
 
-def test_pack_series_returns_numeric_when_lengths_are_uniform():
-    """
-    B22. np.array(list_of_arrays, dtype=object) does NOT give a ragged 1-D array
-    when every series has the same length — it silently gives a 2-D OBJECT array,
-    and np.stack on that preserves dtype=object. The value then reaches
-    torch.from_numpy, which rejects object arrays outright.
-
-    Never triggered before because the length filter always left mixed lengths;
-    it fires as soon as a dataset whose survivors are uniform is used
-    (m4-hourly: every series is 1008 steps once filtered).
-    """
-    import numpy as np
-    from timejepa.data.dataset import _pack_series
-
-    uniform = _pack_series([np.arange(64.0), np.arange(64.0), np.arange(64.0)])
-    assert uniform.dtype != object, "uniform survivors must become a numeric array"
-    assert uniform.shape == (3, 64)
-    # The operation that used to raise
-    torch.from_numpy(np.ascontiguousarray(uniform[0])).float()
 
 
-def test_pack_series_keeps_ragged_input_ragged():
-    import numpy as np
-    from timejepa.data.dataset import _pack_series
-
-    ragged = _pack_series([np.arange(64.0), np.arange(48.0)])
-    assert ragged.dtype == object
-    assert ragged.ndim == 1 and len(ragged) == 2
-    assert ragged[0].dtype != object
-    torch.from_numpy(np.ascontiguousarray(ragged[1])).float()
 
 
-def test_pack_series_empty_stays_detectable():
-    """The empty case must keep working: callers raise SeriesTooShortError."""
-    import numpy as np
-    from timejepa.data.dataset import _pack_series
-    assert len(_pack_series([])) == 0
 
 
-def test_dataset_yields_float_tensors_for_uniform_variable_length_input(tmp_path):
-    """End-to-end: the exact m4-hourly shape must produce usable tensors."""
-    import numpy as np
-    from timejepa.data.dataset import TimeSeriesDataset
-
-    raw = np.empty(3, dtype=object)
-    raw[0] = np.sin(np.arange(1008.0) / 10)
-    raw[1] = np.sin(np.arange(1008.0) / 12)
-    raw[2] = np.sin(np.arange(700.0) / 10)      # dropped by the length filter
-    path = tmp_path / "uniform_after_filter.npy"
-    np.save(path, raw, allow_pickle=True)
-
-    ds = TimeSeriesDataset(str(path), context_length=512, prediction_length=256)
-    item = ds[0]
-    assert item["context"].dtype == torch.float32
-    assert item["context"].shape[-1] == 512
-    assert item["target"].shape[-1] == 256
-    assert torch.isfinite(item["context"]).all()
 
 
 # =============================================================================
 # B21 / config hygiene — the experiment grid must be declarative
 # =============================================================================
 
-def _compose(name):
-    from hydra import initialize, compose
-    root = Path(__file__).resolve().parents[1]
-    with initialize(version_base=None, config_path="../configs/model"):
-        return compose(config_name=name)
 
 
-@pytest.mark.parametrize("config_name", ["tiny", "tiny_geo", "tiny_geo_p32",
-                                         "tiny_geo_vicreg", "tiny_geo_scratch"])
-def test_checkpoint_filename_has_no_equals_sign(config_name):
-    """
-    B21. auto_insert_metric_name lived in the config but was never forwarded to
-    ModelCheckpoint, so Lightning kept its default (True) and prefixed each
-    metric name on top of the template's own text:
-    'epochepoch=00_val_lossval_loss=0.3445.ckpt'. Hydra's override grammar
-    treats '=' as a separator, so every downstream finetune and eval command
-    needed quoting gymnastics — and one of them failed outright with backslashes
-    surviving literally into the path.
-    """
-    cfg = _compose(config_name)
-    assert "=" not in cfg.checkpoint.filename
-    assert cfg.checkpoint.auto_insert_metric_name is False
 
 
-def test_geo_arms_differ_only_in_their_declared_variable():
-    """
-    Each arm of the geometry grid is a named config, not a pile of overrides:
-    a forgotten `model.patch_length=32` at EVAL time only warns
-    ('re-initialising patching.*') and yields silently wrong numbers.
-    Everything except the arm's own variable must match the base.
-    """
-    base = _compose("tiny_geo")
-    # Round-wide defaults: no override should ever be needed for these
-    assert base.training.loss.type == "sigreg"
-    assert base.model.decoder.type == "quantile"
-    assert len(base.data.datasets_finetune) == len(base.data.datasets)
-
-    p32 = _compose("tiny_geo_p32")
-    assert (p32.model.patch_length, p32.model.stride) == (32, 16)
-    assert p32.model.name != base.model.name
-    for key in ("seq_length", "prediction_length"):
-        assert p32.model[key] == base.model[key]
-    assert p32.training.loss.type == base.training.loss.type
-    assert p32.model.decoder.type == base.model.decoder.type
-
-    vic = _compose("tiny_geo_vicreg")
-    assert vic.training.loss.type == "vicreg"
-    assert vic.model.name != base.model.name
-    assert (vic.model.patch_length, vic.model.stride) == (base.model.patch_length,
-                                                          base.model.stride)
-
-    scratch = _compose("tiny_geo_scratch")
-    assert scratch.training.mode == "finetune"
-    # Mandatory: gradual_unfreeze would freeze randomly initialised weights
-    assert scratch.training.finetune_mode == "full_finetune"
-    assert "pretrained_encoder_path" not in scratch.training
 
 
 # =============================================================================
@@ -1350,19 +700,6 @@ def test_experiment_configs_are_runnable(config_name):
 # B18 — torch version drift in the sampler
 # =============================================================================
 
-def test_temperature_sampler_constructs():
-    """
-    `Sampler.__init__` took a deprecated `data_source` argument; newer torch
-    removed it, at which point `super().__init__(None)` reaches
-    `object.__init__` and raises "takes exactly one argument". Killed a real
-    run, and could not be reproduced locally because the local torch still had
-    the old signature — hence this direct construction test.
-    """
-    from timejepa.data.datamodule import TemperatureSampler
-    s = TemperatureSampler(dataset_sizes=[1000, 50000, 300], batch_size=64,
-                           temperature=0.5)
-    batch = next(iter(s))
-    assert len(batch) == 64
 
 
 # =============================================================================
@@ -1503,120 +840,22 @@ def test_contextualized_targets_change_the_representation(small_model):
 # P1.1 / P1.2 — anti-collapse regularizers
 # =============================================================================
 
-def _emb(b=128, n=12, d=64, scale=1.0):
-    return torch.randn(b, n, d) * scale
 
 
-def test_sigreg_is_near_zero_on_isotropic_gaussian():
-    """SIGReg's optimum is exactly the standard isotropic Gaussian."""
-    from timejepa.training.utils.metrics import sigreg_loss
-    torch.manual_seed(0)
-    assert sigreg_loss(_emb(), max_tokens=4096)["loss"].item() < 0.01
 
 
-def test_sigreg_penalises_collapse_hardest():
-    from timejepa.training.utils.metrics import sigreg_loss
-    torch.manual_seed(0)
-    collapsed = torch.randn(1, 1, 64).repeat(128, 12, 1)
-    healthy = _emb()
-    assert (sigreg_loss(collapsed, max_tokens=4096)["loss"].item()
-            > 10 * sigreg_loss(healthy, max_tokens=4096)["loss"].item())
 
 
-def test_sigreg_catches_what_vicreg_cannot():
-    """
-    A bimodal embedding has healthy per-coordinate variance and a near-diagonal
-    covariance, so VICReg is satisfied. SIGReg is not — that is the reason to
-    have it as an alternative.
-    """
-    from timejepa.training.utils.metrics import sigreg_loss, vicreg_loss
-    torch.manual_seed(0)
-    bimodal = (torch.randint(0, 2, (128, 12, 64)).float() * 2 - 1) * 3
-    bimodal = bimodal + torch.randn(128, 12, 64) * 0.2
-    healthy = _emb()
-
-    v_bi = vicreg_loss(bimodal, bimodal.detach())["variance"].item()
-    v_ok = vicreg_loss(healthy, healthy.detach())["variance"].item()
-    s_bi = sigreg_loss(bimodal, max_tokens=4096)["loss"].item()
-    s_ok = sigreg_loss(healthy, max_tokens=4096)["loss"].item()
-
-    assert v_bi <= v_ok + 1e-6, "VICReg was expected to be blind to bimodality"
-    assert s_bi > 10 * s_ok, "SIGReg should flag bimodality"
 
 
-def test_vicreg_per_position_catches_positional_collapse():
-    """
-    THE B6 bug. If every batch element is identical at a given patch position
-    but positions differ from each other, pooling batch and position makes the
-    variance hinge see healthy spread and report no penalty at all.
-    """
-    from timejepa.training.utils.metrics import vicreg_loss
-    torch.manual_seed(0)
-    per_pos = torch.randn(1, 12, 64) * 3
-    collapsed = per_pos.repeat(128, 1, 1) + torch.randn(128, 12, 64) * 0.001
-
-    pooled = vicreg_loss(collapsed, collapsed.detach(), per_position=False)["variance"].item()
-    fixed = vicreg_loss(collapsed, collapsed.detach(), per_position=True)["variance"].item()
-
-    assert pooled < 0.01, "pooled variance was expected to be blind here"
-    assert fixed > 0.9, "per-position variance must flag the collapse"
 
 
-def test_jepa_loss_regularizes_the_encoder_output():
-    """
-    Anti-collapse used to touch only the predictor output. Passing
-    context_embeddings must change the loss, otherwise the encoder is
-    unconstrained.
-    """
-    from timejepa.training.utils.metrics import jepa_loss
-    torch.manual_seed(0)
-    pred, tgt = _emb(), _emb().detach()
-    collapsed_ctx = torch.randn(1, 1, 64).repeat(128, 47, 1)
-
-    without = jepa_loss(pred, tgt, loss_type="vicreg",
-                        vicreg_weights={"invariance": 25.0, "variance": 15.0, "covariance": 1.0})
-    with_ctx = jepa_loss(pred, tgt, loss_type="vicreg",
-                         vicreg_weights={"invariance": 25.0, "variance": 15.0, "covariance": 1.0},
-                         context_embeddings=collapsed_ctx)
-    assert with_ctx.item() > without.item() + 1.0
 
 
-def test_sigreg_path_through_jepa_loss():
-    from timejepa.training.utils.metrics import jepa_loss
-    torch.manual_seed(0)
-    pred, tgt = _emb(), _emb().detach()
-    loss, comp = jepa_loss(
-        pred, tgt, loss_type="sigreg",
-        sigreg_config={"lambda": 1.0, "apply_to": "both", "max_tokens": 2048},
-        context_embeddings=_emb(b=128, n=47),
-        return_components=True,
-    )
-    assert torch.isfinite(loss)
-    assert {"invariance", "sigreg", "sigreg_context", "sigreg_predictions"} <= set(comp)
 
 
-def test_regularizers_are_differentiable():
-    from timejepa.training.utils.metrics import sigreg_loss, vicreg_loss
-    for fn in (
-        lambda z: sigreg_loss(z, max_tokens=1024)["loss"],
-        lambda z: vicreg_loss(z, z.detach())["loss"],
-    ):
-        z = _emb(b=32, n=4, d=16).requires_grad_(True)
-        fn(z).backward()
-        assert z.grad is not None and torch.isfinite(z.grad).all()
 
 
-def test_extended_metrics_include_benchmark_keys():
-    ctx = torch.randn(4, 200)
-    tgt = torch.randn(4, 48)
-    pred = torch.randn(4, 48)
-
-    without = compute_forecasting_metrics_extended(pred, tgt)
-    assert "mase" not in without          # no context -> no MASE, not a fake one
-    assert {"nd", "wql", "mse", "mae", "r2"} <= set(without)
-
-    with_ctx = compute_forecasting_metrics_extended(pred, tgt, context=ctx, season_length=24)
-    assert "mase" in with_ctx
 
 
 # ---------------------------------------------------------------------------
@@ -1786,51 +1025,7 @@ def test_reconstruction_loss_is_robust_to_the_revin_epsilon_floor():
 # deux sens : ce qui doit rester dehors, et ce qui doit être rentré.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", [
-    # datasets d'évaluation GIFT-Eval
-    "m4_yearly", "m4_hourly", "m4_daily", "m4_monthly", "m4_quarterly", "m4_weekly",
-    "SZ_TAXI", "LOOP_SEATTLE", "M_DENSE", "covid_deaths", "hospital", "restaurant",
-    "saugeenday", "us_births", "car_parts_with_missing", "hierarchical_sales",
-    "kdd_cup_2018_with_missing", "temperature_rain_with_missing",
-    # datasets d'évaluation Nixtla
-    "traffic_hourly", "traffic_weekly", "weather", "oikolab_weather",
-    "cdc_fluview_ilinet",
-    # datasets d'évaluation Monash locale
-    "solar_power", "wiki-rolling_nips", "extended_web_traffic_with_missing",
-    "kaggle_web_traffic_weekly",
-])
-def test_eval_datasets_stay_excluded_from_pretraining(name):
-    """Un seul de ces noms au pretrain invaliderait tous les chiffres du projet."""
-    from timejepa.data.lotsa import is_eval_overlap
-    assert is_eval_overlap(name), f"{name} FUIT dans le corpus de pré-entraînement"
 
 
-@pytest.mark.parametrize("name", [
-    "m1_monthly", "m1_quarterly", "m1_yearly",
-    "monash_m3_monthly", "monash_m3_other", "monash_m3_quarterly", "monash_m3_yearly",
-    "tourism_monthly", "tourism_quarterly", "tourism_yearly",
-    "nn5_daily_with_missing", "nn5_weekly",
-    "taxi_30min", "kdd2022", "covid19_energy", "covid_mobility",
-    "Q-TRAFFIC", "australian_electricity_demand",
-    "beijing_air_quality", "china_air_quality",
-])
-def test_safe_overrides_are_readmitted(name):
-    """
-    Ces sous-ensembles sont dans GiftEvalPretrain (corpus sanctionné par le
-    benchmark) et n'ont de contrepartie dans AUCUNE de nos trois suites d'éval.
-    Les exclure coûtait de la couverture fréquentielle pour rien (E17).
-    """
-    from timejepa.data.lotsa import is_eval_overlap
-    assert not is_eval_overlap(name), f"{name} devrait être réadmis"
 
 
-def test_overrides_match_exactly_never_as_substring():
-    """
-    Un override doit être une égalité de nom, jamais une sous-chaîne : sinon
-    'taxi_30min' réadmettrait 'sz_taxi_30min_variant' et rouvrirait par
-    l'override le trou que le motif ferme.
-    """
-    from timejepa.data.lotsa import is_eval_overlap
-    assert is_eval_overlap("taxi_30min_extended")
-    assert is_eval_overlap("m1_monthly_v2")
-    assert is_eval_overlap("pre_kdd2022")

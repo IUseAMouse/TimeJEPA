@@ -1,3 +1,6 @@
+# ⚠️ DEPRECATED (audit du 2026-08-19) — doublon octet-à-octet de
+# _template_experiment.yaml, résidu de test d'héritage Hydra. Conservé par
+# politique no-delete (P2.9). Utiliser _template_experiment.yaml.
 # @package _global_
 #
 # TEMPLATE — how to add a single-variable experiment config.

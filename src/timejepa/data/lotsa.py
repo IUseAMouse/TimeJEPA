@@ -507,3 +507,58 @@ def write_dense_npy(
 
     logger.info(f"✓ {out_path.name}: {written:,} morceaux x {chunk_length} pas")
     return written
+
+
+def convert_subset(
+    series_stream: Iterator[np.ndarray],
+    out_path: Path,
+    *,
+    chunk_length: int,
+    min_length: int,
+    max_chunks: int,
+    max_nan_fraction: float = 0.05,
+    sample_size: int = 200,
+) -> Tuple[int, ChunkStats, Optional[int]]:
+    """
+    Convertit UN sous-ensemble (flux de séries 1-D) en un `.npy` dense.
+
+    Factorisation du bloc « échantillonner les premières séries →
+    `choose_chunk_length` → flux chaîné → `iter_dense_chunks` →
+    `write_dense_npy` » pour les convertisseurs AUTRES que LOTSA
+    (prepare_chronos.py, futurs corpus). `prepare_lotsa.py` garde sa version
+    inline : c'est l'artefact qui a produit les corpus des runs reproduits
+    (E14/E16), on ne le refactore pas sous un résultat publié.
+
+    Retourne (morceaux_écrits, stats, chunk_length_effectif) —
+    `chunk_length_effectif` vaut None si le sous-ensemble est inutilisable
+    (médiane des longueurs < min_length), auquel cas rien n'est écrit.
+    """
+    sample: list = []
+    for series in series_stream:
+        sample.append(series)
+        if len(sample) >= sample_size:
+            break
+
+    stats = ChunkStats()
+    effective = choose_chunk_length(
+        [len(x) for x in sample], chunk_length, min_length
+    )
+    if effective is None:
+        return 0, stats, None
+
+    def _chained(buffered=sample, rest=series_stream):
+        yield from buffered
+        yield from rest
+
+    chunks = iter_dense_chunks(
+        _chained(),
+        chunk_length=effective,
+        min_length=min_length,
+        max_chunks=max_chunks,
+        max_nan_fraction=max_nan_fraction,
+        stats=stats,
+    )
+    written = write_dense_npy(
+        chunks, out_path, chunk_length=effective, max_chunks=max_chunks
+    )
+    return written, stats, effective

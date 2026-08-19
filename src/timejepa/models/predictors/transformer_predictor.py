@@ -47,7 +47,12 @@ class TransformerPredictor(nn.Module):
         d_ff: int = 2048,
         dropout: float = 0.1,
         activation: str = 'gelu',
-        max_target_patches: int = 16
+        max_target_patches: int = 16,
+        # G9.2 — conditionnement d'échelle w = k2/k1 (JEPA inter-résolution).
+        # OPT-IN À LA CONSTRUCTION : sans ce flag l'attribut w_film n'existe
+        # pas, donc le state_dict de toutes les configs existantes est inchangé
+        # au bit près (leurs checkpoints se rechargent à l'identique).
+        use_w_film: bool = False,
     ):
         super().__init__()
         
@@ -55,6 +60,18 @@ class TransformerPredictor(nn.Module):
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.d_ff = d_ff
+
+        if use_w_film:
+            # FiLM résiduel sur les requêtes futures : q · (1 + γ(log₂w)) + β(log₂w).
+            # Poids ET biais initialisés à ZÉRO → γ=β=0 → identité exacte pour
+            # tout w à l'initialisation. Deux conséquences voulues : (a) le
+            # début d'entraînement de l'arm se comporte comme la baseline, le
+            # conditionnement n'apparaît que si le gradient le demande ; (b) un
+            # checkpoint xres rechargé SANS passer w (finetune, forecast) est
+            # exactement le modèle à w=1 — aucun régime jamais vu.
+            self.w_film = nn.Linear(1, 2 * d_model)
+            nn.init.zeros_(self.w_film.weight)
+            nn.init.zeros_(self.w_film.bias)
         
         self.future_position_embedding = nn.Parameter(
             torch.randn(1, max_target_patches, d_model) * 0.02
@@ -156,10 +173,15 @@ class TransformerPredictor(nn.Module):
         self,
         context_embeddings: torch.Tensor,
         num_targets: int,
-        attention_mask: Optional[torch.Tensor] = None
+        attention_mask: Optional[torch.Tensor] = None,
+        w: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Simplified forward pass when target positions are just 'next N'.
+
+        `w` (optionnel, [B]) : ratio d'échelle k2/k1 par ITEM (G9.2) — par item
+        et non par batch, parce que la résolution est tirée par item alors que
+        la randomisation de géométrie est par batch ; les deux coexistent.
 
         Args:
             context_embeddings: Context [B, N_context, d_model]
@@ -172,6 +194,25 @@ class TransformerPredictor(nn.Module):
         batch_size = context_embeddings.shape[0]
 
         future_queries = self._future_queries(batch_size, num_targets)
+
+        # G9.2 — conditionnement d'échelle par item (w = k2/k1, [B]).
+        if w is not None:
+            if not hasattr(self, 'w_film'):
+                # Refuser plutôt qu'ignorer : un w silencieusement perdu, c'est
+                # un arm inter-résolution qui entraîne SANS conditionnement et
+                # des chiffres qu'on croit conditionnés.
+                if bool((w != 1).any()):
+                    raise ValueError(
+                        "w != 1 reçu mais le prédicteur a été construit sans "
+                        "use_w_film — l'arm inter-résolution exige que le "
+                        "modèle soit construit avec cross_resolution=true."
+                    )
+            else:
+                film = self.w_film(
+                    torch.log2(w.to(future_queries.dtype)).unsqueeze(-1))
+                gamma, beta = film.chunk(2, dim=-1)              # [B, d] chacun
+                future_queries = (
+                    future_queries * (1.0 + gamma.unsqueeze(1)) + beta.unsqueeze(1))
 
         # Concat
         x = torch.cat([context_embeddings, future_queries], dim=1)
@@ -267,9 +308,19 @@ class MLPPredictor(nn.Module):
         self,
         context_embeddings: torch.Tensor,
         num_targets: int,
+        w=None,
         **kwargs
     ) -> torch.Tensor:
         """Simple forward for N targets."""
+        # Le MLP mean-poole le contexte : il n'a ni ordre ni requêtes, donc
+        # aucun endroit où un conditionnement d'échelle aurait du sens. Sans
+        # cette garde, **kwargs avalait `w` en silence — l'arm inter-résolution
+        # aurait « tourné » sans conditionnement.
+        if w is not None and bool((w != 1).any()):
+            raise NotImplementedError(
+                "MLPPredictor ne supporte pas le conditionnement w (G9.2) — "
+                "utiliser predictor_type='transformer'."
+            )
         # Mean pool
         context_pooled = context_embeddings.mean(dim=1, keepdim=True)
         context_pooled = context_pooled.expand(-1, num_targets, -1)

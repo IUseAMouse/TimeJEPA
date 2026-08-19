@@ -1,0 +1,62 @@
+# @package _global_
+#
+# CHANTIER 2 — HORIZON NATIF 512 par EXTENSION du checkpoint lotsa_tiny.
+#
+#   # finetune zero-shot depuis le pretrain lotsa_tiny EXISTANT (aucun pretrain neuf)
+#   python scripts/train.py --config-name lotsa_tiny_h512_zeroshot \
+#       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt> \
+#       wandb.run_name=h512-zeroshot
+#
+#   # eval GIFT (comparer SPÉCIFIQUEMENT les termes medium/long à la baseline rollout)
+#   python scripts/evaluate_gift.py --config-name lotsa_tiny_h512_eval \
+#       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_h512_zs/pretrain_False/<ckpt>
+#
+# La variable mesurée, et pourquoi PAS un pretrain 512 from scratch
+# -----------------------------------------------------------------
+# 42 des 97 configs GIFT sont medium/long, et c'est là que le modèle dégrade
+# (ratios par terme : 0.914 court / 1.056 medium / 1.084 long — E16). Le
+# mécanisme suspecté est le rollout autorégressif : h=720 = 3 rollouts de 256,
+# chaque rollout réinjectant une trajectoire, composition du biais mesurée dès
+# le round géométrie. Horizon natif 512 => h=720 en 2 rollouts, h=480 en 1.
+#
+# Un pretrain 512 from scratch changerait DEUX variables cachées en plus :
+# la fenêtre dataset (1280 -> 1536, -33 % de positions par morceau 2048) et le
+# budget. L'extension du checkpoint existant isole la question : même pretrain,
+# même corpus — seul l'horizon natif du finetune change.
+#
+# Mécanique de l'extension
+# ------------------------
+# Le SEUL paramètre du modèle dont la forme dépende de l'horizon est la table
+# de requêtes du prédicteur ([1, 50, d] -> [1, 98, d]). Sans le flag ci-dessous
+# elle serait droppée au chargement (échec bruyant depuis P3.2) ;
+# `extend_horizon_queries: true` copie les 50 lignes pré-entraînées et
+# n'initialise à neuf que les 48 nouvelles (grow_future_query_table). Les
+# horizon_lengths étendus + p_random_horizon leur donnent du gradient : c'est
+# le mécanisme d'entraînement-par-randomisation déjà éprouvé du repo, appliqué
+# à des lignes fraîches. Le décodeur quantile est indépendant de l'horizon
+# (projection par patch), rien d'autre ne bouge.
+#
+# ⚠️ Fenêtre finetune = 1024 + 512 = 1536 : au premier run, lire la ligne
+# « N/M dataset(s) skipped » du setup — les datasets LOTSA à morceaux < 1536
+# sortent du finetune, ce qui fait partie du coût mesuré de l'arm.
+defaults:
+  - lotsa_tiny_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_h512_zs"
+  prediction_length: 512
+
+training:
+  extend_horizon_queries: true
+  horizon_lengths: [64, 96, 128, 192, 256, 384, 512]
+  p_random_horizon: 0.5
+
+wandb:
+  tags:
+    - "tiny"
+    - "jepa_tst"
+    - "experiment"
+    - "lotsa"
+    - "zeroshot"
+    - "h512"

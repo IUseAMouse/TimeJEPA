@@ -65,6 +65,15 @@ class JEPAPretrainModule(pl.LightningModule):
         # Off by default => every existing config is bit-identical.
         reconstruction_target: bool = False,
 
+        # G9.2 — arm JEPA inter-résolution : lit `w = k2/k1` par item dans le
+        # batch et le transmet au prédicteur (FiLM). Exige des cibles
+        # STANDALONE : `contextualized_targets` concatène [ctx‖cible] en pas
+        # d'échantillon, ce qui n'a pas de sens physique quand les deux vivent
+        # sur des grilles différentes — la garde ci-dessous refuse la
+        # combinaison plutôt que de laisser tourner une éval physiquement
+        # fausse. Off par défaut => configs existantes bit-identiques.
+        cross_resolution: bool = False,
+
         # Input-geometry randomization. scripts/diagnose_ettm.py shows skill
         # peaks exactly at the training context length and collapses on both
         # sides (electricity: +28.5% at ctx=384, -103.8% at ctx=768), i.e. the
@@ -123,6 +132,16 @@ class JEPAPretrainModule(pl.LightningModule):
         self.sigreg_config = sigreg_config or {}
         self.regularize_context = regularize_context
         self.contextualized_targets = contextualized_targets
+
+        self.cross_resolution = bool(cross_resolution)
+        if self.cross_resolution and contextualized_targets:
+            raise ValueError(
+                "cross_resolution=True exige contextualized_targets=false : la "
+                "cible contextualisée concatène [contexte‖cible] en pas "
+                "d'échantillon, physiquement faux quand contexte et cible sont "
+                "à des résolutions différentes. Poser "
+                "training.contextualized_targets: false dans la config de l'arm."
+            )
 
         # Reconstruction head: d_model -> patch_size * num_features, i.e. exactly
         # the inverse shape of the patch projection, so it is derived from the
@@ -316,9 +335,33 @@ class JEPAPretrainModule(pl.LightningModule):
         self.log('geometry/horizon_len', float(target.shape[1]),
                  on_step=True, on_epoch=False, logger=True)
 
+        # Observabilité des augmentations d'entrée (demande utilisateur,
+        # 2026-08-19) : plutôt que de deviner ce qui est actif, le run le dit.
+        # `resolution_factor` est émis par le dataset depuis toujours mais
+        # n'était consommé nulle part ; `w` n'existe que sur l'arm
+        # inter-résolution. Moyennés sur l'epoch pour être lisibles dans wandb.
+        rf = batch.get('resolution_factor')
+        if rf is not None and torch.is_tensor(rf):
+            rf = rf.float()
+            self.log('aug/multires_frac', (rf > 1).float().mean(),
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+            self.log('aug/resolution_factor_mean', rf.mean(),
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        w = batch.get('w') if self.cross_resolution else None
+        if w is not None:
+            w = w.float()
+            # LA ligne à surveiller sur l'arm xres : si w_neq1_frac reste à 0,
+            # l'arm est stérile (aucune paire (k1,k2) éligible dans le corpus)
+            # et son pretrain ne mesure rien.
+            self.log('aug/w_neq1_frac', (w != 1).float().mean(),
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+            self.log('aug/w_mean', w.mean(),
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+
         # Forward pass - predict future representations
         outputs = self.model.forward_pretrain(
-            context, target, contextualized_targets=self.contextualized_targets
+            context, target, contextualized_targets=self.contextualized_targets,
+            w=w,
         )
 
         predictions, targets = self._scored_pair(target, outputs)
@@ -359,8 +402,12 @@ class JEPAPretrainModule(pl.LightningModule):
 
         # NOTE: validation deliberately uses the NATIVE geometry, never the
         # randomized one, so val_loss stays comparable across epochs and runs.
+        # (Sur l'arm inter-résolution, le split de validation n'applique pas
+        # les augmentations — w y vaut donc toujours 1 quand il existe.)
+        w = batch.get('w') if self.cross_resolution else None
         outputs = self.model.forward_pretrain(
-            context, target, contextualized_targets=self.contextualized_targets
+            context, target, contextualized_targets=self.contextualized_targets,
+            w=(w.float() if w is not None else None),
         )
 
         predictions, targets = self._scored_pair(target, outputs)

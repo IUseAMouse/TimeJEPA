@@ -19,64 +19,18 @@ from timejepa.data.datamodule import MultiDatasetMonashDataModule
 from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
 from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.callbacks import EMACallback
-from timejepa.models import JEPATST
-from timejepa.models.decoders import ForecastingHead
+from timejepa.models import JEPATST  # noqa: F401 — re-export historique
+from timejepa.models.decoders import ForecastingHead  # chemin finetune (l.162)
+# Construction du modèle : UNE seule source de vérité, partagée avec evaluate.py
+# et evaluate_gift.py. L'audit du 2026-08-19 a trouvé 4 copies de cette fonction
+# dont une déjà divergente — toute nouvelle option de constructeur (conditionnement
+# du prédicteur de G9.2, etc.) ne doit plus être posée qu'à UN endroit.
+# Seule différence avec l'ancienne copie locale : le ForecastingHead est construit
+# avec cfg.model.decoder.d_model (== encoder.d_model dans toutes les configs,
+# vérifié) et le bloc de prints de fondation est remplacé par ceux de JEPATST.
+from timejepa.evaluation.loading import create_model_from_config
 
 logger = logging.getLogger(__name__)
-
-def create_model_from_config(cfg) -> JEPATST:
-    """
-    Create JEPA-TST model from Hydra config.
-    """
-    # Map config to model arguments
-    model = JEPATST(
-        # Data params
-        input_length=cfg.model.seq_length,
-        prediction_length=cfg.model.prediction_length,
-        num_features=cfg.model.num_channels,
-        
-        # Patching
-        patch_size=cfg.model.patch_length,
-        stride=cfg.model.stride,
-        
-        # Encoder
-        d_model=cfg.model.encoder.d_model,
-        num_layers=cfg.model.encoder.n_layers,
-        num_heads=cfg.model.encoder.n_heads,
-        d_ff=cfg.model.encoder.d_ff,
-        dropout=cfg.model.encoder.dropout,
-        activation=cfg.model.encoder.activation,
-        
-        # Predictor
-        predictor_type=cfg.model.predictor.type,
-        predictor_num_layers=cfg.model.predictor.n_layers,
-        predictor_num_heads=cfg.model.predictor.n_heads,
-        predictor_d_ff=cfg.model.predictor.d_ff,
-        
-        # Decoder (for finetuning)
-        decoder_type=cfg.model.decoder.type,
-        
-        # EMA
-        ema_tau_base=cfg.model.target_encoder.momentum_base,
-        ema_tau_end=cfg.model.target_encoder.momentum_final,
-        
-        # RevIN
-        use_revin=cfg.model.encoder.use_revin,
-    )
-    
-    # Log model info
-    num_params = model.get_num_params()
-    print(f"✅ Created {cfg.model.name} model:")
-    print(f"   - Input length: {cfg.model.seq_length}")
-    print(f"   - Num patches: {model.num_patches}")
-    print(f"   - Patch size: {cfg.model.patch_length}, stride: {cfg.model.stride}")
-    print(f"   - d_model: {cfg.model.encoder.d_model}")
-    print(f"   - Encoder layers: {cfg.model.encoder.n_layers}")
-    print(f"   - Total params: {num_params['total']:,}")
-    print(f"   - Trainable params: {num_params['trainable']:,}")
-    
-    return model
-
 
 @hydra.main(version_base=None, config_path="../configs/model", config_name="tiny")
 def main(cfg: DictConfig):
@@ -136,6 +90,9 @@ def main(cfg: DictConfig):
         p_multi_resolution=(
             float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain else 0.0
         ),
+        # G9.2 : contexte à k1, cible à k2, clé 'w' par item. Même clé de
+        # config que le modèle et le module (model.cross_resolution).
+        cross_resolution=bool(cfg.model.get('cross_resolution', False)) if is_pretrain else False,
         seed=cfg.data.seed,
         # Hardcoded to 8 before. With 20+ datasets held in memory — several of
         # them numpy object arrays, whose per-element refcount updates defeat
@@ -180,6 +137,10 @@ def main(cfg: DictConfig):
             # G6 ablation arm; absent from every other config, so they are
             # unaffected. See configs/model/lotsa_tiny_recon.yaml.
             reconstruction_target=cfg.training.get('reconstruction_target', False),
+            # G9.2 — arm inter-résolution ; une seule clé de config
+            # (model.cross_resolution) pilote le modèle, le module ET le
+            # datamodule, pour qu'ils ne puissent pas diverger.
+            cross_resolution=cfg.model.get('cross_resolution', False),
 
             # Input-geometry randomization (train split only)
             context_lengths=list(cfg.training.get('context_lengths') or []),
@@ -217,7 +178,10 @@ def main(cfg: DictConfig):
         )
         
         pl_module = FinetuneModule(
-            model=model,  
+            model=model,
+            # Chantier 2 : extension de la table de requêtes (horizon natif),
+            # absent de toutes les configs existantes donc inertes pour elles.
+            extend_horizon_queries=cfg.training.get('extend_horizon_queries', False),  
             
             # Pretrained weights & Strategy
             pretrained_encoder_path=cfg.training.get('pretrained_encoder_path'),

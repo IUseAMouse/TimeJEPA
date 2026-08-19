@@ -49,6 +49,9 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         ema_tau_base=cfg.model.target_encoder.momentum_base,
         ema_tau_end=cfg.model.target_encoder.momentum_final,
         use_revin=cfg.model.encoder.use_revin,
+        # G9.2 — construit le FiLM de conditionnement d'échelle. Absent de
+        # toutes les configs existantes => False => state_dict inchangé.
+        cross_resolution=bool(cfg.model.get('cross_resolution', False)),
     )
 
     # Add forecasting decoder
@@ -68,7 +71,8 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
 def load_checkpoint(
     model: torch.nn.Module,
     checkpoint_path: str,
-    device: torch.device
+    device: torch.device,
+    allow_partial: bool = False,
 ) -> torch.nn.Module:
     """
     Load checkpoint with support for different formats.
@@ -77,6 +81,19 @@ def load_checkpoint(
     - Lightning checkpoints (state_dict with 'model.' prefix)
     - Direct state dicts
     - Pretrained encoder format
+
+    Refusal contract (P3.2)
+    -----------------------
+    A dropped or missing key touching `online_encoder.`, `predictor.` or
+    `patching.` raises RuntimeError instead of warning. Rationale: the only
+    LEGITIMATE mismatch this loader ever meets is the decoder swap
+    (point head <-> quantile head), and an encoder/predictor mismatch means the
+    evaluation would run on freshly initialised weights and produce numbers
+    that are silently wrong — the exact failure mode measured when a
+    prediction_length-256 checkpoint met a 512 model: `filter_loadable`
+    dropped `predictor.future_position_embedding`, this function warned, and
+    the eval would have scored a random query table. `allow_partial=True` is a
+    manual-debugging escape hatch; no config ever sets it.
     """
     logger.info(f"Loading checkpoint: {checkpoint_path}")
 
@@ -146,6 +163,23 @@ def load_checkpoint(
     if missing:
         non_critical = len(missing) - len(critical_missing)
         logger.info(f"  Expected missing (target_encoder, buffers): {non_critical} keys")
+
+    # P3.2 — refuse rather than warn when the CORE of the model is not the
+    # checkpoint's. `dropped` covers shape mismatches, `critical_missing`
+    # covers absent keys; both paths must be guarded or the table-growth case
+    # slips through as a warn.
+    core = ('online_encoder.', 'predictor.', 'patching.')
+    core_bad = ([k for k, _, _ in dropped if k.startswith(core)]
+                + [k for k in critical_missing if k.startswith(core)])
+    if core_bad and not allow_partial:
+        raise RuntimeError(
+            f"Checkpoint/model mismatch on core components: {core_bad[:6]}"
+            f"{' …' if len(core_bad) > 6 else ''} — evaluating would score "
+            f"freshly initialised weights and produce silently wrong numbers. "
+            f"Either the geometry/config does not match the checkpoint, or you "
+            f"want an explicit extension (see grow_future_query_table). "
+            f"Pass allow_partial=True only for manual debugging."
+        )
 
     if critical_missing:
         logger.warning(f"  ⚠️ Potentially missing keys: {critical_missing[:10]}")

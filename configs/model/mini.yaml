@@ -1,3 +1,8 @@
+# ⚠️ DEPRECATED (audit du 2026-08-19) — racine ORPHELINE, ne pas utiliser.
+# Dérive mesurée par rapport à tiny.yaml : liste de datasets périmée, clés
+# multi-résolution/context_lengths absentes, blocs recopiés jamais resynchronisés.
+# Les échelles vivantes sont lotsa_mini / lotsa_base (qui héritent de lotsa_tiny
+# et redéfinissent les dimensions). Conservé par politique no-delete (P2.9).
 # @package _global_
 # configs/model/timejepa_mini.yaml
 

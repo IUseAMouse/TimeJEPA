@@ -800,7 +800,20 @@ deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE vari
       `bizitobs/10S` et `solar/10T` — la prédiction écrite ici AVANT le run est que le corpus
       complet les corrige comme LOTSA a corrigé ETTm1. Si tiny-full ne bouge pas, comprendre
       pourquoi avant de lancer G7.4.
-- [ ] **G7.4** Mini sur corpus complet :
+- [ ] **G7.4** Mini sur corpus complet — avec une PRÉDICTION ÉCRITE AVANT LE RUN (2026-08-19,
+      hypothèse utilisateur pendant tiny-full : « on touche la limite de capacité du tiny sur
+      un corpus si gros/complexe ») :
+      * Observé sur tiny-full à ~300k steps : équilibre de représentation plus bas que le run
+        plafonné (rank 42-45 vs 46-67, context_var ~0,78 vs 0,8-0,95) — MAIS égal au point
+        d'ARRIVÉE du run plafonné, atteint plus vite. Deux lectures possibles : saturation de
+        capacité (hypothèse utilisateur) ou équilibre SIGReg plus bas sur corpus plus divers.
+      * SI saturation : mini-full doit montrer (a) un plateau rank/variance PLUS HAUT que
+        tiny-full sur le même corpus, (b) un écart GIFT tiny→mini plus grand sur corpus
+        complet que sur corpus plafonné, (c) des gains concentrés sur la diversité (petits
+        fichiers, domaines faibles).
+      * SI même rank et même GIFT : l'hypothèse est fausse, le goulot est données/objectif.
+      * Rappel E15 : la variance ne prédit PAS le transfert — seul (b) tranche vraiment.
+      Mini sur corpus complet :
       `make train CONFIG=lotsa_mini_full ARGS="wandb.run_name=mini-full"`
 - [ ] **G7.5** Finetune zero-shot mini + evals (config `lotsa_mini_full_zeroshot`, eval avec
       `lotsa_mini_eval`)
@@ -816,10 +829,65 @@ E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08
       de recoupement réel avec un dataset d'éval avant de les réintégrer.
 - [ ] **G8.2** Conditionnement fréquentiel explicite (façon FlowState `scale_factor`) — réponse
       architecturale directe au mode d'échec mesuré.
-- [ ] **P2.5 (remonté)** Données synthétiques : couvrir les fréquences absentes du corpus.
+- [~] **P2.5 (remonté)** Données synthétiques — GÉNÉRATEUR LIVRÉ (2026-08-19), mélange à
+      décider. `src/timejepa/data/synthetic.py` + `scripts/generate_synthetic.py` (7 tests) :
+      KernelSynth approché par caractéristiques de Fourier aléatoires (Rahimi-Recht — la
+      Cholesky exacte serait O(N³) à N=8192), trois familles calées sur les trois trous
+      mesurés :
+        synthetic_subhourly  périodes 24-150, morceaux 8192  -> trou 10T/15T (E17)
+        synthetic_broadband  périodes 4-2048, morceaux 8192  -> fond de diversité
+        synthetic_lowfreq    périodes 4-52,   morceaux 1280  -> séries courtes (G7.1)
+      Les morceaux 8192 sont la première donnée où la décimation est possible (1280·6 ≤ 8192),
+      donc aussi le carburant de G9.2. Génération : ~10 min pour 75 k morceaux (0,44 Md obs).
+      Sortie dans data/processed/synthetic/, format identique aux corpus convertis.
+      - [ ] P2.5b Décider le RATIO réel/synthétique et le consigner (Chronos : ~10 % de
+        synthétique). Mélange par symlink des .npy dans le répertoire du corpus, puis audit
+        d'équilibre — jamais de génération dans un corpus en place.
+      - [ ] P2.5c Arm de mesure : tiny 10 Md + synthétique vs tiny-full (G7.3), UNE variable.
 - [ ] **G8.3** Contexte 2048 (contre 1024) — à évaluer coût attention vs gain.
 - [ ] **G8.4** Scaler robuste (arcsinh) en alternative à RevIN, dont le plancher epsilon est une
       pathologie mesurée (G6).
+
+### G8.5 — Volume effectif : sources et multiplicateurs (réflexion du 2026-08-19)
+
+Contexte : corpus actuel ~10 Md contre Moirai 27, Chronos ~85 (dont TSMixup), TimesFM ~100,
+Toto ~2 000 Md (propriétaire). E17 rappelle que la COUVERTURE prime sur le volume dans notre
+classe de paramètres — hiérarchie ci-dessous dans cet ordre. Un run d'ablation par levier.
+
+- [ ] **G8.5a — TSMixup maison** — GARDÉ MAIS MIS DE CÔTÉ (décision utilisateur 2026-08-19),
+      à ne reprendre qu'après les ablations en file (h512, chronos, contrôle, xres).
+      Généalogie, pour éviter la confusion : TSMixup ET KernelSynth sont tous deux de
+      Chronos/Amazon — KernelSynth = synthétique par noyaux GP (FlowState/IBM en utilise le
+      descendant CauKer), TSMixup = mélange convexe de séries RÉELLES. Deux choses distinctes. Combinaisons convexes de K∈{1,2,3} séries du
+      corpus de pretrain, poids Dirichlet, mise à l'échelle préalable — la recette Chronos, qui
+      matérialise ainsi 10 M de séries depuis 890 k réelles. Sans fuite PAR CONSTRUCTION
+      (sources = notre propre corpus), hors-ligne en .npy shardés (doctrine synthetic.py),
+      ~100 lignes. Multiplie le volume effectif ×5-10 sans téléchargement.
+- [ ] **G8.5b — ENTSO-E** (couverture 15T réelle). Charge/production électrique européenne à
+      15 min, API publique, ~1-5 Md de points, domaine énergie où le modèle est déjà fort.
+      Vise exactement le trou 15T d'E17 avec du réel plutôt que du synthétique.
+- [ ] **G8.5c — EIA-930** (petit, propre) : charge horaire US, ~50 M de points.
+- [~] **G8.5d — wikipedia pageviews : ACCEPTÉ SUR LE PRINCIPE** (utilisateur, 2026-08-19 —
+      « si c'est qu'un dataset Monash local, on s'en fout »). Le coût est UN dataset de la
+      suite locale (wikipedia-web-traffic-extended, qui tourne à m=1) : à retirer de la suite
+      ET des chiffres head-to-head locaux le jour de l'ingestion, avec note au registre.
+      ⚠️ DEUX PRÉREQUIS AVANT TOUT TÉLÉCHARGEMENT, exigés par l'utilisateur (précédent E10 :
+      london-smart-meters + wikipedia-web-traffic pesaient 48,7 % du batch Monash) :
+      1. **G10 d'abord** (échantillonnage hiérarchique par famille). Le sampler actuel compte
+         les FICHIERS : un corpus de +100 Md arriverait soit en peu de shards (sous-échantillonné),
+         soit en centaines de shards (il dévorerait le batch ET l'ancre d'époque — la longueur
+         d'époque suit le plus gros fichier, G10.1b). Ingérer wiki avant G10 reproduirait E10
+         en pire.
+      2. Audit d'équilibre APRÈS mélange, comme toujours — cible : wiki plafonné à ~10-15 %
+         du batch, pas du corpus.
+      Réadmissibles du même coup : les 4 familles web-traffic de LOTSA (extended_web_traffic,
+      kaggle_web_traffic_weekly, wiki-rolling_nips) — même mise à jour des motifs + tests que
+      G8.1. La question bitcoin/crypto reste SÉPARÉE et non tranchée.
+- ❌ NOAA/ERA5 étendu/WeatherBench : climat, déjà ~30 % du batch.
+
+**Critère d'entrée d'un nouveau corpus :** vérifié contre les TROIS suites d'éval (comme
+G8.1), converti en morceaux 8192 quand les séries le permettent (décimation + r'/r), audit
+d'équilibre après mélange, et UN run d'ablation dédié.
 
 ### G9 — Équivariance d'échelle : la justification architecturale de JEPA
 
@@ -868,11 +936,48 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
       `evaluation/gift.py` calcule déjà. Aucun réentraînement : testable sur le checkpoint
       actuel en une soirée. Répond à la question qui conditionne tout le reste — « le modèle
       ne sait pas représenter cette échelle » ou « il ne l'a jamais vue » ?
-- [ ] **G9.2** JEPA inter-résolution : k₁/k₂ tirés indépendamment, `w = k₂/k₁` conditionnant
+- [~] **G9.2** JEPA inter-résolution — **CODE LIVRÉ** (2026-08-19), runs à faire. JEPA inter-résolution : k₁/k₂ tirés indépendamment, `w = k₂/k₁` conditionnant
       le prédicteur, cible = `target_encoder(futur décimé à k₂)`. SIGReg empêche la solution
       dégénérée. Arm additif, aucune config existante modifiée.
 - [ ] **G9.3** Ablation : G9.2 contre G9.0 seul — l'équivariance par l'objectif bat-elle
       l'augmentation par décimation ? C'est ça, le résultat publiable.
+
+
+### État d'implémentation G9.2 + chantiers du 2026-08-19 (code livré, runs en attente)
+
+**Phase 0 — hygiène (commit a36164d)** : suite remise au vert (cas beijing/china_air_quality
+tranché : gardés, sanctionnés par GiftEvalPretrain, risque consigné au §5 du registre) ;
+train.py importe désormais `create_model_from_config` depuis `evaluation/loading.py` (4 copies
+→ 1) ; 5 scripts de rounds clos déplacés vers `scripts/archive/` (README de correspondance) ;
+bannières deprecated sur mini/base/large/_test_inherit ; `test_p0_regressions.py` découpé en
+test_configs/test_corpus/test_metrics + registre modèle (89 tests, aucun réécrit) ;
+`load_checkpoint` REFUSE désormais tout mismatch encodeur/prédicteur/patching (P3.2 fait).
+
+**Chantier 1 — chronos_extras (419f85c)** : GiftEvalPretrain = LOTSA moins 18 datasets d'éval,
+IDENTIQUE À L'OCTET (vérifié) → levier vide. Du corpus Chronos, allowlist de 4 (dominick,
+ercot, mexico_city_bikes, ushcn_daily), tout le reste doublon ou fuite (exchange_rate = éval
+Nixtla, training_corpus = TSMixup contaminé par construction). Convertit à 8192 : les seuls
+morceaux RÉELS décimables. `scripts/prepare_chronos.py` + `convert_subset()` dans lotsa.py.
+
+**Chantier 2 — horizon natif 512 (942243d)** : extension du checkpoint lotsa_tiny existant
+(PAS de pretrain neuf : la fenêtre 1536 et le budget seraient deux variables cachées).
+`grow_future_query_table` copie les 50 requêtes apprises, n'initialise que les 48 neuves ;
+opt-in via `training.extend_horizon_queries`. Configs `lotsa_tiny_h512_zeroshot` / `_eval`.
+Vérifié de bout en bout sur le vrai checkpoint : h=720 en 2 rollouts au lieu de 3.
+- [ ] **RUN h512** : finetune (aucun pretrain requis) + eval GIFT, comparer les termes
+      medium/long à la baseline (0.914/1.056/1.084).
+
+**Chantier 3 — arm xres (ce commit)** : contexte@k1, cible@k2 physiquement contiguë,
+w = k2/k1 par item via FiLM résiduel ZÉRO-INIT sur les requêtes futures (identité exacte à
+w=1 → checkpoint xres utilisable tel quel au finetune, qui ne passe jamais w). Cibles
+standalone imposées (garde ValueError contre contextualized_targets). Une seule clé de config
+(`model.cross_resolution`) pilote modèle, module et datamodule. Observabilité wandb ajoutée
+(demande utilisateur) : `aug/multires_frac`, `aug/resolution_factor_mean`, `aug/w_neq1_frac`,
+`aug/w_mean` — la dernière est LE témoin de stérilité de l'arm.
+- [ ] **RUN contrôle** : `lotsa_tiny` sur le corpus mixte lotsa_xres (override CLI data_dir)
+- [ ] **RUN xres** : `lotsa_tiny_xres` → zeroshot → évals. Une variable vs le contrôle.
+- [ ] ⚠️ Ordre des runs GPU : h512 d'abord (finetune seul, le moins cher), puis
+      chronos/contrôle/xres — voir l'en-tête de lotsa_tiny_xres.yaml pour les commandes.
 
 **Critère de sortie G9 :** un écart 10T/15T ramené au niveau du 5T, et une réponse chiffrée à
 « l'objectif latent permet-il une équivariance que la reconstruction ne permet pas ».
@@ -954,6 +1059,20 @@ reproduit le comportement actuel. Les deux vraies sources de rupture sont ailleu
 
 ---
 
+- [ ] **G7.6 (optionnel, la loi d'échelle maison)** — compléter la grille 2×2 (N, D) :
+      tiny@plafonné (0.677) / tiny@complet (en cours) / mini@complet (G7.4) / **mini@plafonné
+      (la case manquante, ~6-8 h)**. Quatre points = les deux exposants α (params) et
+      β (données) de `L = E + A/N^α + B/D^β` sur NOTRE architecture — séparables, publiables.
+      Contexte chiffré : la famille Toto mesure α minuscule (4M→0.524, 22M→0.496, 1B→0.478 :
+      ×250 params pour 4,6 pts), et le plancher E du benchmark se lit vers ~0,42-0,48 (où les
+      meilleurs se tassent). Lecture directe : si tiny@complet ≈ tiny@plafonné, N=1M est
+      data-saturé et seuls N ou l'objectif aident — le run en cours est le premier
+      coefficient de la loi.
+- [ ] **G7.7 (optionnel, 1 h CPU)** — dimension intrinsèque du corpus : TwoNN / MLE
+      Levina-Bickel sur fenêtres RevIN-normalisées. Chiffre inédit sur LOTSA ; à confronter à
+      l'effective_rank (~45/128) — argument de papier sur POURQUOI 1M de paramètres suffit
+      presque (le manifold apprenable est petit, le reste est bruit irréductible).
+
 **Critère de sortie G7 :** trois points de courbe (tiny-plafonné 0.979 / tiny-complet /
 mini-complet) sur GIFT-Eval, protocole identique, CHACUN avec sa taille de corpus mesurée
 (G7.1b) — sans abscisse, ce n'est pas une courbe d'échelle. Si le corpus complet corrige bizitobs/solar
@@ -974,6 +1093,17 @@ comme LOTSA a corrigé ETTm1, la thèse « le levier est le corpus » a sa trois
 
 ## Journal
 
+- 2026-08-19 (suite 3) — G8.5 : stratégie de volume effectif (TSMixup maison en premier,
+  ENTSO-E pour le 15T réel, wiki pageviews = décision de périmètre sur la suite Monash
+  locale). TSMixup expliqué : augmentation par mélange convexe, pas un dataset.
+- 2026-08-19 (suite 2) — Round de code complet pendant le run tiny-full : Phase 0 hygiène
+  (suite verte, loaders unifiés, archivage, découpe des tests, refus P3.2), convertisseur
+  chronos_extras (+ découverte : GiftEvalPretrain ≡ LOTSA moins évals, levier vide),
+  horizon natif 512 par extension de checkpoint, arm inter-résolution complet avec
+  observabilité wandb des augmentations. Reste : les runs.
+- 2026-08-19 (suite) — Générateur synthétique livré (P2.5) pendant le run tiny-full :
+  3 familles calées sur les trous E17/G7.1, morceaux 8192 qui débloquent G9.2. Couche
+  d'inférence (P3.1) dépriorisée : seul ce qui améliore les runs passe avant.
 - 2026-08-19 — Audit du corpus complet : 21,75 Md observations mais 66,5 % du BATCH en
   réanalyse climatique, `sampling_temperature` étant aveugle aux familles. Contourné par
   parking de tranches (aucun code, aucune config) ; G10 ouvert pour le correctif de fond.

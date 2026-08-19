@@ -19,6 +19,10 @@ from .encoders.target_encoder import TargetEncoder
 from .predictors.transformer_predictor import TransformerPredictor, MLPPredictor
 from .decoders.linear_decoder import ForecastingHead
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def filter_loadable(
     model: nn.Module,
@@ -48,6 +52,66 @@ def filter_loadable(
             continue
         filtered[key] = value
     return filtered, dropped
+
+
+def grow_future_query_table(
+    model: nn.Module,
+    state_dict: Dict[str, torch.Tensor],
+    key: str = "predictor.future_position_embedding",
+) -> Dict[str, torch.Tensor]:
+    """
+    Fusionne la table de requêtes d'un checkpoint COURT dans un modèle LONG.
+
+    `predictor.future_position_embedding` est le seul paramètre du modèle dont
+    la forme dépende de `prediction_length` (table [1, max_target_patches,
+    d_model]). Passer l'horizon natif de 256 à 512 la fait grandir de 50 à 98
+    lignes : sans cette fonction, `filter_loadable` droppe la clé entière et le
+    prédicteur repart d'une table ALÉATOIRE — les 50 requêtes apprises sont
+    jetées alors que seules les 48 nouvelles ont besoin d'une initialisation.
+
+    Ici : les lignes existantes du checkpoint sont copiées telles quelles dans
+    une COPIE de la table du modèle (dont l'init fournit les lignes neuves), et
+    le state_dict retourné n'a plus de mismatch sur cette clé. Refus explicite
+    (ValueError) si la table du checkpoint est PLUS LONGUE (tronquer des
+    requêtes apprises serait une perte silencieuse) ou si d_model diffère
+    (aucune fusion n'a de sens). No-op si les formes coïncident.
+
+    Opt-in uniquement : appelée par FinetuneModule quand
+    `extend_horizon_queries=true` (config d'arm), jamais par défaut — sans le
+    flag, le mismatch reste un échec bruyant, ce qui est le bon comportement
+    pour une géométrie NON intentionnelle.
+    """
+    if key not in state_dict:
+        return state_dict
+    model_table = dict(model.state_dict()).get(key)
+    if model_table is None:
+        return state_dict
+    ckpt_table = state_dict[key]
+    if tuple(ckpt_table.shape) == tuple(model_table.shape):
+        return state_dict
+    if ckpt_table.shape[-1] != model_table.shape[-1]:
+        raise ValueError(
+            f"{key}: d_model {ckpt_table.shape[-1]} (checkpoint) != "
+            f"{model_table.shape[-1]} (modèle) — fusion impossible."
+        )
+    if ckpt_table.shape[1] > model_table.shape[1]:
+        raise ValueError(
+            f"{key}: la table du checkpoint ({ckpt_table.shape[1]} lignes) est "
+            f"plus longue que celle du modèle ({model_table.shape[1]}) — la "
+            f"tronquer jetterait des requêtes apprises. Réduire l'horizon du "
+            f"checkpoint n'exige aucune fusion : le prédicteur slice sa table."
+        )
+    merged = model_table.detach().clone()
+    n = ckpt_table.shape[1]
+    merged[:, :n, :] = ckpt_table
+    out = dict(state_dict)
+    out[key] = merged
+    logger.info(
+        f"  ⤢ {key}: table étendue {tuple(ckpt_table.shape)} → "
+        f"{tuple(model_table.shape)} ({n} lignes pré-entraînées copiées, "
+        f"{model_table.shape[1] - n} lignes neuves à l'init du modèle)"
+    )
+    return out
 
 
 class JEPATST(nn.Module):
@@ -100,6 +164,12 @@ class JEPATST(nn.Module):
         
         # RevIN
         use_revin: bool = True,
+
+        # G9.2 — arm JEPA inter-résolution : construit le prédicteur avec le
+        # FiLM de conditionnement d'échelle (w = k2/k1). Opt-in strict : à
+        # False, aucun paramètre supplémentaire n'existe et le state_dict des
+        # configs existantes est inchangé au bit près.
+        cross_resolution: bool = False,
         affine: bool = True,
         subtract_last: bool = False,
     ):
@@ -167,6 +237,7 @@ class JEPATST(nn.Module):
                 dropout=dropout,
                 activation=activation,
                 max_target_patches=max_target_patches,
+                use_w_film=cross_resolution,
             )
         elif predictor_type == 'mlp':
             self.predictor = MLPPredictor(
@@ -217,6 +288,7 @@ class JEPATST(nn.Module):
         context: torch.Tensor,
         target: torch.Tensor,
         contextualized_targets: bool = True,
+        w: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass for JEPA pretraining with TRUE forecasting objective.
@@ -283,7 +355,10 @@ class JEPATST(nn.Module):
         # 5. Predict target representations from context embeddings
         predictions = self.predictor.forward_simple(
             context_embeddings=context_embeddings,
-            num_targets=num_target_patches
+            num_targets=num_target_patches,
+            # G9.2 : ratio d'échelle par item — None sur tous les chemins
+            # existants, donc bit-identique hors arm inter-résolution.
+            w=w,
         )
         # [B, num_target_patches, d_model]
         
