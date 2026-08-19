@@ -753,7 +753,23 @@ E16 situe le tiny plafonné à 0.979/0.677 sur GIFT-Eval — à 3,3 points de Mo
 plafonné (10S, 10T) : exactement le profil qu'E14 avait sur ETTm1 avant LOTSA. G7 teste les
 deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE variable par run.
 
-- [ ] **G7.1** Conversion complète (en cours) : `make lotsa-download CHUNKS=1000000 OUT=data/processed/lotsa_full`
+- [x] **G7.1** Conversion complète — FAIT (2026-08-19). Corpus retenu après parking des
+      tranches excédentaires : **10,05 Md observations, 4 922 922 morceaux, 65 fichiers,
+      ~473 M fenêtres distinctes** (stride 8). Composition du BATCH (le seuil de 15 % porte sur
+      le batch, pas sur le corpus — la température corrige déjà les gros fichiers uniques) :
+      largest 16,7 %, era5 16,2 %, cmip6 15,4 %, petits fichiers 12,7 %, buildings_900k 8,5 %.
+      Climat ramené de 66,5 % à 31,6 % du batch. Validé pour le run.
+      ⚠️ Gain réel de G8.1 : **0,20 Md seulement** (0,9 % du corpus), dont 93 % pour Q-TRAFFIC.
+      `kdd2022`, annoncé comme le principal gain 10 min, n'a produit que 2 139 morceaux —
+      prédiction fausse, à corriger dans le raisonnement.
+      ⚠️ **Découverte structurelle** : m1_*, monash_m3_*, tourism_*, nn5_*, cif_*, fred_md,
+      godaddy, covid_mobility sont tous rejetés « séries trop courtes (médiane < 1280) ». Le
+      modèle ne peut PAS s'entraîner sur des séries courtes, quel que soit le corpus — et
+      ~15 des 97 configs GIFT (A, Q, M, W) sont exactement de cette forme, ce qui explique
+      m4_yearly MASE 5,08 bien mieux que la couverture fréquentielle. Piste : un corpus basse
+      fréquence converti avec `--min-length 256 --chunk-length 512`, `context_lengths`
+      couvrant déjà [128…1024] à l'entraînement.
+- [x] ~~**G7.1 (ancienne formulation)** Conversion complète (en cours)~~ : `make lotsa-download CHUNKS=1000000 OUT=data/processed/lotsa_full`
       puis AUDIT d'équilibre (en-tête de lotsa_tiny_full.yaml) — aucune famille > ~15 %.
       Si une famille domine (cmip6/era5 probables sans plafonds) : reconvertir CETTE famille
       seule via `--subsets <tranches> --max-chunks-per-subset N` après avoir retiré ses .npy
@@ -832,10 +848,22 @@ l'information. C'est aussi pourquoi le paramètre `w` est nécessaire et non un 
 ⚠️ Ce que G9 ne règlera PAS : les écarts de DOMAINE mesurés en E17 (bizitobs ×2,4 à 10S mais
 aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là relèvent du corpus.
 
-- [ ] **G9.0** Rallumer la multi-résolution au pretrain LOTSA — config seule, mécanisme DÉJÀ
-      présent dans `datamodule.py`. `tiny.yaml` l'utilise (`[1,2,3,4]`, p=0.35) depuis toujours ;
-      seul `lotsa_tiny.yaml` l'a coupée, et c'est le seul modèle avec le trou sub-horaire.
-      Proposé : `multi_resolution_factors: [1,2,3,4,6]`, `p_multi_resolution: 0.3`.
+- [ ] **G9.0** ⚠️ **CORRIGÉ le 2026-08-19 — ce n'est PAS un changement de config.**
+      `dataset.py:_sample_resolution_factor` n'accepte un facteur f que si
+      `start_idx + (ctx+pred)·f <= longueur_du_morceau`. Les morceaux LOTSA font 2048 pas et
+      la fenêtre en demande 1280 : f=2 exigerait 2560 > 2048. **Aucune décimation n'est
+      possible**, quelle que soit la config. La multi-résolution n'a donc pas été « coupée par
+      erreur » sur LOTSA — elle y est structurellement inopérante, et `tiny.yaml` ne
+      l'utilisait que parce que les séries Monash sont longues et non découpées.
+      Le déblocage passe par la CONVERSION : `--chunk-length 8192` autorise f jusqu'à 6
+      (1280×6 = 7680 ≤ 8192). À faire de façon CIBLÉE sur les sous-ensembles haute fréquence
+      dont on veut décimer (largest 5 min, PEMS 5 min, Q-TRAFFIC 15 min, borg/azure/alibaba),
+      écrits dans le même répertoire sous un suffixe distinct — `datasets: null` globe le
+      répertoire et chaque fichier est un dataset indépendant, donc des longueurs de morceaux
+      hétérogènes cohabitent sans code à modifier.
+      ⚠️ Arbitrage à mesurer : à 8192 le nombre de fenêtres par morceau monte, mais le nombre
+      de morceaux chute (~4x), et des sous-ensembles entiers avaient été perdus à 8192 lors du
+      premier essai (alibaba : 108 852 séries sur 116 818). D'où le ciblage.
 - [ ] **G9.1** Mise à l'échelle RoPE À L'INFÉRENCE SEULE, `s_Δ` dérivé de la saisonnalité que
       `evaluation/gift.py` calcule déjà. Aucun réentraînement : testable sur le checkpoint
       actuel en une soirée. Répond à la question qui conditionne tout le reste — « le modèle
@@ -850,6 +878,50 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
 « l'objectif latent permet-il une équivariance que la reconstruction ne permet pas ».
 
 ---
+
+### G10 — Échantillonnage à deux niveaux (dette identifiée le 2026-08-19, à traiter APRÈS G7)
+
+**Le défaut.** `TemperatureSampler` (datamodule.py:94-103) calcule `sizes ** T` **par FICHIER**.
+Une famille éclatée en 30 tranches annuelles obtient donc 30 tirages, et la température — qui
+existe pour remonter les petits jeux — remonte chacune de ces tranches. Le garde-fou joue
+contre lui-même.
+
+**Mesuré sur le corpus complet** (audit du 2026-08-19, 118 fichiers, 21,75 Md observations) :
+
+| | part du corpus | part du BATCH |
+|---|---|---|
+| era5 + cmip6 (63 fichiers sur 118) | 56,4 % | **66,5 %** |
+
+Le plafond par famille n'y remédie quasiment pas : divisé par 7,5, le climat ne descend qu'à
+48,4 % en sacrifiant 71 % du corpus. Le levier réel est le NOMBRE de fichiers, pas leur taille.
+
+**Contournement retenu pour G7** (aucun code touché, aucune config touchée) : sortir les
+tranches excédentaires du répertoire — `datasets: null` fait un glob, donc le corpus se
+redéfinit tout seul. 6 era5 + 6 cmip6 + 3 largest donnent ~10 Md observations avec aucune
+famille au-dessus de ~16 %, et les 41 petits fichiers — toute la diversité de domaines et de
+fréquences — passent de 8,4 % à ~19 % du batch.
+
+- [ ] **G10.1** Échantillonnage hiérarchique : tirer d'abord la FAMILLE (via `family_of()`,
+      déjà dans `lotsa.py`), puis le fichier dans la famille. La température s'applique alors
+      au niveau où le déséquilibre existe.
+- [ ] **G10.1b** Longueur d'époque ancrée sur UN fichier. `_compute_epoch_plan` pose
+      `num_batches = taille_du_plus_gros_fichier // slots_alloués`, sans que la taille du
+      corpus intervienne. Conséquences mesurées sur le corpus complet : une « époque » vaut
+      ~2,4 passes (era5/cmip6 au plafond de 3x), et comme le plafond est appliqué dans
+      `__iter__`, les 38 petits fichiers s'épuisent vers 48 % de l'époque — le batch tombe de
+      512 à ~463 et la diversité durement gagnée s'évapore à mi-parcours. Explique aussi
+      pourquoi un corpus 5,7x plus gros ne donne qu'une époque 3x plus longue.
+      Piste : exposer `num_batches_per_epoch` (le paramètre existe déjà dans le sampler) pour
+      définir l'époque en fenêtres du corpus plutôt qu'en passes du plus gros fichier.
+      ⚠️ Comportement inchangé depuis le début du projet : E13b/E14/E16 le partagent, donc les
+      comparaisons entre eux tiennent. À corriger pour l'interprétation, pas pour la validité.
+- [ ] **G10.2** Logger la composition effective du batch par famille en début de run — le
+      déséquilibre a été invisible pendant tout G5/G6 faute de cette ligne.
+- [ ] **G10.3** Re-vérifier le contournement du parking : une fois G10.1 en place, les
+      tranches garées peuvent revenir et le corpus repasser à ~21 Md.
+
+⚠️ Ne PAS toucher au sampler avant la fin de G7 : les runs E14/E16 ont tourné avec le sampler
+actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
 
 ### P3 — Plan de release : versions successives et critères de publication
 
@@ -902,6 +974,9 @@ comme LOTSA a corrigé ETTm1, la thèse « le levier est le corpus » a sa trois
 
 ## Journal
 
+- 2026-08-19 — Audit du corpus complet : 21,75 Md observations mais 66,5 % du BATCH en
+  réanalyse climatique, `sampling_temperature` étant aveugle aux familles. Contourné par
+  parking de tranches (aucun code, aucune config) ; G10 ouvert pour le correctif de fond.
 - 2026-08-18 (suite 2) — E17 corrigé (fréquence/domaine étaient confondus). G8.1 : 20
   sous-ensembles LOTSA réadmis. G9 ajouté (équivariance d'échelle) et P3 (plan de release).
 - 2026-08-18 (suite) — E16 : GIFT-Eval livré et mesuré (0.979/0.677 à ~1M, zero-shot). Le

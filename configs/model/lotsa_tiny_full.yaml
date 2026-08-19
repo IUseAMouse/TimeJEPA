@@ -81,7 +81,56 @@ data:
   data_dir: "data/processed/lotsa_full"
 
 training:
-  max_epochs: 2
+  # UNE époque, et c'est le régime « foundation model » standard : Chronos,
+  # TimesFM et Moirai font essentiellement une passe sur un corpus énorme.
+  #
+  # Ce n'est pas qu'une contrainte de calcul, c'est ce que le registre mesure.
+  # E13b : DEUX pretrains indépendants désignent leur meilleur checkpoint à
+  # ~250 k pas — environ une époque du corpus PLAFONNÉ — puis divergent, train
+  # qui descend et val qui monte. Repasser sur les mêmes morceaux sur-apprend.
+  # Le corpus complet étant ~8x plus gros, une époque ici vaut ~8x plus de
+  # données DISTINCTES que l'époque qui saturait déjà.
+  #
+  # `max_epochs` pilote aussi le cosinus (E13a) : à 1, le recuit se termine
+  # exactement à la fin de l'époque. C'est le comportement voulu, et la raison
+  # pour laquelle le DERNIER checkpoint est le bon ici — pas le meilleur
+  # val_loss, qui a désigné le mauvais modèle en E12.
+  #
+  # ⚠️ « UNE époque » n'est PAS « une passe sur le corpus ». `_compute_epoch_plan`
+  # (datamodule.py:145) fixe la longueur d'époque à une passe sur le plus GROS
+  # FICHIER : `num_batches = taille_du_plus_gros // slots_qui_lui_sont_alloués`.
+  # La taille totale du corpus n'entre pas dans ce calcul. Mesuré sur le corpus
+  # complet (ancre = buildings_900k, 1 fichier de 10^6 morceaux) : l'époque vaut
+  # ~2,4 passes en moyenne, era5 et cmip6 atteignant le plafond de 3x. Comme le
+  # plafond est appliqué en cours d'itération, les 38 petits fichiers s'épuisent
+  # vers 48 % de l'époque et le batch tombe de 512 à ~463.
+  # Comportement INCHANGÉ depuis toujours, donc les comparaisons entre runs
+  # restent valides — mais ne pas lire « max_epochs: 1 » comme « une passe ».
+  # Correctif de fond : G10 du plan.
+  max_epochs: 1
+
+trainer:
+  # 0.1 sur une époque de ~2 M pas ne validerait que 10 fois, et le premier
+  # point tomberait après ~200 k pas — sur un run à passe unique, c'est trop
+  # tard pour voir venir quoi que ce soit. À 0.05 on obtient ~20 points, dont
+  # un dès ~100 k pas. Le coût reste marginal : la validation est un
+  # sous-ensemble fixe, pas une fraction du train.
+  val_check_interval: 0.05
+
+early_stopping:
+  # DÉSACTIVÉ sur les runs à passe unique, et c'est délibéré.
+  #
+  # Le cosinus est étalé sur `max_epochs: 1` : la valeur du modèle est à la FIN
+  # de la passe, quand le recuit s'achève. Couper avant, c'est livrer un modèle
+  # jamais recuit — le défaut exact qu'E13a a mesuré.
+  #
+  # Avec val_check_interval=0.05 il n'y a que ~20 validations, donc patience=25
+  # ne se déclencherait de toute façon jamais : mieux vaut l'écrire que de
+  # dépendre de cette coïncidence. Quiconque affinerait la validation (0.01 →
+  # 100 points) rallumerait sinon un arrêt sur un creux de bruit, ce qu'E12 a
+  # déjà payé une fois — la val_loss y désignait le modèle qui généralise LE
+  # MOINS bien.
+  enabled: false
 
 wandb:
   tags:

@@ -24,7 +24,28 @@ data:
   data_dir: "data/processed/lotsa_full"
 
 training:
-  max_epochs: 2
+  # Même régime à passe unique que lotsa_tiny_full — voir son en-tête pour le
+  # raisonnement (E13b : au-delà d'une époque, sur-apprentissage mesuré ; et
+  # `max_epochs` pilote le recuit cosinus).
+  max_epochs: 1
+
+trainer:
+  val_check_interval: 0.05
+
+early_stopping:
+  # DÉSACTIVÉ sur les runs à passe unique, et c'est délibéré.
+  #
+  # Le cosinus est étalé sur `max_epochs: 1` : la valeur du modèle est à la FIN
+  # de la passe, quand le recuit s'achève. Couper avant, c'est livrer un modèle
+  # jamais recuit — le défaut exact qu'E13a a mesuré.
+  #
+  # Avec val_check_interval=0.05 il n'y a que ~20 validations, donc patience=25
+  # ne se déclencherait de toute façon jamais : mieux vaut l'écrire que de
+  # dépendre de cette coïncidence. Quiconque affinerait la validation (0.01 →
+  # 100 points) rallumerait sinon un arrêt sur un creux de bruit, ce qu'E12 a
+  # déjà payé une fois — la val_loss y désignait le modèle qui généralise LE
+  # MOINS bien.
+  enabled: false
 
 wandb:
   tags:

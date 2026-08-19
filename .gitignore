@@ -45,6 +45,13 @@ data/processed/**
 data/cache/**
 # GIFT-Eval benchmark snapshot (1.5 GB of arrow files, make gift-download)
 data/gift_eval/**
+
+# Fichiers de reprise par config du harness GIFT-Eval : régénérables, et
+# spécifiques à la machine qui a lancé le run. Les avoir versionnés a fait
+# échouer un `git pull` sur la machine GPU, dont les 97 fichiers (run complet)
+# entraient en collision avec les 7 commités depuis un run CPU partiel.
+# Les LIVRABLES restent versionnés : all_results.csv et summary.json.
+evaluation/**/gift/per_config/**
 *.npy
 *.npz
 *.tsf
