@@ -960,6 +960,216 @@ sur bizitobs et us_births qui relèvent du corpus, pas de l'architecture.**
 
 ---
 
+### E18 — tiny-full : le point corpus-complet de la courbe d'échelle (2026-08-21)
+
+**Protocole.** Même architecture (~1M), même géométrie, même harness qu'E16. Une variable :
+le corpus de pretrain passe du LOTSA plafonné (~1,7 Md, ~12 % de LOTSA) à `lotsa_full`
+équilibré (10,05 Md, 65 fichiers). Pretrain 1 époque (ancrée plus-gros-fichier, ≈2,2 passes
+corpus mesurées — cf. G10.1b), finetune 1 époque LOTSA complet, LR plafond 7,5e-4 hérité.
+Éval GIFT à chaque checkpoint de validation (initiative utilisateur — la trace complète est
+un sous-produit précieux, cf. lecture du LR plus bas).
+
+**Résultat principal :**
+
+| | corpus | MASE ratio | CRPS ratio |
+|---|---|---|---|
+| E16 (tiny) | plafonné ~1,7 Md | 0.979 | 0.677 |
+| **E18 (tiny-full), checkpoint final recuit** | **10,05 Md** | **0.9685** | **0.6664** |
+
+**Corpus ×6 ⇒ CRPS −1,6 %, MASE −1,1 pt.** Réel, répliqué sur toute la bande de fin de run —
+et modeste : le levier données seul s'aplatit à cette capacité. C'est le coefficient de la
+courbe d'échelle qu'on venait chercher (G7) : la suite passe par la recette (mix/xres, E19)
+et la capacité (mini 5M, G7.4), pas par plus de LOTSA.
+
+**La trace par checkpoint — et ce qu'elle a appris sur le LR.** Huit évals GIFT du même
+finetune : 20 % → 0.988/0.678 ; ~50 % → 0.9634/**0.6658** ; 0.70 → 0.9788/0.6688 ; 0.75 →
+0.9727/0.6692 ; 0.80 → 0.9642/0.6658 ; 0.85 → 0.9662/**0.6656** ; 0.90 → 0.9699/0.6662 ;
+final → 0.9685/0.6664. Lecture : progrès net ~nul de 100k à 400k steps (bande d'oscillation
+±0.01 CRPS, pic d'instabilité à ~240k), TOUTE la descente une fois le cosinus sous ~3e-4,
+puis plateau convergé (quatre derniers points dans ±0.004/±0.0008 — le choix best-val-loss
+vs final est du bruit). Conséquence actée : plafond LR **3e-4** pour les runs mix/xres,
+pretrain et finetune (les 3 époques de finetune vivent alors entièrement dans le régime
+empiriquement productif).
+
+**Décomposition per-config (checkpoint 0.75, baseline SN officielle) — où vit l'écart.**
+Médiane des ratios MASE **0.893**, 62/97 configs sous 1,0. Le geomean 0.97 est fait par une
+queue de 16 configs à ratio >1.25 : sans elles, **0.853**. Cette queue est le trou
+sub-horaire d'E17 (bizitobs 10S ×1.65-3.59, solar 10T ×2.1-2.4, electricity/ett 15T
+×1.3-1.45, m4_hourly), PAS le bloc séries-courtes (geomean 0.952, covid compris — SN y est
+pire que nous). Et MASE/CRPS échouent sur les MÊMES 16 configs : pas de dissociation
+« bon spread / mauvais médian » — l'asymétrie agrégée 0.97 vs 0.67 est surtout un artefact
+de la baseline (SN est un point forecast, son WQL est gonflé ; TTM-R3 montre le même profil
+0.727/0.520). L'hypothèse « le médian lisse est la limite de l'objectif JEPA » est donc
+NON soutenue par cette décomposition — le corpus l'explique mieux.
+
+**Prédiction falsifiable pour E19 :** le run mix (synthétique sub-horaire ~8-9 % du batch)
+doit comprimer précisément cette queue de 16 configs ; si l'hypothèse E17 est la bonne,
+c'est le MASE agrégé qui bouge le plus. Ce qui SURVIT de la queue après mix rédige le cahier
+des charges des familles synthétiques v2 (P2.5d).
+
+**Positionnement.** 0.6664 laisse le modèle ~105/123 au leaderboard complet : Chronos_small
+(0.663) à portée de bruit, Moirai_small (0.650) exige la queue. Gate P3 v0.1 (< 0.65) : pas
+atteint — c'est le travail d'E19/E20.
+
+**Décisions actées par ce résultat :** (1) G7.3b tranché — la base des runs mix/xres est
+`lotsa_full` ; (2) plafond LR 3e-4 partout sur la file ; (3) budgets 2 époques pretrain
+(plafond, coupe manuelle) / 3 époques finetune, cosinus étalé dessus.
+
+---
+
+### E18b — Sonde d'énergie : le latent JEPA sait juger des futurs, et le full finetune le désapprend (2026-08-21)
+
+**Question.** Un JEPA pré-entraîné est implicitement une fonction d'énergie :
+E(x,y) = ‖pred(enc(x)) − enc(y)‖², abaissée sur les vrais couples par l'objectif,
+creusée par SIGReg. Cette énergie discrimine-t-elle réellement les futurs plausibles ?
+(Veto avant toute lecture « proposer-juger-pondérer » et avant l'arm ErrorSignalJEPA.)
+
+**Protocole** (`scripts/probe_energy.py`, CPU, lecture seule, pendant le pretrain mix) :
+6 configs GIFT × 100 instances × 34 candidats (32 block-bootstrap de l'historique +
+seasonal naive + LE VRAI futur), tous encodés selon la convention de cible du pretrain
+([ctx‖candidat] aux stats du contexte, tranche des derniers patches). Témoins : rang
+normalisé du vrai (hasard 0.50), fraction top-20 % (hasard 0.20), Spearman(E, MAE réel)
+(hasard 0.00). Approximation dite : encodeur online au lieu de l'EMA.
+
+| checkpoint | rang vrai (moy) | top-20 % | ρ(E, MAE) |
+|---|---|---|---|
+| pretrain lignée E16 (corpus plafonné) | 0.245 | 0.57 | 0.50–0.74 |
+| **pretrain tiny-full (corpus complet)** | **0.235** | **0.60** | **0.62–0.77 (toutes configs)** |
+| full finetune (MÊME pretrain tiny-full, pinball seule) | 0.409 | 0.33 | erratique (−0.32 à +0.53) |
+
+**Résultat 1 — l'énergie a du signal, partout.** Sur le pretrain : rang moyen 0.245,
+electricity/H à 0.093 (médiane 0.030 !), et surtout ρ(E, MAE) positif et fort sur les
+6 configs — l'énergie suit la proximité réelle, pas un artefact. Y compris solar/10T
+(rang 0.295, ρ 0.58), config de la QUEUE E18 : **le latent sait des choses sur solar
+que le décodeur ne rend pas.** La lecture par énergie mérite d'être construite ;
+c'est l'argument « le latent JEPA porte plus que son argmin », mesuré.
+
+**Résultat 2 — le full finetune détruit l'alignement énergie.** Même sonde sur le
+checkpoint finetuné : dégradation générale, sz_taxi SOUS le hasard (0.617) avec ρ
+négatif — sur la config où le modèle éval le mieux (0.55-0.62 vs SN). La pinball
+seule n'ancre plus pred(x) ≈ enc(y) ; le drift du full finetune (question ouverte de
+la discussion décodeur) a maintenant un COÛT MESURÉ : il sacrifie la structure
+énergétique du pretrain. Confondeur LEVÉ le soir même (sonde sur le pretrain tiny-full, même lignée que le
+finetune dégradé) : le pretrain corpus-complet est le MEILLEUR des trois (0.235,
+ρ 0.62-0.77 — le corpus ×6 améliore aussi l'énergie), et son propre finetune tombe à
+0.409. L'attribution est propre : c'est bien le full finetune qui détruit l'alignement,
+pas le corpus. sz_taxi : 0.379 au pretrain → 0.617 (sous le hasard) après finetune.
+
+**Conséquences.** (1) Prototype re-notation/intervalles pondérés : légitimé, sur
+checkpoints de PRETRAIN ; (2) l'ancrage du finetune (garder le terme d'invariance du
+pretrain à petit poids λ dans la loss de finetune) monte d'un cran dans le backlog —
+sans lui, tout ce que ESJEPA ou la re-notation construiront sur le latent sera érodé
+au finetune ; (3) la sonde devient l'instrument standard de santé énergétique d'un
+checkpoint (une commande, 6 configs).
+
+**E18c — addendum : le checkpoint mix à ~70 % d'époque, NON RECUIT, est déjà le
+meilleur juge des quatre** (sondé le soir même, deux conventions d'encodage des
+candidats — le script a gagné un drapeau `--standalone-targets` car mix s'entraîne
+en cibles standalone, audit C1) :
+
+| checkpoint (convention de sonde) | rang vrai (moy) | notes |
+|---|---|---|
+| pretrain E16 (ctx) | 0.245 | |
+| pretrain tiny-full (ctx) | 0.235 | |
+| **mix ~70 % époque (ctx)** | **0.153** | electricity/H : rang MÉDIAN 0.000 |
+| **mix ~70 % époque (standalone = sa convention)** | **0.212** | |
+| finetune tiny-full (ctx = sa convention) | 0.409 | |
+
+Lecture : (a) la recette mix (arcsinh + synthétique + cibles standalone) améliore
+nettement le juge latent AVANT recuit et avant tout finetune — premier signal aval
+de la recette, des jours avant l'éval GIFT ; electricity/15T (queue E18) passe de
+0.24 à 0.15-0.18 sous les DEUX conventions. (b) Nuance d'honnêteté : le gain
+spectaculaire sur solar (0.145) n'existe qu'en lecture contextualisée — dans sa
+propre convention standalone, solar est quasi hasard (0.480, ρ négatif) ; un futur
+solaire encodé SEUL (une nuit = un plateau) porte peu d'information, la
+contextualisation est ce qui le rend jugeable. Conséquence pour le prototype : la
+lecture par énergie devrait encoder les candidats CONTEXTUALISÉS à l'inférence,
+même sur une lignée entraînée standalone — c'est un choix de lecture, pas de loss.
+(c) Le classement inter-checkpoints du tableau principal est inchangé (tous sondés
+dans leur propre convention ou à convention égale).
+
+**E18d — prototype v0 du forecast par énergie, évalué (Nixtla local, même harnais
+pour trois lecteurs).** `scripts/evaluate_energy.py` : 32 bootstraps + SN + drift,
+encodage contextualisé, poids softmax sur énergies standardisées (v0 sans
+température libre — AUCUN réglage sur le test), quantiles pondérés 9 niveaux.
+Lecteurs : energy (checkpoint de PRETRAIN tiny-full, zéro entraînement aval),
+decoder (checkpoint finetuné, la voie générative), snaive. h=96, fenêtres
+non chevauchantes, MASE poolée et WQL du repo — comparaison par ratios intra-run.
+
+| dataset | energy MASE (vs SN) | energy WQL (vs SN) | decoder WQL (vs SN) |
+|---|---|---|---|
+| ettm1 | 1.21x | **0.97x** | 0.92x |
+| ettm2 | 1.00x | **0.79x** | 0.74x |
+| etth1 | **0.96x** | **0.79x** | 0.70x |
+| etth2 | 1.15x | **0.91x** | 0.92x |
+| weather | 1.19x | **0.96x** | 0.76x |
+| exchange | 1.26x | 1.18x | 0.77x |
+
+Lecture honnête : (1) LA MÉCANIQUE MARCHE — des intervalles calibrés sortent d'un
+pretrain nu, WQL sous le seasonal naive sur 5/6 datasets sans une seule époque
+d'entraînement aval ; sur etth2 le fan énergie ÉGALE le fan du décodeur finetuné
+(0.91x vs 0.92x). (2) Le décodeur garde l'avantage partout ailleurs — attendu et
+écrit avant le run (une époque de finetune contre zéro). (3) Le point forecast
+énergie est faible (médiane pondérée de recombinaisons ≈ information de niveau SN).
+(4) exchange échoue exactement comme prédit : série à dérive, le bootstrap ne
+propose que des recombinaisons du passé — la limite d'enveloppe, mesurée. Les trois
+leviers v1, dans l'ordre : trajectoires du décodeur dans les candidats (règle
+exchange), calibration de T en contexte (règle la largeur), K plus grand. Verdict :
+la lecture énergie est un COMPLÉMENT crédible (intervalles quasi gratuits, hybride
+possible), pas un remplaçant du décodeur — la file générative garde la priorité,
+conformément à la décision utilisateur.
+
+**E18e — l'hybride « le décodeur propose, le pretrain juge » (protocole utilisateur),
+mesuré le soir même.** Les 9 trajectoires-quantiles du décodeur FINETUNÉ entrent dans
+le pool de candidats, le checkpoint de PRETRAIN (alignement énergie intact, E18b)
+pondère tout le monde. WQL vs snaive :
+
+| dataset | energy | decoder | hybrid |
+|---|---|---|---|
+| ettm1 | 1.00x | 0.92x | 0.95x |
+| ettm2 | 0.80x | 0.74x | 0.76x |
+| etth1 | 0.76x | 0.70x | **0.69x** |
+| etth2 | 0.92x | 0.92x | **0.88x** |
+| weather | 0.96x | **0.76x** | 0.87x |
+| exchange | 1.15x | **0.77x** | 0.96x |
+
+Lecture : (1) l'hybride bat energy-seul PARTOUT — les chemins du décodeur réparent
+notamment l'échec d'enveloppe d'exchange (1.15x -> 0.96x), mécanisme confirmé ;
+(2) il bat le décodeur finetuné sur etth1 (aussi en MASE : 0.84x vs 0.86x) et
+nettement sur etth2 (0.88x vs 0.92x) — premier cas où le tandem à deux checkpoints
+améliore la voie générative seule ; (3) mais il la DILUE sur weather/exchange :
+9 chemins de décodeur noyés parmi 43 candidats, pondération naïve sans température —
+là où le décodeur est fort, le pool le tire vers le bas. L'arbitrage n'est pas
+encore assez contrasté pour « choisir » le bon proposeur par série. Leviers v2,
+par ordre : calibration de T en contexte (le contraste), pondération par SOURCE de
+proposition, échantillonnage de chemins cohérents (copule sur le fan) au lieu des
+trajectoires-quantiles marginales. Parallèle assumé avec l'ensembling agentique du
+haut du leaderboard : plusieurs proposeurs, un arbitre — sauf que l'arbitre est ici
+une distance dans l'espace latent appris, pas un orchestrateur externe. Backlog,
+derrière la file générative.
+
+**E18e-v2 — l'hypothèse d'échantillonnage (utilisateur), testée** : pool enrichi à
+75 candidats — 48 bootstraps à DEUX échelles de blocs (cycle entier + tiers) et
+16 chemins MC-dropout du décodeur (Dropout seuls basculés en train le temps des
+forwards, dans le script uniquement — trajectoires épistémiques COHÉRENTES, ce que
+les chemins-quantiles ne sont pas). Effet mesuré, v1 -> v2 de l'hybride :
+
+| | ettm1 | ettm2 | etth1 | etth2 | weather | exchange |
+|---|---|---|---|---|---|---|
+| hybrid WQL (vs SN) | 0.95->0.95 | 0.76->0.75 | 0.69->**0.68** | 0.88->0.91 | 0.87->**0.82** | 0.96->**0.90** |
+| hybrid MASE (vs SN) | 1.18->1.16 | 0.94->**0.92** | 0.84 | 1.11->1.10 | 1.07->**0.97** | 1.04->**0.98** |
+
+Verdict : l'échantillonnage ÉTAIT une partie du problème — la dilution weather se
+resserre (0.87->0.82), exchange passe sous SN en point (0.98) — et en MASE l'hybride
+bat maintenant le décodeur finetuné sur 4/6 datasets (ettm1, ettm2, etth1, etth2) :
+LE VÉRIFICATEUR AMÉLIORE LE POINT FORECAST DU GÉNÉRATIF sur la majorité du banc.
+Mais le décodeur garde weather/exchange en WQL (0.76/0.77 vs 0.82/0.90) : le résidu
+n'est plus l'échantillonnage, c'est le CONTRASTE du juge — softmax non calibré, les
+bons chemins ne dominent pas assez le pool. La calibration de T en contexte est
+confirmée comme dernier levier v3, et comme prérequis (a) de G12.
+
+---
+
 ## 3. Ce qui est établi
 
 Affirmations soutenues par une mesure, avec le pointeur vers l'expérience.
@@ -1340,6 +1550,17 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-21 (soir)** — ajout de **E18b**, la sonde d'énergie : le latent du pretrain
+  classe le vrai futur au rang 0.245 (hasard 0.50) parmi 34 candidats bootstrap, ρ(E,MAE)
+  0.5-0.74 partout, solar compris — la lecture « proposer-juger-pondérer » est légitimée.
+  Et le full finetune DÉTRUIT cet alignement (0.409, ρ erratique, sz_taxi sous le hasard) :
+  premier coût mesuré du drift. `scripts/probe_energy.py`, CPU, pendant que mix pré-entraîne.
+- **2026-08-21** — ajout de **E18** : le point corpus-complet. Corpus ×6 ⇒ CRPS 0.677 → 0.6664
+  (−1,6 %), MASE 0.979 → 0.9685 — réel et modeste, le levier données seul s'aplatit. La trace
+  par checkpoint (8 évals GIFT du même finetune) montre tout le progrès sous LR ~3e-4 → plafond
+  3e-4 acté pour mix/xres. Décomposition per-config : l'écart vit dans 16 configs sub-horaires
+  (geomean 0.853 sans elles), pas dans l'objectif — prédiction falsifiable posée pour E19.
+  G7.3b tranché : base mix/xres = lotsa_full.
 - **2026-08-19 (run tiny-full, à ~40 % de l'époque)** — Observation à retenir pour la lecture
   de TOUTES les val_loss de pretrain JEPA : hausse soutenue de la val_loss (0,503 → 0,552 sur
   4 points consécutifs, ~135k → 270k steps) avec cosine en baisse, ALORS QUE la mémorisation

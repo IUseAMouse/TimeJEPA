@@ -790,16 +790,16 @@ deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE vari
       `make train CONFIG=lotsa_tiny_full ARGS="wandb.run_name=tiny-full"`
       ⚠️ Sélection : prendre le DERNIER checkpoint, pas le meilleur val_loss — avec un recuit
       correct sur max_epochs=2 le dernier est le légitime (E12/E13).
-- [ ] **G7.3** Finetune zero-shot + evals :
-      `python scripts/train.py --config-name lotsa_tiny_full_zeroshot \`
-      `    +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_full/pretrain_True/<ckpt>`
-      puis `evaluate.py`/`evaluate_gift.py --config-name lotsa_tiny_eval` sur
-      `checkpoints/timejepa_lotsa_tiny_full_zs/pretrain_False/<ckpt>`
-- [ ] **G7.3b** POINT DE CONTRÔLE avant de payer le run mini : comparer les deux evals de
-      G7.3 à E14 (Nixtla) et E16 (GIFT, ratio global vs 0.979). Regarder spécifiquement
-      `bizitobs/10S` et `solar/10T` — la prédiction écrite ici AVANT le run est que le corpus
-      complet les corrige comme LOTSA a corrigé ETTm1. Si tiny-full ne bouge pas, comprendre
-      pourquoi avant de lancer G7.4.
+- [x] **G7.3** Finetune zero-shot + evals — FAIT (2026-08-21), GIFT évalué à chaque
+      checkpoint de validation (8 points) : final recuit **0.9685 / 0.6664**. Voir E18.
+- [x] **G7.3b** POINT DE CONTRÔLE tranché (2026-08-21) — voir E18. Corpus ×6 ⇒ CRPS
+      0.677 → 0.6664 (−1,6 %), MASE 0.979 → 0.9685 : réel, modeste, le levier données seul
+      s'aplatit. **La prédiction écrite ici était FAUSSE** : le corpus complet n'a PAS
+      corrigé `bizitobs/10S` (×1.65-3.6 vs SN) ni `solar/10T` (×2.1-2.4) — contrairement à
+      ETTm1/E14, ces fréquences sont absentes de LOTSA lui-même, il n'y avait rien de plus à
+      apprendre en l'agrandissant (E17 l'avait déjà mesuré, la queue per-config d'E18 le
+      confirme). C'est le boulot du synthétique (mix, E19). DÉCISION : base des runs
+      mix/xres = `lotsa_full` ; G7.4 (mini) attend la recette gagnante d'E19.
 - [ ] **G7.4** Mini sur corpus complet — avec une PRÉDICTION ÉCRITE AVANT LE RUN (2026-08-19,
       hypothèse utilisateur pendant tiny-full : « on touche la limite de capacité du tiny sur
       un corpus si gros/complexe ») :
@@ -842,7 +842,10 @@ E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08
       donc aussi le carburant de G9.2. Génération : ~10 min pour 75 k morceaux (0,44 Md obs).
       Sortie dans data/processed/synthetic/, format identique aux corpus convertis.
       - [x] P2.5b Ratio réel/synthétique DÉCIDÉ (2026-08-21) : ~8-9 % du batch — 3 familles
-        ×100k morceaux 8192 (--chunks-per-family 100000) sous le sampler à température.
+        ×20k morceaux 8192 (--chunks-per-family 20000) sous le sampler à température.
+        MESURÉ avant le run mix : 100k/famille (ma première consigne) donnaient 19,3 % de
+        batch, le double de la cible — corrigé par troncature à 20k (~9,5 % mesuré), les
+        morceaux étant i.i.d. Leçon : l'audit d'équilibre tranche, l'estimation non.
         Appuis : ablation Chronos (~10 % de KernelSynth optimal, au-delà le modèle apprend la
         signature du générateur) ; manifold synthétique étroit (3 familles de compositions
         RFF) vs 65 fichiers réels. Mélange par symlink dans lotsa_xres/, audit d'équilibre
@@ -865,7 +868,8 @@ E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08
             n'en résorbera qu'une partie ;
           * demande intermittente à valeurs entières (car_parts, seul dataset perdu contre SN
             en CRPS, ~1.06) : comptes avec beaucoup de zéros exacts.
-        Budget : chaque famille ×100k ≈ 2-3 % de batch ; option à coût nul = réduire
+        Budget : chaque famille ×20k ≈ 3 % de batch (mesuré 2026-08-21, poids taille**0.5 :
+        100k/famille = 6,4 % chacune, trop) ; option à coût nul = réduire
         synthetic_broadband (la famille sans trou mesuré derrière) pour financer une famille
         ciblée à part synthétique constante ~9 %, plutôt que monter vers 12-14 %.
 - [ ] **G8.3** Contexte 2048 (contre 1024) — à évaluer coût attention vs gain.
@@ -1124,6 +1128,30 @@ fréquences — passent de 8,4 % à ~19 % du batch.
 
 ⚠️ Ne PAS toucher au sampler avant la fin de G7 : les runs E14/E16 ont tourné avec le sampler
 actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
+
+### G12 — TimeJEPA-VÉRIFICATEUR (candidat stratégique, idée utilisateur 2026-08-21)
+
+Recadrage issu de la série E18b-e : la fonction d'énergie du pretrain n'est pas en
+concurrence avec les modèles génératifs — c'est un HARNAIS à poser dessus. Le produit
+« vérificateur » = le checkpoint de PRETRAIN tel quel (~1M params, zéro entraînement
+aval) : un proposeur quelconque (notre décodeur, ou un foundation model externe —
+cible idéale : proposeur à diversité native type FlowState avec bruit injecté dans le
+SSM) génère N trajectoires, l'énergie TimeJEPA les juge, les quantiles pondérés
+reconstruisent point + intervalles. Asymétrie mesurée qui fonde la piste : générer
+est difficile, vérifier est facile (E18b : rang du vrai 0.235 ; E18e : l'hybride bat
+le décodeur seul sur etth1/etth2). Métrique propre au produit : l'UPLIFT (Δ vs le
+proposeur seul, mêmes fenêtres), pas le CRPS absolu — positionnement papier
+différenciant (personne ne vend un vérificateur de forecasts sur GIFT-Eval).
+Double investissement : chaque amélioration du pretrain (mix, xres, mini) améliore
+AUSSI le juge (mesuré, E18c). Ce que la piste exige à terme : (a) T calibrée en
+contexte (le contraste du juge — dernier levier identifié par E18e-v2) ; (b) un
+proposeur externe dans evaluate_energy.py (--proposer ; Chronos-Bolt small passe sur
+CPU comme test intermédiaire avant FlowState) ; (c) NE PAS finetuner le juge (le
+drift détruit l'alignement, E18b) — l'ancrage λ·invariance n'est nécessaire que pour
+la variante mono-modèle. Nuance gardée au registre : le finetune génératif consomme
+le pretrain comme initialisation (E12/E15 restent vrais) et en détruit la structure
+de juge — les DEUX produits sortent du même pretrain. Backlog : derrière la file
+générative (mix -> xres -> E19 -> h512 -> mini), décision utilisateur maintenue.
 
 ### AUDIT D'ARCHITECTURE du 2026-08-20 (avant les runs mix/xres) — verdicts et correctifs
 

@@ -3,10 +3,14 @@
 # G9.2 — ARM JEPA INTER-RÉSOLUTION : l'équivariance d'échelle par l'OBJECTIF.
 #
 #   # 0. corpus mixte (les morceaux 8192 sont indispensables, voir plus bas)
-#   # ⚠️ audit T1/T4 : régénérer avec un volume x4 — la matière k1>1 de l'arm
-#   # inter-résolution vit dans ces fichiers (part de batch visée ~8-9 %)
+#   # ⚠️ audit T1/T4 : morceaux 8192 obligatoires — la matière k1>1 de l'arm
+#   # inter-résolution vit dans ces fichiers. Part de batch visée ~9 % :
+#   # MESURÉ le 2026-08-21 (poids sampler taille**0.5) : 100k morceaux/famille
+#   # donnaient 19,3 % — 20k/famille donnent ~9,5 %. Mon estimation initiale
+#   # (« x4 => 8-9 % ») était fausse d'un facteur 2 ; c'est l'audit d'équilibre
+#   # qui tranche, jamais l'estimation.
 #   python scripts/generate_synthetic.py --out data/processed/synthetic \
-#       --chunks-per-family 100000
+#       --chunks-per-family 20000
 #   python scripts/prepare_chronos.py --out data/processed/chronos_extras
 #   mkdir -p data/processed/lotsa_xres
 #   # ⚠️ BASE = le corpus GAGNANT du point de contrôle G7.3b : lotsa_full (10 Md)
