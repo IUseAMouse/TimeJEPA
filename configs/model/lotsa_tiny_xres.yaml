@@ -3,10 +3,15 @@
 # G9.2 — ARM JEPA INTER-RÉSOLUTION : l'équivariance d'échelle par l'OBJECTIF.
 #
 #   # 0. corpus mixte (les morceaux 8192 sont indispensables, voir plus bas)
-#   python scripts/generate_synthetic.py --out data/processed/synthetic
+#   # ⚠️ audit T1/T4 : régénérer avec un volume x4 — la matière k1>1 de l'arm
+#   # inter-résolution vit dans ces fichiers (part de batch visée ~8-9 %)
+#   python scripts/generate_synthetic.py --out data/processed/synthetic \
+#       --chunks-per-family 100000
 #   python scripts/prepare_chronos.py --out data/processed/chronos_extras
 #   mkdir -p data/processed/lotsa_xres
-#   ln -s $(pwd)/data/processed/lotsa/*.npy data/processed/lotsa_xres/
+#   # ⚠️ BASE = le corpus GAGNANT du point de contrôle G7.3b : lotsa_full (10 Md)
+#   # si tiny-full a battu tiny-plafonné, sinon lotsa. Exemple avec lotsa_full :
+#   ln -s $(pwd)/data/processed/lotsa_full/*.npy data/processed/lotsa_xres/
 #   ln -s $(pwd)/data/processed/synthetic/*.npy data/processed/lotsa_xres/
 #   ln -s $(pwd)/data/processed/chronos_extras/*.npy data/processed/lotsa_xres/
 #
@@ -40,7 +45,10 @@
 # diffèrent réellement — exiger le même latent détruirait de l'information.
 # D'où le conditionnement w plutôt qu'une contrainte d'égalité.
 #
-# Les deux écarts délibérés à lotsa_tiny (dits, pas cachés)
+# Audit 2026-08-20 : le contrôle (lotsa_tiny_mix) adopte AUSSI les cibles
+# standalone — xres-vs-mix ne porte donc bien qu'UNE variable, l'objectif.
+#
+# Les écarts délibérés à lotsa_tiny (dits, pas cachés)
 # ---------------------------------------------------------
 # 1. contextualized_targets: false — OBLIGATOIRE : la cible contextualisée
 #    concatène [contexte‖cible] en pas d'échantillon, physiquement faux quand
@@ -63,9 +71,32 @@ model:
   # Une seule clé pilote modèle (FiLM), module (lecture de w) et datamodule
   # (paires k1/k2) — câblée ainsi dans train.py pour qu'ils ne divergent pas.
   cross_resolution: true
+  # G8.4 — MÊME scaler que le contrôle (lotsa_tiny_mix), sinon xres-vs-mix
+  # comparerait deux variables. Décision de bundling du 2026-08-20.
+  robust_scale: true
 
 training:
+  # Plafond LR 3e-4 (décision utilisateur 2026-08-21, hérité : 7.5e-4 de
+  # tiny.yaml). Deux appuis : (a) mécanistique — à LR élevé l'encodeur online
+  # distance le teacher EMA et les cibles latentes dérivent en permanence, on
+  # paie l'objectif difficile deux fois ; (b) le pretrain tiny-full a montré
+  # une contraction tardive du rang effectif (47 -> 37 sur le dernier quart), à
+  # surveiller ici. Pas d'ablation (1 j/run) : partagé par mix ET xres, donc
+  # leur duel reste propre ; item de bundle de plus vs tiny-full (E18+).
+  optimizer:
+    learning_rate: 3.0e-4
   contextualized_targets: false
+  # 2 époques (décision utilisateur 2026-08-21), aligné sur le contrôle mix —
+  # budget-plafond, coupé à la main si la seconde époque n'apporte rien. Même
+  # avertissement que mix : le cosinus vise 2 époques, un arrêt à l'époque 1
+  # laisse le LR à ~50 % du max (non recuit).
+  max_epochs: 2
+
+trainer:
+  val_check_interval: 0.05
+
+early_stopping:
+  enabled: false
 
 data:
   # Réactivés pour cet arm (coupés dans lotsa_tiny au motif — invalidé par

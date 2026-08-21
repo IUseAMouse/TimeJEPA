@@ -52,6 +52,12 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         # G9.2 — construit le FiLM de conditionnement d'échelle. Absent de
         # toutes les configs existantes => False => state_dict inchangé.
         cross_resolution=bool(cfg.model.get('cross_resolution', False)),
+        # G8.4 — compression robuste arcsinh. Le marqueur robust_scaler.is_robust
+        # rend les checkpoints auto-descriptifs : un mismatch flag/checkpoint
+        # tombe dans le refus P3.2 ci-dessous au lieu de produire des chiffres
+        # silencieusement faux (le flag ne porte AUCUN poids, seul le marqueur
+        # le trahit).
+        robust_scale=bool(cfg.model.get('robust_scale', False)),
     )
 
     # Add forecasting decoder
@@ -168,9 +174,12 @@ def load_checkpoint(
     # checkpoint's. `dropped` covers shape mismatches, `critical_missing`
     # covers absent keys; both paths must be guarded or the table-growth case
     # slips through as a warn.
-    core = ('online_encoder.', 'predictor.', 'patching.')
+    core = ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')
     core_bad = ([k for k, _, _ in dropped if k.startswith(core)]
-                + [k for k in critical_missing if k.startswith(core)])
+                + [k for k in critical_missing if k.startswith(core)]
+                # symétrie : un checkpoint arcsinh chargé dans un modèle nu
+                # arrive en 'unexpected', pas en 'missing' — refuser aussi.
+                + [k for k in unexpected if k.startswith('robust_scaler.')])
     if core_bad and not allow_partial:
         raise RuntimeError(
             f"Checkpoint/model mismatch on core components: {core_bad[:6]}"

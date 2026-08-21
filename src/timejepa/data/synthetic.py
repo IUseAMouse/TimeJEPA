@@ -193,9 +193,15 @@ DEFAULT_FAMILIES = (
     # Tout-venant KernelSynth : périodes larges, le fond de diversité.
     SyntheticSpec("synthetic_broadband", chunk_length=8192,
                   period_range=(4.0, 2048.0)),
-    # Basse fréquence : périodes 4-52 sur des morceaux COURTS — la forme des
-    # séries annuelles/trimestrielles/mensuelles (G7.1). Longueur 1280 tout
-    # juste : utilisable par la géométrie actuelle, rien de gaspillé.
-    SyntheticSpec("synthetic_lowfreq", chunk_length=1280,
+    # Basse fréquence : périodes 4-52 — la FORME des séries annuelles/
+    # trimestrielles/mensuelles (G7.1). Audit 2026-08-20 (T4) : la version à
+    # morceaux 1280 était décorative — 1 fenêtre par morceau, donc 25 k
+    # fenêtres, plafond d'oversampling 3x épuisé à ~2 % de l'époque (au LR
+    # maximal, rien de retenu), et inéligible à toute paire k1>1. À 8192 :
+    # 865 fenêtres/morceau, poids sampler comparable aux autres familles, et
+    # la famille participe à l'apprentissage inter-résolution. Les cycles
+    # restent courts (4-52 pas) : c'est la période qui fait la « basse
+    # fréquence », pas la longueur du morceau.
+    SyntheticSpec("synthetic_lowfreq", chunk_length=8192,
                   period_range=(4.0, 52.0), p_trend=0.8),
 )

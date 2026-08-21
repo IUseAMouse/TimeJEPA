@@ -95,23 +95,30 @@ def test_subhourly_family_puts_energy_in_short_periods():
     assert in_band >= 24, f"seulement {in_band}/40 tirages dans la bande sub-horaire"
 
 
-def test_lowfreq_family_has_short_chunks_and_long_cycles():
-    """La famille séries-courtes doit tenir dans la géométrie minimale (1280)."""
+def test_lowfreq_family_has_long_chunks_and_short_cycles():
+    """
+    Audit 2026-08-20 (T4) : à 1280, la famille donnait 1 fenêtre/morceau et
+    s'épuisait à ~2 % de l'époque. À 8192 elle pèse comme les autres ET devient
+    éligible aux paires k1>1. Ce sont les PÉRIODES courtes (4-52) qui portent la
+    « basse fréquence », pas la longueur du morceau.
+    """
     spec = next(f for f in DEFAULT_FAMILIES if f.name == "synthetic_lowfreq")
-    assert spec.chunk_length == 1280, "1280 = fenêtre minimale ctx+pred, rien de gaspillé"
+    assert spec.chunk_length == 8192
+    assert spec.period_range == (4.0, 52.0)
     rng = np.random.default_rng(4)
     x = sample_series(spec, rng)
-    assert len(x) == 1280
+    assert len(x) == 8192
 
 
 def test_long_chunks_unlock_decimation_factors():
     """
     Le point de la longueur 8192 (G9) : la décimation exige 1280·f <= L.
     À 2048 (morceaux réels), aucun f>=2 n'est possible ; à 8192, f jusqu'à 6.
+    Depuis l'audit T4, les TROIS familles sont à 8192 — toutes éligibles.
     """
     for spec in DEFAULT_FAMILIES:
-        if spec.chunk_length == 8192:
-            eligible = [f for f in (1, 2, 3, 4, 6) if 1280 * f <= spec.chunk_length]
-            assert eligible == [1, 2, 3, 4, 6]
+        assert spec.chunk_length == 8192, f"{spec.name} devrait être à 8192 (T4)"
+        eligible = [f for f in (1, 2, 3, 4, 6) if 1280 * f <= spec.chunk_length]
+        assert eligible == [1, 2, 3, 4, 6]
     assert [f for f in (1, 2, 3, 4, 6) if 1280 * f <= 2048] == [1], \
         "si ceci casse, la contrainte de géométrie a changé — mettre à jour G9"

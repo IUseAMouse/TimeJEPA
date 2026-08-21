@@ -350,10 +350,16 @@ class JEPAPretrainModule(pl.LightningModule):
         w = batch.get('w') if self.cross_resolution else None
         if w is not None:
             w = w.float()
-            # LA ligne à surveiller sur l'arm xres : si w_neq1_frac reste à 0,
-            # l'arm est stérile (aucune paire (k1,k2) éligible dans le corpus)
-            # et son pretrain ne mesure rien.
+            # Témoins de l'arm xres — l'audit du 2026-08-20 (T1) a montré que
+            # w_neq1_frac SEUL rassure à tort : il est dominé par les paires
+            # k1=1<k2 (éligibles sur tous les morceaux 2048), alors que k1>1
+            # exige des morceaux 8192 et que w<1 (k1>k2) n'existe QUE là. En
+            # mode cross_resolution, `aug/multires_frac` (plus haut) = fraction
+            # k1>1 ; `w_lt1_frac` est la moitié de la distribution que le FiLM
+            # ne verrait jamais sans les morceaux longs.
             self.log('aug/w_neq1_frac', (w != 1).float().mean(),
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+            self.log('aug/w_lt1_frac', (w < 1).float().mean(),
                      on_step=False, on_epoch=True, logger=True, sync_dist=True)
             self.log('aug/w_mean', w.mean(),
                      on_step=False, on_epoch=True, logger=True, sync_dist=True)
@@ -368,6 +374,21 @@ class JEPAPretrainModule(pl.LightningModule):
 
         # Compute JEPA loss
         loss, components = self._compute_loss(predictions, targets, outputs)
+
+        # Audit 2026-08-20 (C4) — LE témoin de convergence de l'arm xres : la
+        # loss par item, conditionnée sur w. Si `wneq1` stagne pendant que `w1`
+        # descend, les items inter-résolution ne convergent pas et l'arm échoue
+        # de manière DIAGNOSTIQUÉE (au lieu de dégrader la moyenne en silence).
+        # Coût : une MSE élément-par-élément sans réduction, négligeable.
+        if w is not None and bool((w != 1).any()):
+            with torch.no_grad():
+                per_item = (predictions - targets).pow(2).mean(dim=(1, 2))
+                mask = (w != 1)
+                self.log('train_loss/wneq1', per_item[mask].mean(),
+                         on_step=False, on_epoch=True, logger=True, sync_dist=True)
+                if bool((~mask).any()):
+                    self.log('train_loss/w1', per_item[~mask].mean(),
+                             on_step=False, on_epoch=True, logger=True, sync_dist=True)
 
         # Logging
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)

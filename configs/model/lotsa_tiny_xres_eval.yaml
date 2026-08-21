@@ -1,0 +1,11 @@
+# @package _global_
+# Éval des checkpoints xres : porte cross_resolution (le FiLM est un POIDS du
+# prédicteur — sans le flag, la construction du modèle n'aurait pas la clé et
+# loading.py refuserait) ET robust_scale (marqueur, cf. lotsa_tiny_mix_eval).
+defaults:
+  - lotsa_tiny_eval
+  - _self_
+
+model:
+  cross_resolution: true
+  robust_scale: true

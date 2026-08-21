@@ -1,0 +1,11 @@
+# @package _global_
+# Éval des checkpoints mix/arcsinh. ⚠️ robust_scale DOIT être porté par la
+# config d'éval : le flag ne pèse aucun poids, seul le marqueur du checkpoint
+# le trahit — sans lui, loading.py refuse (P3.2) au lieu de sortir des
+# chiffres silencieusement faux, mais c'est CETTE config qui rend l'éval juste.
+defaults:
+  - lotsa_tiny_eval
+  - _self_
+
+model:
+  robust_scale: true

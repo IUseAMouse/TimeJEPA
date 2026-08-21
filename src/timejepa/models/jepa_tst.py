@@ -18,6 +18,7 @@ from .encoders.bare_encoder import BareTransformerEncoder
 from .encoders.target_encoder import TargetEncoder
 from .predictors.transformer_predictor import TransformerPredictor, MLPPredictor
 from .decoders.linear_decoder import ForecastingHead
+from .components.robust_scale import RobustScale
 
 import logging
 
@@ -170,6 +171,11 @@ class JEPATST(nn.Module):
         # False, aucun paramètre supplémentaire n'existe et le state_dict des
         # configs existantes est inchangé au bit près.
         cross_resolution: bool = False,
+
+        # G8.4 — mise à l'échelle robuste arcsinh COMPOSÉE autour de RevIN
+        # (voir components/robust_scale.py). Opt-in strict : à False, aucun
+        # attribut, aucun chemin de calcul, state_dict inchangé.
+        robust_scale: bool = False,
         affine: bool = True,
         subtract_last: bool = False,
     ):
@@ -182,6 +188,7 @@ class JEPATST(nn.Module):
         self.stride = stride
         self.d_model = d_model
         self.use_revin = use_revin
+        self.robust_scaler = RobustScale() if robust_scale else None
         
         # Calculate number of patches for context and target
         self.num_patches = (input_length - patch_size) // stride + 1
@@ -306,6 +313,12 @@ class JEPATST(nn.Module):
                 - 'targets': Target encoder representations [B, num_target_patches, d_model]
                 - 'context_embeddings': Context embeddings [B, num_context_patches, d_model]
         """
+        # 0. G8.4 — compression robuste, stats du CONTEXTE, avant RevIN.
+        if self.robust_scaler is not None:
+            self.robust_scaler.fit(context)
+            context = self.robust_scaler.transform(context)
+            target = self.robust_scaler.transform(target)
+
         # 1. RevIN normalization
         # IMPORTANT: Normalize target with SAME statistics as context
         if self.revin is not None:
@@ -333,8 +346,9 @@ class JEPATST(nn.Module):
                 # target positions, rather than encoding the future window in
                 # isolation.
                 #
-                # Encoding it alone means the target encoder sees ~11 patches
-                # while the online encoder sees ~47 — a distribution shift
+                # Encoding it alone means the target encoder sees far fewer
+                # patches than the online encoder (31 vs 127 at the current
+                # geometry ctx=1024/pred=256/patch=16/stride=8) — a distribution shift
                 # between two networks that are supposed to be an EMA pair. It
                 # also makes targets nearly context-free (a 96-step window in
                 # isolation is little more than local statistics), which is a
@@ -387,6 +401,13 @@ class JEPATST(nn.Module):
         Returns:
             Dictionary with 'forecast' and 'forecast_denorm'
         """
+        # 0. G8.4 — compression robuste. Même sémantique que RevIN :
+        # skip_revin=True signifie « appel interne de forecast(), le contexte
+        # est déjà dans le repère transformé » — ne rien refaire.
+        if self.robust_scaler is not None and not skip_revin:
+            self.robust_scaler.fit(context)
+            context = self.robust_scaler.transform(context)
+
         # 1. RevIN normalization
         if skip_revin:
             context_norm = context
@@ -405,7 +426,16 @@ class JEPATST(nn.Module):
         # 4. Predict future representations
         predictions = self.predictor.forward_simple(
             context_embeddings=context_embeddings,
-            num_targets=self.num_target_patches
+            num_targets=self.num_target_patches,
+            # Audit 2026-08-20 (T2) : après pretrain xres, le biais du FiLM est
+            # ENTRAÎNÉ — le comportement appris « à w=1 » l'inclut. Ne pas
+            # appliquer le FiLM au finetune/éval n'est donc PAS l'identité :
+            # c'est un modèle différent de celui qui a été pré-entraîné. On
+            # applique explicitement w=1 quand le FiLM existe ; sans FiLM
+            # (toutes les configs non-xres), w=None et rien ne change.
+            w=(torch.ones(context_embeddings.shape[0],
+                          device=context_embeddings.device)
+               if hasattr(self.predictor, 'w_film') else None),
         )
         # [B, num_target_patches, d_model]
         
@@ -424,6 +454,13 @@ class JEPATST(nn.Module):
         )
         # Point decoders: [B, prediction_length, C]
         # Quantile head:  [B, prediction_length, Q], sorted along Q
+
+        # G8.4 — retour à l'espace brut pour les sorties dénormalisées. sinh est
+        # monotone : sur un fan de quantiles l'ordre des niveaux est préservé,
+        # et median(inverse(q)) == inverse(median(q)) — le médian extrait plus
+        # bas reste donc cohérent.
+        if self.robust_scaler is not None and not skip_revin:
+            forecast_denorm = self.robust_scaler.inverse(forecast_denorm)
 
         result = {
             'forecast': forecast,
@@ -512,6 +549,26 @@ class JEPATST(nn.Module):
             return result
 
         # ---- Case 2: rolling forecast ----
+        # Audit 2026-08-20 (T5) : sur un checkpoint arcsinh, skip_revin=True
+        # (le flag eval_skip_revin d'evaluate.py) court-circuiterait AUSSI la
+        # compression robuste et sortirait des chiffres silencieusement faux —
+        # le refus P3.2 ne couvre que le state_dict, pas ce flag. Refus bruyant.
+        if self.robust_scaler is not None and skip_revin:
+            raise ValueError(
+                "skip_revin=True est incompatible avec un modèle robust_scale : "
+                "la compression arcsinh serait court-circuitée et les chiffres "
+                "seraient silencieusement faux (eval_skip_revin est un mode "
+                "legacy pré-P0, jamais valide sur un checkpoint arcsinh)."
+            )
+
+        # G8.4 — compression robuste au POINT D'ENTRÉE UNIQUE du rollout :
+        # stats calculées une fois sur le vrai contexte, tout le rollout
+        # (feedback compris) vit dans l'espace compressé, l'inverse ne
+        # s'applique qu'aux sorties *_denorm.
+        if self.robust_scaler is not None and not skip_revin:
+            self.robust_scaler.fit(context)
+            context = self.robust_scaler.transform(context)
+
         use_revin = (not skip_revin) and (self.revin is not None)
 
         if use_revin:
@@ -539,6 +596,9 @@ class JEPATST(nn.Module):
                 else:
                     forecast_denorm = forecast_norm
                     quantiles_denorm = quantiles_norm
+                if self.robust_scaler is not None and not skip_revin:
+                    forecast_denorm = self.robust_scaler.inverse(forecast_denorm)
+                    quantiles_denorm = self.robust_scaler.inverse(quantiles_denorm)
                 return {
                     "forecast": forecast_norm,
                     "forecast_denorm": forecast_denorm,
@@ -608,6 +668,11 @@ class JEPATST(nn.Module):
             else:
                 forecast_denorm = forecast_norm
                 quantiles_denorm = quantiles_norm
+
+            if self.robust_scaler is not None and not skip_revin:
+                forecast_denorm = self.robust_scaler.inverse(forecast_denorm)
+                if quantiles_denorm is not None:
+                    quantiles_denorm = self.robust_scaler.inverse(quantiles_denorm)
         finally:
             if use_revin:
                 self.revin.unfreeze()

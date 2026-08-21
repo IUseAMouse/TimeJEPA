@@ -836,17 +836,61 @@ E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08
       mesurés :
         synthetic_subhourly  périodes 24-150, morceaux 8192  -> trou 10T/15T (E17)
         synthetic_broadband  périodes 4-2048, morceaux 8192  -> fond de diversité
-        synthetic_lowfreq    périodes 4-52,   morceaux 1280  -> séries courtes (G7.1)
+        synthetic_lowfreq    périodes 4-52,   morceaux 8192  -> séries courtes (G7.1)
+                             (1280 à l'origine — décorative, corrigée par l'audit T4)
       Les morceaux 8192 sont la première donnée où la décimation est possible (1280·6 ≤ 8192),
       donc aussi le carburant de G9.2. Génération : ~10 min pour 75 k morceaux (0,44 Md obs).
       Sortie dans data/processed/synthetic/, format identique aux corpus convertis.
-      - [ ] P2.5b Décider le RATIO réel/synthétique et le consigner (Chronos : ~10 % de
-        synthétique). Mélange par symlink des .npy dans le répertoire du corpus, puis audit
-        d'équilibre — jamais de génération dans un corpus en place.
-      - [ ] P2.5c Arm de mesure : tiny 10 Md + synthétique vs tiny-full (G7.3), UNE variable.
+      - [x] P2.5b Ratio réel/synthétique DÉCIDÉ (2026-08-21) : ~8-9 % du batch — 3 familles
+        ×100k morceaux 8192 (--chunks-per-family 100000) sous le sampler à température.
+        Appuis : ablation Chronos (~10 % de KernelSynth optimal, au-delà le modèle apprend la
+        signature du générateur) ; manifold synthétique étroit (3 familles de compositions
+        RFF) vs 65 fichiers réels. Mélange par symlink dans lotsa_xres/, audit d'équilibre
+        ensuite — jamais de génération dans un corpus en place.
+      - [ ] P2.5c Arm de mesure : le run mix (E19) mesure corpus+synthétique+arcsinh en
+        bundle assumé ; l'attribution fine au synthétique seul reste non financée.
+      - [ ] **P2.5d Familles synthétiques ciblées v2 — CONDITIONNÉ au résidu de queue
+        post-E19** (décision utilisateur 2026-08-21). La décomposition per-config de
+        tiny-full (0.75 epoch) montre que le geomean MASE perd ~12 points dans une queue de
+        16 configs (0.973 -> 0.853 sans elles), sub-horaire pour l'essentiel. Le run mix dira
+        ce que la famille générique 24-150 comprime déjà ; ce qui SURVIT définit le cahier
+        des charges v2. Candidates déjà lisibles, par morphologie manquante (pas par
+        fréquence) :
+          * diurne écrêté gonflé de zéros (solar 10T, x2.1-2.4) : sinusoïde journalière ×
+            porte jour/nuit, longs plateaux à exactement zéro — non-linéarité de clipping
+            qu'aucune composition GP additive ne produit ;
+          * rafales intermittentes type trafic serveur (bizitobs 10S, x1.6-3.6) : base calme
+            + bursts Poisson marqués, retombées exponentielles, queues lourdes — noter que
+            bizitobs est AUSSI un gap de domaine (x2.04 même en horaire, E17), le synthétique
+            n'en résorbera qu'une partie ;
+          * demande intermittente à valeurs entières (car_parts, seul dataset perdu contre SN
+            en CRPS, ~1.06) : comptes avec beaucoup de zéros exacts.
+        Budget : chaque famille ×100k ≈ 2-3 % de batch ; option à coût nul = réduire
+        synthetic_broadband (la famille sans trou mesuré derrière) pour financer une famille
+        ciblée à part synthétique constante ~9 %, plutôt que monter vers 12-14 %.
 - [ ] **G8.3** Contexte 2048 (contre 1024) — à évaluer coût attention vs gain.
-- [ ] **G8.4** Scaler robuste (arcsinh) en alternative à RevIN, dont le plancher epsilon est une
-      pathologie mesurée (G6).
+- [ ] **G8.4** Scaler robuste — décision de conception (2026-08-20) : **COMPOSER, pas
+      remplacer**. `x' = arcsinh((x − médiane) / MAD)` en entrée, `sinh` inverse en sortie,
+      RevIN et tout son contrat de dénormalisation (freeze/to_input_frame/
+      denormalize_target_space, cicatrices B2/B3/B10) inchangés au milieu.
+      Pourquoi ça devrait payer, mesuré : (1) le plancher epsilon de G6 (cibles à 10³ σ sur
+      contexte constant) ; (2) nos pires configs sont TOUTES à queues lourdes — bitbrains_rnd
+      MASE 3,6-6,0, car_parts CRPS > 1 (pire que SN), bizitobs — le z-score par instance y est
+      écrasé par les spikes ; (3) recoupe la moitié « domaine » d'E17 (bizitobs ×2,4 même à
+      l'heure) qu'aucun autre levier de la file n'adresse ; (4) précédent Toto : le modèle né
+      du cloudops Datadog a choisi arcsinh.
+      Propriété clé : arcsinh est monotone → les QUANTILES sont équivariants, la tête
+      probabiliste et l'éval survivent sans modification (l'inverse pointwise redonne des
+      quantiles valides ; la médiane survit, on n'utilise pas la moyenne). Les stats robustes
+      (médiane/MAD) règlent aussi le plancher epsilon au passage.
+      **LIVRÉ (2026-08-20) et FUSIONNÉ dans le run contrôle mixte** (décision utilisateur :
+      pas digne d'un run dédié, compute limité). Le contrôle (lotsa_tiny_mix) bundle donc
+      corpus mixte + arcsinh ; xres porte le MÊME scaler pour que xres-vs-mix reste à une
+      variable (l'objectif). Implémentation : components/robust_scale.py, flag
+      model.robust_scale, marqueur d'auto-description dans le checkpoint (mismatch → refus
+      P3.2 dans les DEUX sens), cible du finetune compressée avant RevIN, quantiles
+      équivariants vérifiés. 9 tests. Configs : lotsa_tiny_mix{,_zeroshot,_eval},
+      lotsa_tiny_xres{,_zeroshot,_eval} (xres porte aussi le régime passe-unique).
 
 ### G8.5 — Volume effectif : sources et multiplicateurs (réflexion du 2026-08-19)
 
@@ -888,6 +932,45 @@ classe de paramètres — hiérarchie ci-dessous dans cet ordre. Un run d'ablati
 **Critère d'entrée d'un nouveau corpus :** vérifié contre les TROIS suites d'éval (comme
 G8.1), converti en morceaux 8192 quand les séries le permettent (décimation + r'/r), audit
 d'équilibre après mélange, et UN run d'ablation dédié.
+
+### G8.6 — « ETSJEPA » : décomposition signal/résidu EN LATENT (direction post-h512)
+
+Idée de l'utilisateur (antérieure à l'analyse TTM-R3, qui a convergé dessus de l'extérieur) :
+ne pas seulement décomposer l'ENTRÉE comme TTM-R3, mais apprendre DEUX cibles latentes —
+un latent de signal (structure extrapolable) et un latent de résidu (l'irréductible, porteur
+du probabiliste). Nom de travail : ETSJEPA (écho à Error/Trend/Seasonality).
+
+Pourquoi c'est plus que l'emprunt TTM : la thèse du projet dit que l'objectif latent IGNORE le
+bruit — une voie résidu dédiée cesse de le subir et le MODÉLISE, pendant que la voie signal
+extrapole débruité. Les deux moitiés de la thèse d'origine (« abstraire le signal » +
+« extrapoler sans le bruit ») deviennent deux têtes explicites au lieu d'un espoir implicite.
+Généalogie utile : l'utilisateur avait envisagé un MoE au tout début (abandonné — load
+balancing trop complexe à faire converger en solo) ; la décomposition signal/résidu en est la
+version structurée à 2 experts FIXES, sans routeur à équilibrer.
+
+Esquisse (à affiner le moment venu) : décomposition de la fenêtre (moyenne mobile ou trend
+patch-64 façon TTM) AVANT encodage ; deux encodeurs (ou un encodeur, deux têtes de patch) ;
+deux prédicteurs latents ; SIGReg sur chaque voie ; décodeur quantile alimenté par la concat.
+Comparaison propre : contre le gagnant du round en cours, une variable (la décomposition).
+
+**Ordonnancement : APRÈS tous les runs de la file menant à h512** (décision utilisateur,
+2026-08-20). Prérequis de lecture : les verdicts E18-E20 (corpus/équivariance/horizon) pour
+savoir sur quelle recette la greffer.
+
+#### Référence — la recette TTM-R3 dont l'analyse a convergé sur cette idée
+
+Le seul ingrédient de la recette TTM-R3 (0.520 CRPS à 1.4M params) absent de notre file. Leur
+saut R2→R3 (0.873 → 0.520, même famille d'architecture) est venu de la RECETTE, dont ceci est
+la pièce maîtresse : deux voies à patchs séparés — tendance (patch 64) et résidus (patch 9) —
+avec décodeurs séparés et pré-entraînement séquentiel (tendance, puis résidus, puis joint).
+Transposition TimeJEPA possible : deux encodeurs de patch (64/8 et 8/4) sur la même fenêtre,
+concat des embeddings, ou deux têtes de décodeur sommées. Analyse de compatibilité JEPA à
+faire : la cible latente d'une voie « résidus » est précisément ce que l'objectif actuel tend
+à ignorer (c'est sa thèse) — la décomposition pourrait donc être COMPLÉMENTAIRE (la voie
+tendance extrapole en latent débruité, la voie résidus porte le probabiliste). À chiffrer
+après le round mix/xres/h512/mini.
+Rappel des faits mesurés qui cadrent ce candidat : E15 — l'objectif seul ne sépare pas les
+modèles ; R2→R3 — la recette, si.
 
 ### G9 — Équivariance d'échelle : la justification architecturale de JEPA
 
@@ -976,8 +1059,22 @@ standalone imposées (garde ValueError contre contextualized_targets). Une seule
 `aug/w_mean` — la dernière est LE témoin de stérilité de l'arm.
 - [ ] **RUN contrôle** : `lotsa_tiny` sur le corpus mixte lotsa_xres (override CLI data_dir)
 - [ ] **RUN xres** : `lotsa_tiny_xres` → zeroshot → évals. Une variable vs le contrôle.
-- [ ] ⚠️ Ordre des runs GPU : h512 d'abord (finetune seul, le moins cher), puis
-      chronos/contrôle/xres — voir l'en-tête de lotsa_tiny_xres.yaml pour les commandes.
+- [ ] ⚠️ ORDRE DES RUNS RÉVISÉ (utilisateur, 2026-08-20 — compute limité, couverture d'abord) :
+      1. **Run A « contrôle mixte »** : `lotsa_tiny` sur corpus mixte = BASE + synthétique +
+         chronos_extras, en UN seul run (chronos ~0,5 % du corpus : le séparer n'aurait rien
+         mesuré). Sert à la fois de mesure « ajouts de corpus » vs baseline ET de contrôle
+         pour xres. ⚠️ BASE à trancher au point de contrôle G7.3b : si tiny-full bat
+         tiny-plafonné, les symlinks du mixte se construisent sur lotsa_full (10 Md), sinon
+         sur lotsa. Reconstruire data/processed/lotsa_xres en conséquence + audit d'équilibre.
+      2. **Run B « xres »** : `lotsa_tiny_xres`, même corpus mixte. Une variable vs A :
+         l'objectif inter-résolution.
+      3. **Run C « h512 »** : EN DERNIER, délibérément — le finetune 512 ne change pas le
+         pretrain, donc il se fait sur le GAGNANT de A/B (chemin du checkpoint en CLI) et
+         bénéficie de toute la couverture accumulée. Comparaison propre : gagnant@512 vs
+         gagnant@256, une variable (l'horizon). `grow_future_query_table` s'applique tel quel
+         à un checkpoint xres (le w_film est indépendant de l'horizon).
+         ⚠️ Le finetune h512 doit tourner sur le MÊME corpus que le pretrain gagnant :
+         override `data.data_dir=data/processed/lotsa_xres` si le gagnant est A ou B.
 
 **Critère de sortie G9 :** un écart 10T/15T ramené au niveau du 5T, et une réponse chiffrée à
 « l'objectif latent permet-il une équivariance que la reconstruction ne permet pas ».
@@ -1027,6 +1124,44 @@ fréquences — passent de 8,4 % à ~19 % du batch.
 
 ⚠️ Ne PAS toucher au sampler avant la fin de G7 : les runs E14/E16 ont tourné avec le sampler
 actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
+
+### AUDIT D'ARCHITECTURE du 2026-08-20 (avant les runs mix/xres) — verdicts et correctifs
+
+Vérificateur à œil neuf sur les interactions arcsinh × xres × synthétique. Cinq trouvailles,
+toutes corrigées AVANT le lancement des runs :
+- **T1** (piège) : k1>1 n'était éligible que sur les morceaux 8192 (~4 % du batch) → le
+  conditionnement côté contexte se serait appris sur ~0,7 % des items, w<1 quasi jamais vu,
+  et `aug/w_neq1_frac` (~0,20, dominé par les paires k2>1) aurait rassuré à tort.
+- **T2** (piège) : `forward_finetune` n'appliquait jamais le FiLM — or son biais (le
+  comportement à w=1) est ENTRAÎNÉ au pretrain : le finetune jetait une partie du modèle.
+  Corrigé : FiLM appliqué à w=1 quand il existe.
+- **T3** : xres vs mix portait DEUX variables (objectif + cibles standalone). Corrigé : mix
+  adopte aussi contextualized_targets=false ; le duel redevient l'objectif seul.
+- **T4** (surprise) : synthetic_lowfreq à 1280 = 1 fenêtre/morceau, plafond 3x épuisé à ~2 %
+  de l'époque, jamais éligible à w≠1 — décorative. Corrigé : 8192 (périodes 4-52 inchangées),
+  régénération avec --chunks-per-family 100000 (~8-9 % de batch synthétique, k1>1 ×5).
+- **T5** (mineurs) : random_scale exactement inerte sous arcsinh (médiane/MAD 1-homogènes,
+  documenté, aucune action) ; garde ValueError sur robust_scale × skip_revin (footgun
+  eval_skip_revin) ; commentaire 47-patchs mis à jour (127/31).
+Observabilité ajoutée : `aug/w_lt1_frac` et `train_loss/w1` vs `train_loss/wneq1` — le témoin
+de convergence de l'arm (si wneq1 stagne quand w1 descend, échec diagnostiqué, pas silencieux).
+Réponses aux questions d'audit : convergence xres = risque modéré et désormais observable ;
+JEPA exploité par r'/r à l'entraînement (seul objectif qui le PEUT), à l'inférence prototype
+« re-échelonné » réservé post-E19 ; synthétique ~4 % → ~8-9 % du batch après régénération.
+⚠️ AVANT les runs mix/xres : régénérer le synthétique (commande dans l'en-tête xres) et
+reconstruire les symlinks lotsa_xres.
+
+### G11 — Self-ensemble des arms (candidat, 2026-08-20)
+
+Constat leaderboard : 11 du top 12 CRPS sont des couches d'orchestration (agents/ensembles) au-
+dessus de modèles de base ; la « prime » vaut ~10-12 % de CRPS. La version compatible avec la
+ligne du projet — et quasi gratuite à notre taille : moyenner les FANS DE QUANTILES de
+plusieurs checkpoints tiny (3 graines du meilleur arm, ou l'ensemble {mix, xres, h512}).
+Zéro LLM, zéro routeur : réduction de variance honnête. À 1-5M params, l'inférence de N
+modèles reste dérisoire — un avantage structurel que les modèles à 100M+ ne peuvent pas
+copier à coût nul. Attendu −0,01/−0,02 CRPS ; dans le peloton actuel (0,016 d'écart sur 4
+modèles), ça vaut des places. Implémentation triviale côté harness (moyenne des quantiles
+par config avant l'accumulateur). À chiffrer après le round en cours.
 
 ### P3 — Plan de release : versions successives et critères de publication
 

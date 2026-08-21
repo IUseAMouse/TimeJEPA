@@ -211,6 +211,25 @@ def main(cfg: DictConfig):
     per_config = out_dir / "per_config"
     per_config.mkdir(parents=True, exist_ok=True)
 
+    # Piège de reprise mesuré (2026-08-20) : le répertoire est indexé sur le NOM
+    # du checkpoint, et `last.ckpt` est écrasé au fil du run — une ré-éval de
+    # `last` relisait les JSON de l'ancien checkpoint en affichant « already
+    # done » sur 97 configs, c'est-à-dire un agrégat de l'ANCIEN modèle présenté
+    # comme une mesure du nouveau. L'empreinte (mtime+taille) rend le cas
+    # bruyant. Refus plutôt que nettoyage : rien n'est jamais supprimé ici.
+    ckpt_stat = Path(checkpoint_path).stat()
+    fingerprint = f"{ckpt_stat.st_mtime_ns}:{ckpt_stat.st_size}"
+    fp_file = out_dir / "checkpoint_fingerprint.txt"
+    if fp_file.exists() and fp_file.read_text().strip() != fingerprint:
+        raise RuntimeError(
+            f"{out_dir} contient les résultats d'une AUTRE version de "
+            f"{Path(checkpoint_path).name} (empreinte différente — le fichier a "
+            f"été écrasé depuis, typiquement un last.ckpt en cours de run). "
+            f"Reprendre relirait les anciens JSON comme s'ils mesuraient le "
+            f"nouveau checkpoint. Déplacer ou renommer ce répertoire, puis relancer."
+        )
+    fp_file.write_text(fingerprint)
+
     results = {}
     for i, config in enumerate(configs, 1):
         marker = per_config / (config.replace("/", "__") + ".json")

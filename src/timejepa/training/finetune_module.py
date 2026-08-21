@@ -182,6 +182,9 @@ class FinetuneModule(pl.LightningModule):
         # Check for critical missing keys
         expected_missing = {'decoder', 'target_encoder', 'revin'}
         critical_missing = [k for k in missing if not any(exp in k for exp in expected_missing)]
+        # G8.4 — symétrie du marqueur robuste : un checkpoint arcsinh dans un
+        # modèle nu arrive en 'unexpected' et doit refuser autant que l'inverse.
+        critical_missing += [k for k in unexpected if k.startswith('robust_scaler.')]
         
         if critical_missing:
             logger.error(f"❌ Critical missing keys: {critical_missing}")
@@ -253,6 +256,13 @@ class FinetuneModule(pl.LightningModule):
         median, which is the MAE-optimal estimate and what MASE scores.
         """
         results = self.model.forecast(context)
+
+        # G8.4 — si le modèle compresse (arcsinh robuste), la cible doit subir
+        # la MÊME compression avec les stats du contexte (posées par forecast()
+        # à l'instant) avant la normalisation RevIN : la pinball compare des
+        # quantiles en espace compressé+RevIN, la cible doit y vivre aussi.
+        if getattr(self.model, 'robust_scaler', None) is not None:
+            target = self.model.robust_scaler.transform(target)
 
         # Target normalized with the CONTEXT's statistics — never its own, which
         # would leak the future into the normalization.
