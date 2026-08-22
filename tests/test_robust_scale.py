@@ -142,3 +142,49 @@ def test_finetune_loss_path_runs_in_compressed_space():
     # la cible comparée à la pinball vit bien dans l'espace compressé+RevIN :
     # ordres de grandeur O(1), pas l'échelle brute ~50
     assert target.abs().mean() < 10
+
+
+def test_flat_plus_spikes_context_stays_invertible():
+    """
+    Régression (2026-08-22, finetune mix) : une fenêtre « plate + spikes »
+    (VM idle — 29 % des contextes bitbrains_rnd ont MAD exactement 0) donnait
+    une échelle plancher 1e-8, un repère décalé de ln(1e8) ≈ 18, et l'inverse
+    sinh explosait (CRPS 1e10..inf mesurés). Avec le repli 0.1·std, le repère
+    reste borné et l'aller-retour d'un fan raisonnable reste FINI et sensé.
+    """
+    ctx = torch.zeros(1, 384, 1)
+    ctx[0, ::40, 0] = 100.0                    # spikes, MAD = 0, std > 0
+    tgt = torch.full((1, 96, 1), 50.0)
+    rs = RobustScale()
+    rs.fit(ctx)
+    t = rs.transform(tgt)
+    assert t.abs().max() < 15, f"repère encore dégénéré ({t.abs().max():.1f})"
+    # un fan de largeur 2 autour de la cible doit s'inverser en valeurs finies
+    # et du même ordre de grandeur que la donnée, pas en 1e10
+    fan = torch.stack([t - 2, t, t + 2], dim=-1)
+    raw = rs.inverse(fan)
+    assert torch.isfinite(raw).all()
+    assert raw.abs().max() < 1e5, f"inverse encore explosif ({raw.abs().max():.3g})"
+
+
+def test_strictly_constant_context_is_log_bounded():
+    """Contexte strictement constant (std=0 aussi) : le plancher eps=1e-3 borne
+    le repère à ~ln(2000·X) au lieu de ln(1e8·X) — plus d'offset +18."""
+    ctx = torch.full((1, 384, 1), 5.0)
+    tgt = torch.full((1, 96, 1), 25.0)         # saut de 20
+    rs = RobustScale()
+    rs.fit(ctx)
+    t = rs.transform(tgt)
+    assert t.abs().max() < 12
+    assert torch.isfinite(rs.inverse(t + 3)).all()
+
+
+def test_healthy_windows_unchanged_by_std_fallback():
+    """Sur une fenêtre gaussienne, MAD·1.4826 ≈ std > 0.1·std : le repli est
+    inactif et la transformation reste celle d'avant le correctif."""
+    x = torch.randn(4, 384, 1) * 7 + 100
+    rs = RobustScale()
+    rs.fit(x)
+    med = x.median(dim=1, keepdim=True).values
+    mad = (x - med).abs().median(dim=1, keepdim=True).values * 1.4826
+    torch.testing.assert_close(rs.scale, mad, rtol=1e-5, atol=1e-6)

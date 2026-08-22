@@ -92,3 +92,28 @@ def test_finetune_512_with_flag_loads_clean(tmp_path):
     with torch.no_grad():
         out = big.forward_finetune(torch.randn(2, 384, 1))
     assert out["forecast"].shape[1] == 512
+
+
+def test_ctor_with_pretrained_path_loads_before_horizon_attr(tmp_path):
+    """
+    Régression (2026-08-22) : __init__ appelait load_pretrained_encoder AVANT
+    de poser self.extend_horizon_queries, que le chargeur lit — AttributeError
+    sur TOUT finetune lancé avec +training.pretrained_encoder_path, c.-à-d. le
+    protocole standard. Jamais attrapé car les tests construisaient le module
+    sans chemin. Ce test suit le chemin exact du crash du finetune mix.
+    """
+    import torch
+    from timejepa.models import JEPATST
+    from timejepa.training.finetune_module import FinetuneModule
+
+    def _model():
+        return JEPATST(input_length=384, prediction_length=96, patch_size=16,
+                       stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                       predictor_num_layers=1, predictor_num_heads=4,
+                       predictor_d_ff=64, decoder_type="quantile")
+
+    ckpt = tmp_path / "pretrain.ckpt"
+    torch.save({"state_dict": {f"model.{k}": v
+                               for k, v in _model().state_dict().items()}}, ckpt)
+    module = FinetuneModule(model=_model(), pretrained_encoder_path=str(ckpt))
+    assert module.extend_horizon_queries is False

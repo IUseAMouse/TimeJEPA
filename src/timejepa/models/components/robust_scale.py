@@ -60,7 +60,38 @@ class RobustScale(nn.Module):
     (le repère de la cible fuiterait le futur).
     """
 
-    def __init__(self, eps: float = 1e-8):
+    # Repli et plancher d'échelle — correctif du 2026-08-22, mesuré sur le
+    # finetune mix (CRPS à 10^10..inf sur bitbrains/kdd à 5-10 % d'époque).
+    #
+    # La pathologie : sur une fenêtre « plate + spikes » (VM idle — 29 % des
+    # contextes de bitbrains_rnd ont MAD EXACTEMENT 0), l'ancien plancher
+    # eps=1e-8 donnait une échelle 1e-8, donc un repère compressé décalé de
+    # ln(1e8) ≈ 18 : la cible atterrissait à |arcsinh| ≈ 20-38, et l'INVERSE
+    # sinh ré-amplifiait exponentiellement — sinh(34) ≈ 3e14, overflow float32
+    # à ~89. Même un fan parfaitement entraîné dans ce repère s'inversait en
+    # intervalles bruts astronomiques : structurel, pas transitoire. C'est la
+    # pathologie du plancher epsilon de G6, ressuscitée un étage plus haut.
+    #
+    # Le correctif exploite une asymétrie : une échelle TROP GRANDE est bénigne
+    # (arcsinh devient quasi linéaire et RevIN — qui suit dans la composition —
+    # renormalise : dégradation gracieuse vers le comportement z-score) ; une
+    # échelle trop petite est catastrophique (l'offset logarithmique explose à
+    # l'inverse). MAIS le repli doit être CONDITIONNEL, pas un max : un
+    # max(MAD, 0.1·std) inconditionnel laisserait un spike isolé regonfler
+    # l'échelle sur une fenêtre saine — précisément la pathologie E17 que la
+    # MAD existe pour ignorer (attrapé par le test spike existant). Donc :
+    #   échelle = MAD·1.4826                     si MAD·1.4826 > 0.01·std
+    #           = max(0.1·std, eps)              sinon (MAD effondrée)
+    # * fenêtres saines (MAD ≈ std, spike ou pas) : MAD garde la main,
+    #   comportement STRICTEMENT identique à avant le correctif ;
+    # * plates + spikes (MAD ~ 0 face au std) : 0.1·std prend le relais — le
+    #   seul estimateur d'échelle encore disponible sur ce régime ;
+    # * constantes strictes (std = 0 aussi) : eps = 1e-3 borne le repère à
+    #   arcsinh(X/1e-3) ≈ ln(2000·X) — fini et log-borné, plus jamais +18.
+    STD_FALLBACK = 0.1
+    MAD_COLLAPSE_GATE = 0.01
+
+    def __init__(self, eps: float = 1e-3):
         super().__init__()
         self.eps = eps
         # Marqueur d'auto-description du checkpoint (cf. docstring). Aucun
@@ -73,8 +104,13 @@ class RobustScale(nn.Module):
         """context: [B, L, C] — stats sur L, par instance et par canal."""
         med = context.median(dim=1, keepdim=True).values                # [B,1,C]
         mad = (context - med).abs().median(dim=1, keepdim=True).values  # [B,1,C]
+        std = context.std(dim=1, keepdim=True)                          # [B,1,C]
+        mad_sigma = mad * MAD_TO_SIGMA
+        fallback = (self.STD_FALLBACK * std).clamp_min(self.eps)
         self.median = med.detach()
-        self.scale = (mad * MAD_TO_SIGMA).clamp_min(self.eps).detach()
+        self.scale = torch.where(
+            mad_sigma > self.MAD_COLLAPSE_GATE * std, mad_sigma, fallback
+        ).clamp_min(self.eps).detach()
 
     def transform(self, x: torch.Tensor) -> torch.Tensor:
         assert self.median is not None, "fit(context) d'abord"

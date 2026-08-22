@@ -81,7 +81,8 @@ DEFAULT_DATASETS = ["ettm1", "ettm2", "etth1", "etth2", "weather", "exchange"]
 @torch.no_grad()
 def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
                    m: int, K: int, rng, device,
-                   extra_cands: np.ndarray = None) -> np.ndarray:
+                   extra_cands: np.ndarray = None,
+                   refine_steps: int = 0, refine_lr: float = 0.05) -> np.ndarray:
     """
     Retourne le fan [h, 9] : quantiles pondérés par énergie.
 
@@ -95,8 +96,11 @@ def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
     drift = ctx[-1] + (ctx[-1] - ctx[max(0, len(ctx) - m - 1)]) / max(m, 1) \
         * np.arange(1, h + 1, dtype=np.float32)
     sn = np.tile(ctx[-m:], (h + m - 1) // m + 1)[:h].astype(np.float32)
-    block = max(8, min(m, h))
-    pool = [sn, drift] + [block_bootstrap(history, h, block, rng) for _ in range(K)]
+    # Deux échelles de blocs : la saisonnalité entière (structure de cycle) et
+    # un sous-bloc (textures locales) — diversifie le pool sans rien apprendre.
+    blocks = [max(8, min(m, h)), max(8, min(m, h) // 3)]
+    pool = [sn, drift] + [block_bootstrap(history, h, blocks[i % 2], rng)
+                          for i in range(K)]
     if extra_cands is not None:
         pool += [c.astype(np.float32) for c in extra_cands]
     cands = np.stack(pool)
@@ -117,6 +121,34 @@ def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
         context_embeddings=ctx_emb, num_targets=model.num_target_patches,
         w=(torch.ones(1, device=device)
            if hasattr(model.predictor, 'w_film') else None))[:, :n_tgt, :]
+
+    # Raffinement par gradient (« planning by backprop ») : l'énergie est
+    # différentiable en y — quelques pas de descente SUR LES CANDIDATS
+    # eux-mêmes les glissent vers la vallée la plus proche du paysage. C'est
+    # du test-time compute pur, aucun poids modifié. Garde-fou Goodhart : peu
+    # de pas, petit lr — trop d'optimisation fabriquerait des candidats
+    # adversariaux qui minimisent E sans ressembler à un futur.
+    if refine_steps > 0:
+        with torch.enable_grad():
+            xc_ref = xc_norm.detach().clone().requires_grad_(True)
+            opt = torch.optim.SGD([xc_ref], lr=refine_lr)
+            for _ in range(refine_steps):
+                opt.zero_grad()
+                full_r = torch.cat(
+                    [ctx_norm.expand(xc_ref.shape[0], -1, -1), xc_ref], dim=1)
+                z_r = model.online_encoder(model.patching(full_r))[:, -n_tgt:, :]
+                e_r = (1.0 - torch.nn.functional.cosine_similarity(
+                    z_r.flatten(1), z_pred.expand_as(z_r).flatten(1), dim=1)).sum()
+                e_r.backward()
+                opt.step()
+        xc_norm = xc_ref.detach()
+        # Retour à l'espace brut pour la lecture des quantiles : inverse RevIN
+        # (stats du contexte) puis inverse arcsinh si le checkpoint le porte.
+        raw = xc_norm * model.revin.std + model.revin.mean \
+            if model.revin is not None else xc_norm
+        if model.robust_scaler is not None:
+            raw = model.robust_scaler.inverse(raw)
+        cands = raw[..., 0].cpu().numpy()
 
     full = torch.cat([ctx_norm.expand(xc_norm.shape[0], -1, -1), xc_norm], dim=1)
     z_cand = model.online_encoder(model.patching(full))[:, -n_tgt:, :]
@@ -140,9 +172,70 @@ def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
     return fan
 
 
+@torch.no_grad()
+def mc_dropout_paths(dec_model, ctx: np.ndarray, h: int, n: int, device) -> np.ndarray:
+    """
+    n trajectoires épistémiques du décodeur FINETUNÉ : les modules Dropout du
+    modèle sont basculés en mode train LE TEMPS DES FORWARDS (le reste — norm,
+    EMA — reste en eval), puis restaurés. Chaque forward stochastique donne un
+    médian différent = une trajectoire COHÉRENTE temporellement, contrairement
+    aux chemins-quantiles (marginales). Uniquement dans le script — le cœur du
+    code n'est pas touché.
+    """
+    x = torch.from_numpy(ctx).reshape(1, -1, 1).to(device)
+    drops = [mod for mod in dec_model.modules()
+             if isinstance(mod, torch.nn.Dropout) and mod.p > 0]
+    for mod in drops:
+        mod.train()
+    try:
+        paths = [dec_model.forecast(x, n=h)["forecast_denorm"][0, :, 0].cpu().numpy()
+                 for _ in range(n)]
+    finally:
+        for mod in drops:
+            mod.eval()
+    return np.stack(paths)
+
+
 # ---------------------------------------------------------------------------
 # Harnais commun
 # ---------------------------------------------------------------------------
+
+class TTMProposer:
+    """
+    Proposeur externe G12(b) : TTM-R3 (IBM Granite, ~1.4M — le rival de classe
+    de taille, CRPS 0.520 sur GIFT). Point forecast only -> la diversité vient
+    de N contextes jitterés (bruit 0.05·std) en plus du chemin propre. Chargé
+    paresseusement : le script reste utilisable sans granite-tsfm installé.
+    La mesure G12 est l'UPLIFT : reader `ttm` seul vs `hybrid_ttm` (bootstrap
+    + SN + drift + chemins TTM, jugés par NOTRE pretrain).
+    """
+
+    def __init__(self, model_id: str, device, revision: str = "main"):
+        from tsfm_public.models.tinytimemixer import TinyTimeMixerForPrediction
+        # ⚠️ le dépôt TTM héberge ses variantes par RÉVISION ; `main` est une
+        # variante horizon-30 qui charge avec des poids de tête RÉINITIALISÉS
+        # (avertissement MISSING mesuré) — toujours passer la révision exacte.
+        self.model = TinyTimeMixerForPrediction.from_pretrained(
+            model_id, revision=revision)
+        self.model.to(device).eval()
+        self.ctx_len = self.model.config.context_length
+        self.pred_len = self.model.config.prediction_length
+        self.device = device
+
+    @torch.no_grad()
+    def paths(self, ctx: np.ndarray, h: int, n_jitter: int, rng) -> np.ndarray:
+        assert h <= self.pred_len, f"h={h} > horizon TTM {self.pred_len}"
+        base = ctx[-self.ctx_len:].astype(np.float32)
+        if len(base) < self.ctx_len:                     # pad gauche par bord
+            base = np.concatenate([np.full(self.ctx_len - len(base), base[0],
+                                           dtype=np.float32), base])
+        ctxs = [base] + [base + rng.normal(0, 0.05 * max(base.std(), 1e-8),
+                                           size=base.shape).astype(np.float32)
+                         for _ in range(n_jitter)]
+        x = torch.from_numpy(np.stack(ctxs)).unsqueeze(-1).to(self.device)
+        out = self.model(past_values=x).prediction_outputs                # [N, P, 1]
+        return out[:, :h, 0].cpu().numpy()
+
 
 def iter_windows(series: np.ndarray, ctx_len: int, h: int, max_windows: int):
     """Fenêtres non chevauchantes (stride=h), réparties sur tout le split test."""
@@ -162,6 +255,17 @@ def main():
     ap.add_argument("--datasets", default=",".join(DEFAULT_DATASETS))
     ap.add_argument("--horizon", type=int, default=96)
     ap.add_argument("--candidates", type=int, default=32)
+    ap.add_argument("--refine-steps", type=int, default=0,
+                    help="pas de descente de gradient de E sur les candidats (planning by backprop)")
+    ap.add_argument("--refine-lr", type=float, default=0.05)
+    ap.add_argument("--decoder-samples", type=int, default=0,
+                    help="chemins MC-dropout du décodeur ajoutés au pool hybride")
+    ap.add_argument("--proposer-ttm", default=None, const="ibm-granite/granite-timeseries-ttm-r3",
+                    nargs="?", help="active le proposeur externe TTM (id HF optionnel)")
+    ap.add_argument("--ttm-revision", default="1024-96-r3",
+                    help="révision HF (contexte-horizon) — main = tête réinitialisée !")
+    ap.add_argument("--ttm-jitter", type=int, default=4,
+                    help="contextes jitterés par fenêtre pour diversifier TTM")
     ap.add_argument("--max-windows", type=int, default=40, help="par série")
     ap.add_argument("--max-series", type=int, default=21)
     ap.add_argument("--model-config", default="lotsa_tiny_eval")
@@ -176,6 +280,11 @@ def main():
     model = create_model_from_config(cfg)
     load_checkpoint(model, args.checkpoint, device)
     model.to(device).eval()
+
+    ttm = (TTMProposer(args.proposer_ttm, device, revision=args.ttm_revision)
+           if args.proposer_ttm else None)
+    if ttm:
+        logger.info(f"proposeur TTM : {args.proposer_ttm} (ctx {ttm.ctx_len}, h {ttm.pred_len})")
 
     dec_model = None
     if args.decoder_checkpoint:
@@ -195,12 +304,15 @@ def main():
 
         acc = {r: {"fan": [], "tgt": [], "ctx": []}
                for r in (("energy", "snaive")
-                         + (("decoder", "hybrid") if dec_model else ()))}
+                         + (("decoder", "hybrid") if dec_model else ())
+                         + (("ttm", "hybrid_ttm") if ttm else ()))}
         for series in data:
             for ctx, tgt, _ in iter_windows(series, ctx_len, h, args.max_windows):
                 if not (np.isfinite(ctx).all() and np.isfinite(tgt).all()):
                     continue
-                fan = energy_readout(model, ctx, ctx, h, m, args.candidates, rng, device)
+                fan = energy_readout(model, ctx, ctx, h, m, args.candidates, rng, device,
+                                     refine_steps=args.refine_steps,
+                                     refine_lr=args.refine_lr)
                 acc["energy"]["fan"].append(fan)
                 sn = np.tile(ctx[-m:], (h + m - 1) // m + 1)[:h]
                 acc["snaive"]["fan"].append(np.repeat(sn[:, None], 9, axis=1))
@@ -211,11 +323,27 @@ def main():
                     q = out["quantiles_denorm"][0].cpu().numpy()
                     q = q[..., 0] if q.ndim == 3 else q            # [h, 9]
                     acc["decoder"]["fan"].append(q)
-                    # Hybride : les 9 trajectoires-quantiles du décodeur entrent
-                    # dans le pool et le pretrain les juge avec les autres.
+                    # Hybride : trajectoires-quantiles + chemins MC-dropout du
+                    # décodeur entrent dans le pool ; le pretrain juge tout.
+                    dec_paths = q.T
+                    if args.decoder_samples > 0:
+                        dec_paths = np.concatenate(
+                            [dec_paths,
+                             mc_dropout_paths(dec_model, ctx, h,
+                                              args.decoder_samples, device)])
                     acc["hybrid"]["fan"].append(energy_readout(
                         model, ctx, ctx, h, m, args.candidates, rng, device,
-                        extra_cands=q.T))
+                        extra_cands=dec_paths,
+                        refine_steps=args.refine_steps,
+                        refine_lr=args.refine_lr))
+                if ttm is not None:
+                    tp = ttm.paths(ctx, h, args.ttm_jitter, rng)          # [N, h]
+                    # `ttm` seul = son chemin propre (point -> fan répété, WQL=ND)
+                    acc["ttm"]["fan"].append(np.repeat(tp[:1].T, 9, axis=1))
+                    acc["hybrid_ttm"]["fan"].append(energy_readout(
+                        model, ctx, ctx, h, m, args.candidates, rng, device,
+                        extra_cands=tp,
+                        refine_steps=args.refine_steps, refine_lr=args.refine_lr))
                 for r in acc:
                     acc[r]["tgt"].append(tgt); acc[r]["ctx"].append(ctx)
 

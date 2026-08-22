@@ -1086,7 +1086,26 @@ contextualisation est ce qui le rend jugeable. Conséquence pour le prototype : 
 lecture par énergie devrait encoder les candidats CONTEXTUALISÉS à l'inférence,
 même sur une lignée entraînée standalone — c'est un choix de lecture, pas de loss.
 (c) Le classement inter-checkpoints du tableau principal est inchangé (tous sondés
-dans leur propre convention ou à convention égale).
+dans leur propre convention ou à convention égale). Suivi à époque 1 PILE (sonde
+appariée, mêmes candidats au bit près) : agrégats 0.153 -> 0.162 (ctx) et
+0.212 -> 0.211 (standalone) — plateau FONCTIONNEL recouvrant le plateau de
+val_loss ; seule vraie évolution, la pathologie solar-standalone se répare
+(0.48 -> 0.39, ρ −0.25 -> 0.00) : réarrangement, pas progression de compétence.
+Charge de la preuve posée pour l'époque 2 : le checkpoint recuit devra décrocher
+du plateau (~0.12-0.13 ctx), sinon l'époque 2 n'aura été qu'une assurance —
+vérifiable en 30 min de CPU avec la même sonde appariée.
+VERDICT (2026-08-22, checkpoint à 80 % d'époque 2, LR ~7e-6 = recuit quasi fini) :
+agrégat 0.161 — le plateau tient jusqu'au bout. Série complète appariée :
+0.153 / 0.162 / 0.160 / 0.161 / 0.155 / 0.161 sur ~1,1 époque de train.
+L'ÉPOQUE 2 N'A PAS PAYÉ en compétence fonctionnelle (la val_loss, elle,
+descendait : dissociation confirmée entre les deux thermomètres). Décisions :
+(a) arrêt à 80 % d'époque 2 acté, finetune lancé depuis CE last.ckpt (sain,
+le plus recuit d'une famille d'équivalents — les evaluate_energy sur 3
+checkpoints candidats ne départagent rien hors bruit, et le best-val-loss
+n'a aucun avantage fonctionnel) ; (b) enseignement budget pour les runs
+FUTURS (mini) : 1 époque recuite peut suffire (~19 h GPU économisées) ;
+(c) ⚠️ MAIS xres garde le MÊME budget que mix (2 époques coupées ~80 % de
+l'époque 2) — le duel E19 reste à une variable, l'objectif seul.
 
 **E18d — prototype v0 du forecast par énergie, évalué (Nixtla local, même harnais
 pour trois lecteurs).** `scripts/evaluate_energy.py` : 32 bootstraps + SN + drift,
@@ -1167,6 +1186,70 @@ Mais le décodeur garde weather/exchange en WQL (0.76/0.77 vs 0.82/0.90) : le r�
 n'est plus l'échantillonnage, c'est le CONTRASTE du juge — softmax non calibré, les
 bons chemins ne dominent pas assez le pool. La calibration de T en contexte est
 confirmée comme dernier levier v3, et comme prérequis (a) de G12.
+
+**E18f — raffinement des candidats par gradient de E (« planning by backprop »),
+deux bras appariés** (`--refine-steps`, script seulement) : à réglage doux
+(3 pas, lr 0.05), résultat NUL — tous les deltas ≤ 0.01x, les gradients d'entrée
+ne déplacent pas les candidats. À réglage fort (10 pas, lr 0.5, exchange) :
+gain petit mais réel et SANS dégradation — hybrid MASE 0.97x -> 0.95x (2.533,
+passe DEVANT le décodeur seul 2.544), WQL 0.89x -> 0.87x. Lecture : le paysage
+n'est pas plat mais ses pentes sont douces à l'échelle des candidats — le
+raffinement a une fenêtre utile avant Goodhart (aucun signe adversarial à
+lr 0.5), et vaut ~1-2 % là où il compte. Levier d'appoint, derrière la
+calibration de T ; coût x(1+2·pas) en forwards. Clos pour l'instant.
+
+**E18g — G12(b) exécuté : premier proposeur EXTERNE, TTM-R3 (le SOTA sub-10M, 0.520
+GIFT) sous notre juge.** `--proposer-ttm` dans evaluate_energy.py (granite-tsfm,
+révision `1024-96-r3` — ⚠️ `main` charge une tête RÉINITIALISÉE, piège documenté) :
+chemin propre + 4 contextes jitterés, dans le pool bootstrap+SN+drift, pondéré par
+le pretrain tiny-full. WQL vs SN, mêmes fenêtres : etth1 0.85 -> 0.72 (−13 pts, MASE
+aussi devant) ; etth2 0.95 -> 0.88 ; ettm2 0.79 -> 0.74 ; ettm1 0.86 -> 0.84 ;
+weather 0.70 -> 0.85 (dilution) ; exchange 0.88 -> 0.97 (dilution).
+LA PHRASE MESURÉE : un pretrain JEPA 1M, zéro entraînement dédié, améliore le CRPS
+de TTM-R3 sur 4/6 datasets (jusqu'à −13 pts). Honnêteté : cette révision TTM est
+point-forecast (WQL=ND) — une part de l'uplift est « ajouter des intervalles à un
+point forecaster », ce qui EST la proposition de valeur du vérificateur. Les 2
+échecs sont la RÉPLICATION n°3 de la signature de dilution (weather/exchange, même
+paire qu'avec notre décodeur E18e et l'échantillonnage enrichi E18e-v2) : trois
+proposeurs, même mécanisme — le softmax non calibré ne se concentre pas quand un
+proposeur domine. La calibration de T bloque désormais TROIS victoires mesurées.
+
+**E18h — calibration de T en contexte, v1 mesurée : neutre, et deux diagnostics
+précieux.** `--calibrate-T` dans evaluate_energy.py : T par SÉRIE et par composition
+de pool, choisi sur une grille {0.125..4} en rejouant le pipeline complet (proposeur
+TTM compris) sur n_cal=2 sous-fenêtres passées du contexte, pinball minimale gagne ;
+rng dédié -> tirages principaux appariés au bit près avec E18g. Résultat (WQL vs SN,
+hybrid_ttm) : les 4 victoires sur TTM-R3 CONSERVÉES (etth1 0.72, etth2 0.88, ettm1
+0.85, ettm2 0.77), exchange à moitié réparé (0.97 -> 0.94, TTM 0.88), weather PAS
+réparé (0.85 -> 0.87, TTM 0.70).
+Diagnostic 1 — ESTIMATEUR TROP BRUITÉ : 2 pinballs par série pour départager 6
+températures = sélection au bruit ; les histogrammes de T le montrent (weather :
+T=2-4 prescrits sur la moitié des séries — l'OPPOSÉ du remède — pendant qu'exchange
+choisit correctement 0.125). Le smoke avait montré le calibrateur CAPABLE de trouver
+le bon T ; le run complet montre qu'il ne le trouve pas fiablement à n_cal=2.
+Diagnostic 2 — LIMITE STRUCTURELLE de T scalaire : quand UN proposeur écrase le pool
+(weather), T -> 0 fait dégénérer le fan vers ce seul chemin, c.-à-d. TTM seul en
+point, intervalles effondrés — la température ne peut au mieux que s'EFFACER devant
+le proposeur dominant, jamais faire mieux que lui. Le fix structurellement correct
+est la PONDÉRATION PAR SOURCE (un prior par famille de proposeurs — bootstrap /
+ancres / TTM — calibré en contexte, l'énergie arbitrant à l'intérieur de chaque
+famille) : le proposeur fort garde la masse dorsale, le bootstrap ne fournit que
+l'étalement. Promu levier n°1 de la voie G12 ; calibration v2 = pooling par dataset
+des scores (déjà calculés, quasi gratuit) + n_cal plus grand + prior par source.
+VERDICT DE LA CASCADE (paire appariée, périmètre etth1/etth2/weather/exchange,
+20 fenêtres x 8 séries, raffinement 10 pas lr 0.5) : le raffinement par gradient
+GÉNÉRALISE aux chemins TTM, sélectivement — nul là où les propositions sont déjà
+au fond des vallées (etth1/etth2/weather : deltas ~0, AUCUNE dégradation Goodhart),
+décisif là où elles en sont loin : **exchange bascule en victoire** (hybrid_ttm WQL
+0.92 -> 0.86 contre TTM seul 0.88 ; MASE 0.96 -> 0.91) et le bras energy-seul y
+signe le plus gros effet de toute la série E18f-h (MASE x1.21 -> x1.05, WQL x1.18
+-> x1.05). Mécanisme : exchange est le dataset à DÉRIVE où le bootstrap ne sort pas
+de l'enveloppe historique — la descente de gradient extrapole à sa place en tirant
+les candidats vers la vallée. L'antidote mesuré de la limite d'enveloppe d'E18d.
+BILAN G12 consolidé : l'hybride bat TTM-R3 sur **5/6 datasets** (4 par rerank
+E18g + exchange par raffinement) ; seul weather résiste, et son remède est déjà
+diagnostiqué (pondération par source, E18h) — prochaine et dernière brique de la
+voie avant le papier court.
 
 ---
 
@@ -1550,6 +1633,29 @@ constitue le test le plus direct de la thèse du §7.
   explicative non testée pour E8.
 - **2026-08-12 (nuit, suite)** — ajout de **E11**, G4.6 : **le pretraining transfère**, −26 %
   de MASE moyenne et 8/8 datasets en régime données inédites + peu de données.
+- **2026-08-22** — Correctif RobustScale (plancher d'échelle conditionnel, `4b772c2`) après
+  CRPS 10^10..inf mesurés sur le finetune mix à 5-10 % : 29 % des contextes bitbrains_rnd ont
+  MAD exactement 0, l'échelle plancher 1e-8 créait un repère décalé de +18 que sinh explosait
+  à l'inverse — structurel, pas transitoire (la pathologie G6 un étage plus haut). Décision
+  utilisateur : couper et relancer le finetune avec le fix ; pretrain non affecté (LayerNorm
+  borne les cibles latentes).
+  **Note intermédiaire E19 (astérisque protocole)** : checkpoint mix à 15 % d'époque 1,
+  entraîné AVEC le bug, évalué APRÈS le fix (le scaler est sans poids, le pull a changé la
+  transformation d'éval — chimère train-ancien/éval-nouveau) : **MASE 0.9235 / CRPS 0.6453**.
+  Même sous astérisque : (a) les explosions disparaissent sur un checkpoint entraîné avec le
+  bug — le diagnostic « amplification à l'inverse » est confirmé ; (b) la recette mix bat le
+  final de tiny-full (0.9685/0.6664) dès 15 % d'une époque sur trois — **la gate P3 v0.1
+  (CRPS < 0.65) tombe pour la première fois**, Moirai_small (0.650) dépassé ; (c) trajectoire
+  5 %→10 %→15 % : 0.9964 → 0.9679 → 0.9235, descente encore raide. Le verdict E19 officiel
+  se prendra sur le run RELANCÉ propre (fix de bout en bout), ces chiffres servant de borne
+  inférieure attendue. Rangs EXACTS (snapshot local du leaderboard, 125 modèles classés,
+  `docs/assets/gift_leaderboard/2026-08-22/`, formule officielle sur les CSV officiels,
+  script `fetch_gift_leaderboard.py`) : E16 108e CRPS/110e MASE ; E18 108e/110e — le gain
+  −1,6 % de CRPS ne franchissait AUCUN barreau, le classement bouge par paliers ; mix-15 %
+  **103e CRPS / 108e MASE**. Prochain palier : un paquet dense à CRPS 0.609-0.627
+  (Reverso-Small, litespecformer, Lingjiang, iTransformer, TimeTron-33M, Reverso,
+  Moirai_base, YingLong_6m) — atteindre ~0.605 = +8 places d'un coup, l'objectif chiffré
+  naturel du run propre.
 - **2026-08-21 (soir)** — ajout de **E18b**, la sonde d'énergie : le latent du pretrain
   classe le vrai futur au rang 0.245 (hasard 0.50) parmi 34 candidats bootstrap, ρ(E,MAE)
   0.5-0.74 partout, solar compris — la lecture « proposer-juger-pondérer » est légitimée.

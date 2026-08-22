@@ -872,6 +872,17 @@ E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08
         100k/famille = 6,4 % chacune, trop) ; option à coût nul = réduire
         synthetic_broadband (la famille sans trou mesuré derrière) pour financer une famille
         ciblée à part synthétique constante ~9 %, plutôt que monter vers 12-14 %.
+- [ ] **G8.4b** Plancher d'échelle RELATIF pour RobustScale (candidat post-E19, observé
+      2026-08-22 sur les forecasts london_smart_meters du run mix-v2) : le fix 4b772c2 a tué
+      les explosions, mais sur les fenêtres QUASI nulles (compteur éteint, micro-oscillations)
+      le plancher absolu eps=1e-3 laisse le repère grossir le bruit du contexte en structure
+      apparente -> biais haussier x10-30 à l'inverse (borné, plus jamais 1e10). Candidat :
+      eps proportionnel à l'amplitude du contexte, p.ex. max(1e-3, 0.01·(max−min)). Une
+      variable, un test de régression sur le cas london. NB au passage : les « séries
+      constantes mal captées » des mêmes plots étaient une fausse alerte (axe matplotlib à
+      1e-7 — reproduction à 7 décimales) ; et le « médian qui traverse le pattern » est la
+      signature z=0 (moyenne conditionnelle sur futur bimodal), déjà adressée par l'arm
+      ErrorSignalJEPA et la lecture énergie — pas un item nouveau.
 - [ ] **G8.3** Contexte 2048 (contre 1024) — à évaluer coût attention vs gain.
 - [ ] **G8.4** Scaler robuste — décision de conception (2026-08-20) : **COMPOSER, pas
       remplacer**. `x' = arcsinh((x − médiane) / MAD)` en entrée, `sinh` inverse en sortie,

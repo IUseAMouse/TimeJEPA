@@ -102,6 +102,13 @@ class FinetuneModule(pl.LightningModule):
         self.model.set_pretrain_mode(False)  # Switch to finetune mode
         logger.info("✓ Model switched to finetune mode")
         
+        # AVANT le chargement : load_pretrained_encoder lit cet attribut
+        # (chemin h512). Le poser après, c'était un AttributeError sur tout
+        # finetune lancé avec pretrained_encoder_path — jamais vu avant le
+        # premier finetune post-h512 (mix, 2026-08-22) car tiny-full tournait
+        # sur le commit pré-h512.
+        self.extend_horizon_queries = bool(extend_horizon_queries)
+
         # Load pretrained weights if provided
         if pretrained_encoder_path is not None:
             self.load_pretrained_encoder(pretrained_encoder_path)
@@ -118,7 +125,6 @@ class FinetuneModule(pl.LightningModule):
         # Context-geometry randomization (train only)
         self.context_lengths = list(context_lengths) if context_lengths else None
         self.p_random_context_finetune = float(p_random_context_finetune)
-        self.extend_horizon_queries = bool(extend_horizon_queries)
 
         # Optimizer params
         self.learning_rate = learning_rate
