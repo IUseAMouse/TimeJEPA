@@ -113,6 +113,11 @@ class QuantileHead(nn.Module):
         num_heads: int = 4,
         hidden_dim: Optional[int] = None,
         dropout: float = 0.1,
+        # ESJEPA — modulation de l'ÉTALEMENT du fan par la voie z. Opt-in
+        # strict : flag off ⇒ l'attribut z_gate n'existe pas, state_dict et
+        # chemin de calcul bit-identiques (pattern w_film).
+        use_error_signal: bool = False,
+        z_dim: int = 4,
     ):
         super().__init__()
 
@@ -120,6 +125,8 @@ class QuantileHead(nn.Module):
         self.num_quantiles = len(self.quantile_levels)
         self.prediction_length = prediction_length
         self.use_context = use_context
+        self.use_error_signal = use_error_signal
+        self.stride = stride
 
         if not all(a < b for a, b in zip(self.quantile_levels, self.quantile_levels[1:])):
             raise ValueError(f"quantile_levels must be strictly increasing, got {self.quantile_levels}")
@@ -138,6 +145,18 @@ class QuantileHead(nn.Module):
                 dropout=dropout, batch_first=True,
             )
             self.context_norm = nn.LayerNorm(d_model)
+
+        if use_error_signal:
+            # Gate multiplicatif sur les largeurs de _make_monotone :
+            # z [B, N, z_dim] -> (g_low, g_up) par patch -> widths · exp(g).
+            # Zéro-init poids ET biais ⇒ exp(0)=1 : identité EXACTE à l'init
+            # (le finetune part du fan baseline, la modulation n'apparaît que
+            # si le gradient la demande). La MÉDIANE n'est pas touchable par
+            # construction — MASE structurellement invariant, tout delta WQL
+            # attribuable à l'étalement.
+            self.z_gate = nn.Linear(z_dim, 2)
+            nn.init.zeros_(self.z_gate.weight)
+            nn.init.zeros_(self.z_gate.bias)
 
         hidden_dim = hidden_dim or d_model
         self.mlp = nn.Sequential(
@@ -161,11 +180,29 @@ class QuantileHead(nn.Module):
         predicted_latents: torch.Tensor,
         context_embeddings: Optional[torch.Tensor] = None,
         target_length: Optional[int] = None,
+        z: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Returns:
             quantiles [B, L, Q], strictly increasing along Q.
+
+        `z` (ESJEPA, optionnel) : stats du résidu prédites [B, N, z_dim] —
+        module l'étalement via z_gate. Refus bilatéral : construit avec
+        use_error_signal sans z, ou z fourni sans le module ⇒ ValueError
+        (jamais de dégradation silencieuse, précédent use_context).
         """
+        if self.use_error_signal and z is None:
+            raise ValueError(
+                "QuantileHead was built with use_error_signal=True but no z "
+                "was passed. JEPATST.forward_finetune forwards it; a caller "
+                "invoking the head directly must too."
+            )
+        if z is not None and not self.use_error_signal:
+            raise ValueError(
+                "z reçu mais la tête a été construite sans use_error_signal — "
+                "le gate n'existe pas, la modulation serait silencieusement "
+                "perdue."
+            )
         target_length = target_length or self.prediction_length
         h = predicted_latents
 
@@ -184,15 +221,35 @@ class QuantileHead(nn.Module):
         h = self.mlp_norm(h + self.mlp(h))
 
         raw = self.unpatching(h, target_len=target_length)   # [B, L, Q]
-        return self._make_monotone(raw)
 
-    def _make_monotone(self, raw: torch.Tensor) -> torch.Tensor:
+        gates = None
+        if z is not None:
+            # z est par PATCH [B, N, z_dim] ; les largeurs sont par PAS DE
+            # TEMPS [B, L, ·]. Mapping non chevauchant t -> min(t//stride, N-1)
+            # — plus simple que reproduire l'overlap-averaging d'UnPatching et
+            # suffisant pour une échelle.
+            g = self.z_gate(z)                               # [B, N, 2]
+            idx = torch.div(
+                torch.arange(raw.shape[1], device=raw.device),
+                self.stride, rounding_mode='floor',
+            ).clamp_max(g.shape[1] - 1)                      # [L]
+            gates = g[:, idx, :]                             # [B, L, 2]
+
+        return self._make_monotone(raw, gates)
+
+    def _make_monotone(
+        self, raw: torch.Tensor, gates: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """
         Turn unconstrained outputs into a sorted quantile fan.
 
         The median is regressed directly; every other level is the median plus
         or minus a cumulative sum of softplus widths. Sorting is then a property
         of the parameterization rather than something to penalize or post-process.
+
+        `gates` (ESJEPA, [B, L, 2]) : facteurs log-multiplicatifs (g_low, g_up)
+        appliqués aux widths — exp(g)·softplus reste > 0, la monotonie et la
+        médiane sont préservées par construction.
         """
         mid = self.median_idx
         median = raw[..., mid:mid + 1]                       # [B, L, 1]
@@ -201,6 +258,8 @@ class QuantileHead(nn.Module):
 
         if mid > 0:
             lower_w = F.softplus(raw[..., :mid])             # [B, L, mid]
+            if gates is not None:
+                lower_w = lower_w * torch.exp(gates[..., 0:1])
             # Accumulate outward from the median, then restore ascending order
             lower = median - torch.cumsum(lower_w.flip(-1), dim=-1).flip(-1)
             parts.append(lower)
@@ -209,6 +268,8 @@ class QuantileHead(nn.Module):
 
         if mid < raw.shape[-1] - 1:
             upper_w = F.softplus(raw[..., mid + 1:])
+            if gates is not None:
+                upper_w = upper_w * torch.exp(gates[..., 1:2])
             upper = median + torch.cumsum(upper_w, dim=-1)
             parts.append(upper)
 

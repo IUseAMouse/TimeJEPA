@@ -800,6 +800,22 @@ deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE vari
       apprendre en l'agrandissant (E17 l'avait déjà mesuré, la queue per-config d'E18 le
       confirme). C'est le boulot du synthétique (mix, E19). DÉCISION : base des runs
       mix/xres = `lotsa_full` ; G7.4 (mini) attend la recette gagnante d'E19.
+- [x] **G7.3c** DOCTRINE FINETUNE (tranchée 2026-08-23, E18i) — le recuit court depuis
+      0.5874 a discriminé instabilité-vs-overfit : **instabilité de LR** (à froid, val ↓ ET
+      GIFT ↑ ; train plate sur tout le run chaud ; aucune signature d'overfit ⇒ **mini
+      débloqué**). Les gains de finetune de cette lignée tombent à la rampe (répliqué à
+      deux échelles de LR : champion à 25 % sous 3e-4, meilleur recuit à 5 % sous 5e-5)
+      puis marche aléatoire dans le plateau — le champion 0.6190 contient une part de
+      loterie de trajectoire. **Nouveau protocole de finetune (candidat E19, en cours :
+      `mix_zs_1ep`) : 1 époque fraîche depuis le pretrain, LRs discriminés tête 8e-5 /
+      backbone x0.1, cosinus recuit dans l'époque** (la tête quantile part de zéro et doit
+      apprendre ; le backbone part riche et est celui qui dérive — idée utilisateur
+      « plafond bas », affûtée via encoder_lr_multiplier). Prédiction écrite avant :
+      atterrissage 0.615-0.63, meilleurs checkpoints en FIN d'époque ; si pic encore à
+      ~5-25 % puis errance, la promenade est intrinsèque et la sélection par éval GIFT
+      devient l'outil officiel. xres COPIE ce protocole (duel à une variable, coût ~1 j
+      au lieu de 3). Habitude : cp immédiat des checkpoints couronnés vers
+      `checkpoints/champions/` (leçon de l'éviction du champion par save_top_k).
 - [ ] **G7.4** Mini sur corpus complet — avec une PRÉDICTION ÉCRITE AVANT LE RUN (2026-08-19,
       hypothèse utilisateur pendant tiny-full : « on touche la limite de capacité du tiny sur
       un corpus si gros/complexe ») :
@@ -872,7 +888,23 @@ E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08
         100k/famille = 6,4 % chacune, trop) ; option à coût nul = réduire
         synthetic_broadband (la famille sans trou mesuré derrière) pour financer une famille
         ciblée à part synthétique constante ~9 %, plutôt que monter vers 12-14 %.
-- [ ] **G8.4b** Plancher d'échelle RELATIF pour RobustScale (candidat post-E19, observé
+- [x] **G8.4b** RÉSOLU (2026-08-23) — mais par une ENVELOPPE DE PRÉVISION, pas par le
+      plancher relatif d'abord envisagé. Le dossier qui a tranché : pendant le recuit E18i,
+      flares ×5-90 sur agrégats (bitbrains_fs/5T/short 2.812, car_parts 1.276-1.626) ; puis
+      sur mix_zs_1ep3e4 à 15 %, bitbrains_fs/H/short **CRPS 18 305 724** — ×1.19 sur la
+      geomean des 97 configs à lui seul. Diagnostic final : PAS l'échelle plancher (repère
+      borné) — la tête quantile mi-entraînée émet un z de queue ≈15 que sinh ré-amplifie en
+      10^6·échelle. Un plancher ne peut rien contre un z voyou ; la garde correcte est en
+      aval : `RobustScale.inverse` clampe désormais à [min(ctx)−K·w, max(ctx)+K·w],
+      w = max(étendue, échelle), K = 10 (précédent structurel : vocabulaire Chronos borné
+      ±15σ). Monotone (ordre des quantiles intact), inactif sur toute prévision
+      raisonnable, exact sur les aller-retours ; borne AUSSI le biais haussier ×10-30 des
+      fenêtres quasi-nulles (l'observation london qui avait ouvert l'item). Test de
+      régression + 267 tests verts. ⚠️ Change la transformation d'ÉVAL de tout checkpoint
+      arcsinh : à déployer ENTRE deux séries d'évals comparées, et ré-évaluer champion +
+      final sous le même code avant tout chiffre E19 officiel. (Historique : observé
+      2026-08-22 sur les forecasts london_smart_meters de mix-v2 ; plancher relatif
+      max(1e-3, 0.01·étendue) resté possible en complément si le biais quasi-nul persiste.)
       2026-08-22 sur les forecasts london_smart_meters du run mix-v2) : le fix 4b772c2 a tué
       les explosions, mais sur les fenêtres QUASI nulles (compteur éteint, micro-oscillations)
       le plancher absolu eps=1e-3 laisse le repère grossir le bruit du contexte en structure
@@ -948,7 +980,71 @@ classe de paramètres — hiérarchie ci-dessous dans cet ordre. Un run d'ablati
 G8.1), converti en morceaux 8192 quand les séries le permettent (décimation + r'/r), audit
 d'équilibre après mélange, et UN run d'ablation dédié.
 
-### G8.6 — « ETSJEPA » : décomposition signal/résidu EN LATENT (direction post-h512)
+### G8.6 — « ETSJEPA / ESJEPA » : la voie z du résidu — **IMPLÉMENTÉ (2026-08-23), run en attente**
+
+**État : code livré et testé (arm `model.error_signal`, 23 tests dédiés, 290 verts au total,
+zéro régression flag-off), conçu en plan-mode avec agents d'exploration/conception ; run
+ordonnancé APRÈS le verdict mini-mix, sur le banc tiny, une variable contre le contrôle mix.**
+
+Résolution du paradoxe fondateur (« le latent manquant ne se reconstruit pas ») : z ne prédit
+JAMAIS la réalisation du bruit (irrécupérable) mais ses STATISTIQUES — l'hétéroscédasticité
+conditionnelle. Décisions utilisateur : (1) z_target = stats DÉTERMINISTES du résidu de
+lissage EWMA causal de la fenêtre cible normalisée, par patch [B,31,4] (log-RMS, log-MAD,
+asymétrie tanh, autocorr lag-1 ; plancher 1e-3) — ground truth fixe, aucune bifurcation
+encodeur, aucune tête EMA, aucun collapse possible ; (2) action de z = gate multiplicatif
+ZÉRO-INIT sur les largeurs de `_make_monotone` — médiane intouchable par construction ⇒ MASE
+structurellement invariant, tout Δ WQL attribuable à l'étalement. Architecture : tête z
+(MLP 128→64→4, ~8.5k params) sur le TRONC du prédicteur (`predictor.z_head.*` — préfixe core
+P3.2, survit au finetune, suivie par save_pretrained_encoder) ; gate `decoder.decoder.z_gate`
+(~10 params, ré-apprenable au finetune). Loss : `+ λ_z·smooth_l1(z_pred, z_target)`, λ_z=0.1
+(`training.loss.lambda_z`). Durcissement au passage : le bras « unexpected » du refus P3.2
+généralisé de `robust_scaler.` à tous les préfixes core (couvre w_film et z_head — un ckpt
+d'arm dans un modèle nu refuse au lieu de warn), symétrisé dans finetune_module.
+
+Configs : trio `lotsa_tiny_esjepa{,_zeroshot,_eval}` (base lotsa_tiny_mix ⇒ contrôle = le
+pretrain mix EXISTANT, une variable ; finetune protocole G7.3c 1 époque). ⚠️ val_loss inclut
+la composante z — comparer par composantes.
+
+**Prédictions falsifiables, posées AVANT le run :**
+- P1 (pretrain, kill-switch mi-run) : `esjepa/z_corr` (Spearman z_pred↔log-RMS réalisée, val)
+  **> 0.3** ; ≈ 0 ⇒ l'hétéroscédasticité n'est pas prévisible depuis le contexte, l'arm meurt
+  au pretrain, aucun finetune.
+- P2 (finetune) : val_wql ↓ vs contrôle mix à val_mase égal (±0.5 %, quasi garanti par le
+  gate) ; gain concentré sur les pinball q0.1/q0.9.
+- P3 : fan plus large sur les fenêtres à gros résidu réalisé (ratio décile-haut/décile-bas
+  > contrôle) ; corollaire : flares de queue bitbrains ↓.
+- Stérilité : `esjepa/gate_absmean` ~0 en fin de finetune = le décodeur ignore z (la
+  cross-attention contexte suffit) — résultat négatif INTERPRÉTABLE. Siphonnage : si
+  `train_loss/invariance` dévie > 2 % du contrôle à époque égale → λ_z=0.03 ou repli
+  « prédicteur z séparé » (ablation non implémentée en v1).
+
+Bonus stratégique : z est exposé dans `forward_finetune` (`result['z']`) — lecture de
+confiance par patch pour le vérificateur G12, sans code supplémentaire.
+
+**ESJEPA-v2 — LE DÉCOUPLAGE (ablation, NON prioritaire — décision utilisateur 2026-08-23).**
+v1 est MASE-neutre par design (le gate ne touche pas la médiane) : la voie signal reste
+entraînée par MSE vers les latents EMA et converge toujours vers E[z_tgt|z_ctx]. L'idée
+d'ORIGINE de l'utilisateur (découpler le signal latent du bruit) est le levier MASE
+complémentaire : cible de la voie signal = latent de la fenêtre cible LISSÉE (EWMA causal
+déjà implémenté dans `_residual_stats`) — le prédicteur extrapole la structure débruitée à
+pleine amplitude au lieu d'amortir (réparation du SHRINKAGE par contamination de bruit).
+Une variable vs v1 (la cible du signal), flag candidat `error_signal_decoupled`.
+Distinction essentielle notée : le « médian qui traverse le pattern » a DEUX causes — la
+bimodalité vraie du futur (le médian marginal y est OPTIMAL pour la MASE, irréparable par
+tout point forecast ; c'est le boulot du fan/v1) et le shrinkage (réparable par v2, seul).
+⚠️ RISQUE IDENTIFIÉ qui justifie la non-priorité : la coupure du lissage est un
+hyperparamètre FRÉQUENTIEL — halflife 8 traite comme bruit tout pattern de période ≲16 pas,
+or nos pires familles (solar 10T, bizitobs 10S) vivent dans les hautes fréquences : v2
+risque d'amputer leur signal là où on souffre le plus (v1 ne court pas ce risque : des
+stats de résidu tolèrent une coupure imparfaite, une cible de signal amputée non).
+Prérequis : P1 de v1 tenu (z_corr > 0.3 — sinon le découplage n'aiderait pas non plus).
+Prédiction si couru : MASE ↓ (amplitude restaurée) à WQL ≥ constant, lecture per-config
+OBLIGATOIRE sur les hautes fréquences (l'effet coupure s'y verrait en premier) ; remèdes
+si confirmé : halflife par fréquence (métadonnées disponibles), sinon abandon.
+
+Historique de l'idée (conservé ci-dessous) :
+
+#### « ETSJEPA » : décomposition signal/résidu EN LATENT (formulation d'origine)
 
 Idée de l'utilisateur (antérieure à l'analyse TTM-R3, qui a convergé dessus de l'extérieur) :
 ne pas seulement décomposer l'ENTRÉE comme TTM-R3, mais apprendre DEUX cibles latentes —

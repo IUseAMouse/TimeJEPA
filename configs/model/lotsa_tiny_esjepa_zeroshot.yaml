@@ -1,0 +1,33 @@
+# @package _global_
+# Finetune zero-shot de l'arm ESJEPA — protocole G7.3c (1 époque, cosinus
+# recuit dedans), identique au protocole du contrôle mix pour que le duel
+# reste à une variable.
+#
+#   python scripts/train.py --config-name lotsa_tiny_esjepa_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_esjepa/pretrain_True/last.ckpt"'
+#
+# Le décodeur quantile (hérité) reçoit z via le gate d'étalement zéro-init :
+# le finetune part EXACTEMENT du fan baseline, la modulation n'apparaît que si
+# le gradient la demande. Témoin de stérilité : esjepa/gate_absmean ~0 en fin
+# de finetune = le décodeur ignore z — résultat négatif interprétable (la
+# cross-attention contexte suffit), pas un échec silencieux.
+# Prédictions posées avant le run : P2 = val_wql ↓ vs contrôle à val_mase égal
+# (±0.5 %, quasi garanti par le gate) ; P3 = fan plus large sur les fenêtres à
+# gros résidu réalisé, flares de queue bitbrains ↓.
+defaults:
+  - lotsa_tiny_esjepa
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_esjepa_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+  max_epochs: 1
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "error-signal", "robust-scale"]

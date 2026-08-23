@@ -1251,6 +1251,59 @@ E18g + exchange par raffinement) ; seul weather résiste, et son remède est dé
 diagnostiqué (pondération par source, E18h) — prochaine et dernière brique de la
 voie avant le papier court.
 
+### E18i — Le finetune mix v2 diagnostiqué : instabilité de LR, pas overfit (recuit court, 2026-08-23)
+
+**Le problème.** Le finetune mix v2 (3 époques, plafond 3e-4) a produit son champion à
+25 % d'époque 1 (0.8955/0.6190 — poids PERDUS, évincés par save_top_k sur val_loss),
+puis 300k steps de dégradation GIFT (0.906-0.916 / 0.62-0.67) pendant que la val_loss
+restait PLATE (0.5879 -> 0.5873) et que la train_loss_step lissée restait PLATE aussi.
+Overfit exigerait train ↓ pendant val ↑ : absent. Restait à discriminer « instabilité
+au LR chaud » (récupérable à froid) de « dégradation structurelle » (non récupérable).
+
+**Le test : recuit court depuis le survivant le plus proche du champion**
+(`epoch00_valloss0.5874.ckpt`, baseline évaluée 0.9186/0.6357). LR 5e-5, cosinus
+prévu sur 0.15 époque, warmup 0.005, arrêté à 20 % (stagnation avérée). Critère posé
+avant : récupération à <= ~0.62 => instabilité ; pas de récupération => plus profond.
+
+**Résultat (évals GIFT par checkpoint du recuit) :**
+
+| budget recuit | val_loss | MASE | CRPS |
+|---|---|---|---|
+| 0 % (baseline) | 0.5874 | 0.9186 | 0.6357 |
+| 5 % | 0.5865 | 0.9110 | **0.6272** |
+| 10 % | 0.5859 | 0.9082 | 0.6406* (~0.629 corrigé) |
+| 15 % | 0.5858 | **0.9066** | 0.6315 |
+| 20 % | 0.5859-v1 | 0.9090 | 0.6306 |
+
+*flare G8.4b : `bitbrains_fast_storage/5T/short` CRPS 2.812 (0.44-0.48 partout
+ailleurs), médiane saine (MASE 0.763, la meilleure des évals) — UNE config quasi-nulle
+a coûté ~1.3 pt d'agrégat. Idem car_parts 1.276 à 15 %. Le plancher relatif G8.4b
+passe de backlog à « avant les chiffres finaux E19 ».
+
+**Verdict : instabilité confirmée en signe, récupération partielle en amplitude.**
+(1) À LR froid, val_loss ↓ ET GIFT ↑ simultanément — ce que 300k steps à LR chaud
+n'ont jamais produit : le bassin n'était pas épuisé, le LR l'empêchait de s'y poser.
+Aucune signature d'overfit nulle part -> **mini est débloqué**. (2) Le recuit récupère
+~la moitié de l'écart au champion (0.0085/0.0167) immédiatement, puis erre dans la
+bande 0.627-0.632 : le 0.6190 du champion contenait une part de loterie de marche
+aléatoire — ne pas le poursuivre à coups de recuits. (3) Le pattern « gains à la
+rampe » se RÉPLIQUE à LR 6x plus bas : meilleur point à 5 % du recuit comme le
+champion était à 25 % du finetune — deuxième observation indépendante, deux échelles
+de LR. MASE, elle, s'améliore de façon monotone sur 4 évals (0.9186 -> 0.9066).
+
+**Doctrine adoptée (change les budgets de TOUTE la suite) :** les gains de finetune
+de cette lignée tombent en quelques dizaines de milliers de steps puis le reste est
+diffusion dans le plateau. Protocole E19 candidat, lancé dans la foulée : **1 époque
+fraîche depuis le pretrain, plafond tête 8e-5, backbone x0.1 (8e-6, LRs discriminés —
+la tête quantile part de zéro, le backbone part riche et est celui qui dérive),
+cosinus recuit dans l'époque** (`timejepa_lotsa_tiny_mix_zs_1ep`). Prédiction
+falsifiable posée avant : atterrissage 0.615-0.63 avec les meilleurs checkpoints en
+FIN d'époque (LR froid) ; si le pic est encore à ~5-25 % puis errance malgré le
+backbone à 8e-6, la promenade est intrinsèque à la loss et la sélection de checkpoint
+par éval GIFT devient l'outil de production officiel. Habitude actée après
+l'éviction du champion : `cp` immédiat de tout checkpoint couronné par une éval
+vers `checkpoints/champions/`.
+
 ---
 
 ## 3. Ce qui est établi
@@ -1619,6 +1672,37 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-23 (nuit)** — **ESJEPA implémenté** (G8.6, arm `model.error_signal`) : voie z =
+  statistiques déterministes du résidu EWMA causal par patch cible [B,31,4], tête z sur le
+  tronc du prédicteur (~8.5k params, `predictor.z_head.*` core P3.2, survit au finetune),
+  gate d'étalement zéro-init sur les largeurs de `_make_monotone` (médiane intouchable ⇒
+  MASE invariant, Δ WQL attribuable). λ_z=0.1, témoins `esjepa/z_corr` (kill-switch P1 > 0.3),
+  `z_pred_std_ratio`, `gate_absmean`. Bras « unexpected » du refus P3.2 généralisé aux
+  préfixes core (durcissement, couvre aussi w_film). Trio `lotsa_tiny_esjepa*` (base mix ⇒
+  contrôle = pretrain mix existant, une variable ; finetune 1 époque G7.3c). 23 tests dédiés
+  (dont rétrocompatibilité d'inférence des checkpoints pré-arm, demande utilisateur),
+  290 verts, zéro régression flag-off. Prédictions P1-P3 gravées au PLAN. Run APRÈS le
+  verdict mini-mix.
+- **2026-08-23 (soir)** — **G8.4b résolu : enveloppe de prévision relative au contexte**
+  dans `RobustScale.inverse` (clamp [min−10·w, max+10·w], w = max(étendue, échelle)).
+  Déclencheur : CRPS 18 305 724 sur bitbrains_fs/H/short au checkpoint 15 % de
+  mix_zs_1ep3e4 (×1.19 sur la geomean à lui seul) — un z de queue ≈15 de la tête
+  mi-entraînée, ré-amplifié par sinh ; le plancher d'échelle n'y pouvait rien, la garde
+  est en aval. Monotone, inactif sur les prévisions raisonnables, précédent Chronos ±15σ.
+  Test de régression, 267 verts. ⚠️ Toute éval arcsinh postérieure à ce commit n'est
+  comparable qu'aux évals du même code — ré-évaluer champion + final avant les chiffres
+  E19. Configs mini-mix créées le même jour (G7.4 : pretrain recette mix à 5M, finetune
+  protocole 1 époque, eval robust_scale porté).
+- **2026-08-23** — ajout de **E18i** : le recuit court depuis 0.5874 tranche le diagnostic
+  du finetune mix v2 — **instabilité de LR, pas overfit** (à froid : val ↓ ET GIFT ↑,
+  0.6357 → 0.6272 à 5 % puis bande 0.627-0.632 ; train plate sur tout le run chaud).
+  Mini débloqué ; champion 0.6190 requalifié « bassin + loterie de marche » ; pattern
+  gains-à-la-rampe répliqué à LR 6x plus bas. Doctrine : finetune court recuit. Run
+  protocole E19 lancé : 1 époque fraîche, tête 8e-5 / backbone x0.1, cosinus dans
+  l'époque (`mix_zs_1ep`), prédiction 0.615-0.63 avec pic en fin d'époque. Deux flares
+  G8.4b ont pollué des agrégats du recuit (bitbrains_fs/5T/short 2.812, car_parts 1.276)
+  → plancher relatif promu « avant chiffres finaux E19 ». Habitude actée :
+  `cp checkpoints/champions/` immédiat pour tout checkpoint couronné.
 - **2026-08-12** — création. Couvre E0 à E7, la thèse, les décisions de conception, le
   positionnement et la carte affirmations → preuves.
 - **2026-08-12 (soir)** — ajout de **E8**, le baseline sans pretraining : égalité (1.187 vs

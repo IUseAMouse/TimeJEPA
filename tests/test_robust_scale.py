@@ -179,6 +179,34 @@ def test_strictly_constant_context_is_log_bounded():
     assert torch.isfinite(rs.inverse(t + 3)).all()
 
 
+def test_rogue_tail_quantile_is_capped_by_context_envelope():
+    """
+    Régression G8.4b (2026-08-23, run mix_zs_1ep3e4 à 15 %) :
+    bitbrains_fast_storage/H/short — contexte plat + spikes, la tête quantile
+    mi-entraînée émet un quantile de queue z ≈ 15 en espace compressé, et
+    sinh(15)·échelle ≈ 10^6·échelle défigure l'agrégat GIFT (CRPS 1.8e7 mesuré,
+    ×1.19 sur la geomean des 97 configs À LUI SEUL). L'enveloppe de contexte
+    borne l'inverse à [min−K·w, max+K·w] ; le clamp est monotone et inactif
+    sur les valeurs raisonnables.
+    """
+    ctx = torch.zeros(1, 384, 1)
+    ctx[0, ::40, 0] = 100.0                    # plat + spikes : étendue 100
+    rs = RobustScale()
+    rs.fit(ctx)
+    rogue = torch.full((1, 96, 1), 15.0)       # z voyou en espace compressé
+    raw = rs.inverse(rogue)
+    hi = 100.0 + RobustScale.FORECAST_ENVELOPE * 100.0
+    assert torch.isfinite(raw).all()
+    assert raw.max() <= hi + 1e-3, f"quantile voyou non borné ({raw.max():.3g})"
+    # monotonie : un fan encadrant le voyou reste ordonné après clamp
+    fan = torch.stack([rogue - 1, rogue, rogue + 1], dim=-1)
+    inv = rs.inverse(fan)
+    assert (inv[..., 1:] >= inv[..., :-1]).all()
+    # et les valeurs DANS l'enveloppe restent exactes (aller-retour intact)
+    torch.testing.assert_close(rs.inverse(rs.transform(ctx)), ctx,
+                               rtol=1e-4, atol=1e-4)
+
+
 def test_healthy_windows_unchanged_by_std_fallback():
     """Sur une fenêtre gaussienne, MAD·1.4826 ≈ std > 0.1·std : le repli est
     inactif et la transformation reste celle d'avant le correctif."""

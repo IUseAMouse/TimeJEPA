@@ -1,0 +1,51 @@
+# @package _global_
+#
+# ARM ESJEPA — « ErrorSignal-JEPA » : la deuxième voie latente (G8.6, idée
+# utilisateur ; conception 2026-08-23).
+#
+#   # CONTRÔLE (déjà couru) : le pretrain mix lui-même —
+#   #   checkpoints/timejepa_lotsa_tiny_mix/pretrain_True/
+#   # L'arm :
+#   python scripts/train.py --config-name lotsa_tiny_esjepa wandb.run_name=esjepa
+#   # puis : lotsa_tiny_esjepa_zeroshot (finetune 1 époque) et lotsa_tiny_esjepa_eval
+#
+# Mécanisme : le prédicteur MSE converge vers E[z_tgt|z_ctx] — une moyenne
+# conditionnelle (mesuré : pred_var 0.6 vs target_var 0.95) ; l'information de
+# dispersion vit dans le résidu, jamais observé. L'arm ajoute une tête z sur le
+# tronc du prédicteur qui prédit les STATISTIQUES du résidu de lissage EWMA de
+# la fenêtre cible (log-RMS, log-MAD, asymétrie, autocorr lag-1 par patch —
+# l'hétéroscédasticité conditionnelle, jamais la réalisation du bruit,
+# irrécupérable par définition). Au finetune, z module l'ÉTALEMENT du fan
+# quantile via un gate zéro-init sur les largeurs de _make_monotone — la
+# médiane est intouchable par construction : MASE structurellement invariant,
+# tout delta WQL attribuable à l'étalement. Coût : <9k params (+0.8 %).
+#
+# UNE VARIABLE : hérite de lotsa_tiny_mix (corpus v2, arcsinh, LR 3e-4, cibles
+# standalone, budget 2 époques) — le duel esjepa-vs-mix ne porte que l'objectif z.
+#
+# Écarts délibérés (dits, pas cachés) :
+#   1. val_loss inclut la composante z (λ_z·smooth_l1) ⇒ NON comparable en brut
+#      à celle du contrôle mix — comparer val_loss/{invariance,sigreg,z}.
+#   2. λ_z = 0.1 (training.loss.lambda_z) : 4 dims contre 128 pour l'invariance.
+#      Témoin de siphonnage : si train_loss/invariance dévie de >2 % du contrôle
+#      à époque égale → λ_z=0.03 ou repli « prédicteur z séparé » (au plan).
+#
+# TÉMOINS (équivalents du aug/w_neq1_frac d'xres — s'ils sont mauvais, le run
+# ne mesure rien) :
+#   * esjepa/z_corr (val, Spearman z_pred↔log-RMS réalisée) : prédiction P1
+#     posée AVANT le run : > 0.3 ; ≈ 0 = kill-switch, l'arm meurt au pretrain.
+#   * esjepa/z_pred_std_ratio : collapse-vers-la-moyenne-marginale.
+defaults:
+  - lotsa_tiny_mix
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_esjepa"
+  error_signal: true
+
+training:
+  loss:
+    lambda_z: 0.1
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "pretrain", "error-signal", "robust-scale"]

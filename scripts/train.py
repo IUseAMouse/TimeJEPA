@@ -141,6 +141,12 @@ def main(cfg: DictConfig):
             # (model.cross_resolution) pilote le modèle, le module ET le
             # datamodule, pour qu'ils ne puissent pas diverger.
             cross_resolution=cfg.model.get('cross_resolution', False),
+            # ESJEPA — arm ErrorSignal ; même principe : une seule clé
+            # (model.error_signal) pilote le modèle (têtes) ET le module
+            # (loss z). lambda_z est un réglage d'entraînement, il vit sous
+            # training.loss.
+            error_signal=cfg.model.get('error_signal', False),
+            lambda_z=float(cfg.training.loss.get('lambda_z', 0.1)),
 
             # Input-geometry randomization (train split only)
             context_lengths=list(cfg.training.get('context_lengths') or []),
@@ -167,6 +173,16 @@ def main(cfg: DictConfig):
         
         warmup_epochs = cfg.training.lr_scheduler.warmup_epochs
 
+        # ESJEPA — garde finetune : un z entraîné au pretrain puis
+        # silencieusement inconsommé par un décodeur point est exactement la
+        # dégradation que le projet refuse (le ForecastingHead lève aussi,
+        # ceci rend le message actionnable au niveau config).
+        if cfg.model.get('error_signal', False) and cfg.model.decoder.type != 'quantile':
+            raise ValueError(
+                "model.error_signal=true exige model.decoder.type='quantile' "
+                "au finetune — la voie z module l'étalement du fan quantile."
+            )
+
         model.decoder = ForecastingHead(
             d_model=cfg.model.decoder.d_model,
             patch_size=cfg.model.patch_length,
@@ -174,7 +190,10 @@ def main(cfg: DictConfig):
             prediction_length=cfg.model.prediction_length,
             num_features=cfg.model.num_channels,
             decoder_type=cfg.model.decoder.type,
-            revin=model.revin
+            revin=model.revin,
+            # Site 3/3 de construction du ForecastingHead — même clé de config
+            # que le modèle et l'éval (loading.py), gardé par test.
+            error_signal=bool(cfg.model.get('error_signal', False)),
         )
         
         pl_module = FinetuneModule(

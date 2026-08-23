@@ -74,6 +74,15 @@ class JEPAPretrainModule(pl.LightningModule):
         # fausse. Off par défaut => configs existantes bit-identiques.
         cross_resolution: bool = False,
 
+        # ESJEPA — arm ErrorSignal : loss auxiliaire smooth_l1(z_pred, z_target)
+        # sur les statistiques du résidu de lissage (le modèle expose
+        # z_predictions/z_targets quand il est construit avec
+        # model.error_signal=true). lambda_z dose la voie z contre l'invariance
+        # (4 dims contre 128 — témoin de siphonnage : train_loss/invariance vs
+        # baseline). Off par défaut => configs existantes bit-identiques.
+        error_signal: bool = False,
+        lambda_z: float = 0.1,
+
         # Input-geometry randomization. scripts/diagnose_ettm.py shows skill
         # peaks exactly at the training context length and collapses on both
         # sides (electricity: +28.5% at ctx=384, -103.8% at ctx=768), i.e. the
@@ -141,6 +150,23 @@ class JEPAPretrainModule(pl.LightningModule):
                 "d'échantillon, physiquement faux quand contexte et cible sont "
                 "à des résolutions différentes. Poser "
                 "training.contextualized_targets: false dans la config de l'arm."
+            )
+
+        self.error_signal = bool(error_signal)
+        self.lambda_z = float(lambda_z)
+        if self.error_signal and reconstruction_target:
+            raise ValueError(
+                "error_signal=True est incompatible avec "
+                "reconstruction_target=True : l'arm reconstruction remplace "
+                "l'objectif latent entier (_compute_loss court-circuite "
+                "jepa_loss), une loss z par-dessus serait incohérente."
+            )
+        if self.error_signal and not getattr(model, 'error_signal', False):
+            raise ValueError(
+                "error_signal=True côté module mais le modèle a été construit "
+                "sans model.error_signal — les clés z_predictions/z_targets "
+                "n'existeraient pas. Les deux flags viennent de la même clé "
+                "de config (model.error_signal), vérifier la plomberie."
             )
 
         # Reconstruction head: d_model -> patch_size * num_features, i.e. exactly
@@ -294,7 +320,7 @@ class JEPAPretrainModule(pl.LightningModule):
             return loss, {'loss': loss, 'reconstruction_huber': loss,
                           'target_absmax': absmax}
 
-        return jepa_loss(
+        loss, components = jepa_loss(
             predictions,
             targets,
             loss_type=self.loss_type,
@@ -306,6 +332,23 @@ class JEPAPretrainModule(pl.LightningModule):
             ),
             return_components=True,
         )
+
+        # ESJEPA — loss z auxiliaire. smooth_l1 : les deux premières
+        # composantes sont des log-échelles (le log rend le multiplicatif
+        # additif et ~gaussien) et Huber borne la contribution des patches à
+        # résidu extrême (bitbrains) — même raisonnement que l'arm recon
+        # ci-dessus. Pas d'anti-collapse : la cible est FIXE (données) ; le
+        # mode d'échec réel (z_pred → moyenne marginale) est surveillé par le
+        # témoin esjepa/z_pred_std_ratio, pas régularisé.
+        if self.error_signal and 'z_predictions' in outputs:
+            z_loss = torch.nn.functional.smooth_l1_loss(
+                outputs['z_predictions'], outputs['z_targets'])
+            loss = loss + self.lambda_z * z_loss
+            components = dict(components)
+            components['z'] = z_loss
+            components['loss'] = loss
+
+        return loss, components
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         """
@@ -471,7 +514,41 @@ class JEPAPretrainModule(pl.LightningModule):
                     self.log('collapse/effective_rank', eff_rank, on_step=False,
                              on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
+        # ESJEPA — les deux témoins de l'arm (équivalents de aug/w_neq1_frac
+        # pour xres : s'ils sont mauvais, le run ne mesure rien) :
+        # * esjepa/z_corr : Spearman entre la log-RMS PRÉDITE (z_pred[...,0])
+        #   et la log-RMS RÉALISÉE du résidu — LE témoin de non-stérilité.
+        #   Prédiction P1 posée avant le run : > 0.3 ; ≈ 0 = l'hétéro-
+        #   scédasticité n'est pas prévisible depuis le contexte, l'arm meurt
+        #   AU PRETRAIN.
+        # * esjepa/z_pred_std_ratio : std(z_pred)/std(z_target) — le témoin du
+        #   collapse-vers-la-moyenne-marginale (l'analogue du pred_var 0.6 /
+        #   target_var 0.95 qui a motivé tout l'arm).
+        if self.error_signal and 'z_predictions' in outputs:
+            with torch.no_grad():
+                zp = outputs['z_predictions'][..., 0].reshape(-1).float()
+                zt = outputs['z_targets'][..., 0].reshape(-1).float()
+                self.log('esjepa/z_corr', self._spearman(zp, zt),
+                         on_step=False, on_epoch=True, prog_bar=True,
+                         logger=True, sync_dist=True)
+                ratio = zp.std() / zt.std().clamp_min(1e-9)
+                self.log('esjepa/z_pred_std_ratio', ratio, on_step=False,
+                         on_epoch=True, logger=True, sync_dist=True)
+
         return loss
+
+    @staticmethod
+    @torch.no_grad()
+    def _spearman(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        """Corrélation de Spearman (Pearson des rangs), sans scipy — les
+        ex-aequo reçoivent des rangs d'ordre d'apparition, suffisant pour un
+        témoin de monitoring."""
+        ra = a.argsort().argsort().float()
+        rb = b.argsort().argsort().float()
+        ra = ra - ra.mean()
+        rb = rb - rb.mean()
+        denom = (ra.norm() * rb.norm()).clamp_min(1e-12)
+        return (ra * rb).sum() / denom
 
     @torch.no_grad()
     def _effective_rank(self, embeddings: torch.Tensor) -> Optional[torch.Tensor]:

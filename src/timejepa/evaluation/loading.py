@@ -58,6 +58,11 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         # silencieusement faux (le flag ne porte AUCUN poids, seul le marqueur
         # le trahit).
         robust_scale=bool(cfg.model.get('robust_scale', False)),
+        # ESJEPA — tête z sur le prédicteur + gate d'étalement sur la tête
+        # quantile. Les poids (predictor.z_head.*) rendent les checkpoints
+        # auto-descriptifs sous le préfixe core => refus P3.2 dans les deux
+        # sens. Absent de toutes les configs existantes => False.
+        error_signal=bool(cfg.model.get('error_signal', False)),
     )
 
     # Add forecasting decoder
@@ -68,7 +73,11 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         prediction_length=cfg.model.prediction_length,
         num_features=cfg.model.num_channels,
         decoder_type=cfg.model.decoder.type,
-        revin=model.revin
+        revin=model.revin,
+        # ESJEPA : le décodeur reconstruit ici doit porter le même flag que le
+        # modèle (site 2/3 — les trois sites de construction du ForecastingHead
+        # lisent la même clé de config ; gardé par test).
+        error_signal=bool(cfg.model.get('error_signal', False)),
     )
 
     return model
@@ -177,9 +186,15 @@ def load_checkpoint(
     core = ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')
     core_bad = ([k for k, _, _ in dropped if k.startswith(core)]
                 + [k for k in critical_missing if k.startswith(core)]
-                # symétrie : un checkpoint arcsinh chargé dans un modèle nu
+                # symétrie : un checkpoint qui porte des poids core que le
+                # modèle n'a pas (arcsinh -> modèle nu, ESJEPA
+                # predictor.z_head -> modèle nu, xres w_film -> modèle nu)
                 # arrive en 'unexpected', pas en 'missing' — refuser aussi.
-                + [k for k in unexpected if k.startswith('robust_scaler.')])
+                # Durcissement 2026-08-23 (était limité à robust_scaler.) :
+                # évaluer un checkpoint d'arm dans un modèle construit sans le
+                # flag, c'est amputer l'architecture entraînée en silence.
+                # Aucun flux flag-off avec checkpoint conforme n'est touché.
+                + [k for k in unexpected if k.startswith(core)])
     if core_bad and not allow_partial:
         raise RuntimeError(
             f"Checkpoint/model mismatch on core components: {core_bad[:6]}"

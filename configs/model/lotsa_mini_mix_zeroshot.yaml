@@ -1,0 +1,34 @@
+# @package _global_
+# Finetune zero-shot du mini-mix — protocole G7.3c (E18i).
+#
+#   python scripts/train.py --config-name lotsa_mini_mix_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_mix/pretrain_True/last.ckpt"'
+#
+# ⚠️ max_epochs: 1 — DOCTRINE E18i, PAS le 3 de lotsa_tiny_mix_zeroshot : les
+# gains de finetune de cette lignée tombent à la rampe puis le LR chaud fait
+# errer le modèle dans le plateau (marche aléatoire mesurée, val plate, GIFT
+# qui se dégrade). Le cosinus étalé sur 1 époque traverse la zone des gains à
+# plein régime puis recuit AVANT que la dérive s'accumule. Même protocole que
+# le run tiny `mix_zs_1ep3e4` (2026-08-23) → la comparaison d'échelle du
+# finetune reste à une variable. Évaluer les checkpoints en route sur GIFT et
+# copier tout champion vers checkpoints/champions/ (leçon de l'éviction).
+defaults:
+  - lotsa_mini_mix
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_mix_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+  # Plafond 3e-4 : identique au finetune tiny (lotsa_tiny_mix_zeroshot).
+  optimizer:
+    learning_rate: 3.0e-4
+  max_epochs: 1
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "mix", "robust-scale"]

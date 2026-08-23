@@ -1,0 +1,50 @@
+# @package _global_
+#
+# G7.4 — PRETRAIN du MINI (~5,1 M) sur la RECETTE MIX (corpus mixte v2 + arcsinh
+# + cibles standalone), décision utilisateur 2026-08-23 après E18i.
+#
+#   python scripts/train.py --config-name lotsa_mini_mix wandb.run_name=mini-mix
+#   # puis : lotsa_mini_mix_zeroshot (finetune 1 époque) et lotsa_mini_mix_eval
+#
+# LA comparaison visée : mini-mix vs tiny-mix, UNE variable — la capacité.
+# Tout le reste est copié de lotsa_tiny_mix à l'identique : corpus
+# (data/processed/lotsa_xres, v2 régénéré 20000 chunks/famille), robust_scale,
+# LR 3e-4 (⚠️ écrase le 4e-4 de lotsa_mini — le duel d'échelle exige le MÊME
+# LR que tiny-mix ; si mini préférait un autre LR, ce serait une variable de
+# plus), cibles standalone (C1), budget 2 époques, validation 0.05.
+# Les prédictions falsifiables du duel sont écrites au PLAN (G7.4, 2026-08-19) :
+# saturation ⇒ plateau rank/variance plus haut + écart GIFT tiny→mini accru.
+#
+# Budget : max_epochs 2 comme tiny-mix (plafond, coupe manuelle possible).
+# E18c note qu'1 époque recuite « peut suffire » — mais dévier ici ajouterait
+# un item de bundle au duel d'échelle ; on paie la 2e époque pour la pureté.
+defaults:
+  - lotsa_mini
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_mix"
+  robust_scale: true
+
+training:
+  # Identique à lotsa_tiny_mix (voir son en-tête pour le raisonnement LR) —
+  # PAS le 4e-4 de lotsa_mini : une variable, la capacité.
+  optimizer:
+    learning_rate: 3.0e-4
+  max_epochs: 2
+  # C1 (audit 2026-08-20) : cibles standalone, comme tiny-mix et xres.
+  contextualized_targets: false
+
+trainer:
+  val_check_interval: 0.05
+
+early_stopping:
+  # Désactivé, même raisonnement que lotsa_tiny_mix / lotsa_mini_full : la
+  # valeur du modèle est en fin de recuit, pas au creux de val_loss (E12).
+  enabled: false
+
+data:
+  data_dir: "data/processed/lotsa_xres"
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "pretrain", "mix", "robust-scale"]

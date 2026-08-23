@@ -188,9 +188,14 @@ class FinetuneModule(pl.LightningModule):
         # Check for critical missing keys
         expected_missing = {'decoder', 'target_encoder', 'revin'}
         critical_missing = [k for k in missing if not any(exp in k for exp in expected_missing)]
-        # G8.4 — symétrie du marqueur robuste : un checkpoint arcsinh dans un
-        # modèle nu arrive en 'unexpected' et doit refuser autant que l'inverse.
-        critical_missing += [k for k in unexpected if k.startswith('robust_scaler.')]
+        # Symétrie des poids d'arm : un checkpoint qui porte des poids core que
+        # le modèle n'a pas (arcsinh -> nu, ESJEPA predictor.z_head -> nu, xres
+        # w_film -> nu) arrive en 'unexpected' et doit refuser autant que
+        # l'inverse — finetuner en amputant l'architecture pré-entraînée serait
+        # silencieux. (Durci 2026-08-23, était limité à robust_scaler. ; aligné
+        # sur loading.py.)
+        core = ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')
+        critical_missing += [k for k in unexpected if k.startswith(core)]
         
         if critical_missing:
             logger.error(f"❌ Critical missing keys: {critical_missing}")
@@ -479,3 +484,16 @@ class FinetuneModule(pl.LightningModule):
         for i, param_group in enumerate(optimizer.param_groups):
             group_name = param_group.get('name', f'group_{i}')
             self.log(f'lr_{group_name}', param_group['lr'], on_epoch=True, prog_bar=True, sync_dist=True)
+
+        # ESJEPA — témoin de stérilité du gate d'étalement : parti de zéro
+        # (zéro-init), s'il Y RESTE le décodeur ignore z — résultat négatif
+        # interprétable (la cross-attention contexte suffit), pas un échec
+        # silencieux. Équivalent finetune du aug/w_neq1_frac d'xres.
+        head = getattr(getattr(self.model, 'decoder', None), 'decoder', None)
+        z_gate = getattr(head, 'z_gate', None)
+        if z_gate is not None:
+            with torch.no_grad():
+                absmean = torch.cat(
+                    [z_gate.weight.abs().flatten(), z_gate.bias.abs().flatten()]
+                ).mean()
+            self.log('esjepa/gate_absmean', absmean, on_epoch=True, sync_dist=True)

@@ -53,6 +53,11 @@ class TransformerPredictor(nn.Module):
         # pas, donc le state_dict de toutes les configs existantes est inchangé
         # au bit près (leurs checkpoints se rechargent à l'identique).
         use_w_film: bool = False,
+        # ESJEPA — voie z (statistiques du résidu, hétéroscédasticité
+        # conditionnelle). Même contrat opt-in que use_w_film : flag off ⇒
+        # l'attribut z_head n'existe pas, state_dict bit-identique.
+        error_signal: bool = False,
+        z_dim: int = 4,
     ):
         super().__init__()
         
@@ -72,7 +77,23 @@ class TransformerPredictor(nn.Module):
             self.w_film = nn.Linear(1, 2 * d_model)
             nn.init.zeros_(self.w_film.weight)
             nn.init.zeros_(self.w_film.bias)
-        
+
+        if error_signal:
+            # ESJEPA — tête z sur le TRONC du prédicteur : lit les tokens
+            # cibles post-final_norm (AVANT prediction_head, qui est la tête de
+            # la voie signal) et prédit les statistiques du résidu par patch
+            # [B, N_target, z_dim]. Les gradients de la loss z remontent dans
+            # le tronc et l'encodeur : c'est le mécanisme voulu — la
+            # représentation apprend à retenir l'information de dispersion —
+            # dosé par lambda_z côté module. Pas de BatchNorm (l'update EMA du
+            # target encoder saute num_batches_tracked ; sans rapport ici mais
+            # la contrainte est de famille : LayerNorm uniquement).
+            self.z_head = nn.Sequential(
+                nn.Linear(d_model, d_model // 2),
+                nn.GELU(),
+                nn.Linear(d_model // 2, z_dim),
+            )
+
         self.future_position_embedding = nn.Parameter(
             torch.randn(1, max_target_patches, d_model) * 0.02
         )
@@ -175,6 +196,7 @@ class TransformerPredictor(nn.Module):
         num_targets: int,
         attention_mask: Optional[torch.Tensor] = None,
         w: Optional[torch.Tensor] = None,
+        return_z: bool = False,
     ) -> torch.Tensor:
         """
         Simplified forward pass when target positions are just 'next N'.
@@ -183,6 +205,12 @@ class TransformerPredictor(nn.Module):
         et non par batch, parce que la résolution est tirée par item alors que
         la randomisation de géométrie est par batch ; les deux coexistent.
 
+        `return_z` (ESJEPA) : si True, retourne AUSSI z_pred [B, num_targets,
+        z_dim] — les statistiques du résidu prédites par la tête z. Refus
+        bruyant si le prédicteur a été construit sans error_signal (un z
+        silencieusement absent, c'est un arm qui croit moduler ses quantiles
+        et ne module rien). Flag off : signature et retour inchangés.
+
         Args:
             context_embeddings: Context [B, N_context, d_model]
             num_targets: Number of targets to predict
@@ -190,7 +218,14 @@ class TransformerPredictor(nn.Module):
 
         Returns:
             Predictions [B, num_targets, d_model]
+            (ou le tuple (predictions, z_pred) si return_z=True)
         """
+        if return_z and not hasattr(self, 'z_head'):
+            raise ValueError(
+                "return_z=True mais le prédicteur a été construit sans "
+                "error_signal — l'arm ESJEPA exige model.error_signal=true "
+                "à la construction."
+            )
         batch_size = context_embeddings.shape[0]
 
         future_queries = self._future_queries(batch_size, num_targets)
@@ -222,11 +257,15 @@ class TransformerPredictor(nn.Module):
             x = block(x, attention_mask=attention_mask)
         
         x = self.final_norm(x)
-        
+
         # Extract targets
-        target_predictions = x[:, -num_targets:, :]
-        target_predictions = self.prediction_head(target_predictions)
-        
+        trunk_targets = x[:, -num_targets:, :]
+        target_predictions = self.prediction_head(trunk_targets)
+
+        if return_z:
+            # ESJEPA — z lu sur le tronc partagé (post-final_norm), pas sur la
+            # sortie de prediction_head : les deux voies bifurquent ici.
+            return target_predictions, self.z_head(trunk_targets)
         return target_predictions
 
 
@@ -319,6 +358,13 @@ class MLPPredictor(nn.Module):
         if w is not None and bool((w != 1).any()):
             raise NotImplementedError(
                 "MLPPredictor ne supporte pas le conditionnement w (G9.2) — "
+                "utiliser predictor_type='transformer'."
+            )
+        # Même famille de garde pour ESJEPA : **kwargs ne doit pas avaler
+        # return_z en silence (un z jamais produit = quantiles jamais modulés).
+        if kwargs.get('return_z', False):
+            raise NotImplementedError(
+                "MLPPredictor ne supporte pas la voie z (ESJEPA) — "
                 "utiliser predictor_type='transformer'."
             )
         # Mean pool

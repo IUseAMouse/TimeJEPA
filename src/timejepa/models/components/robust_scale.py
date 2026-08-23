@@ -91,6 +91,29 @@ class RobustScale(nn.Module):
     STD_FALLBACK = 0.1
     MAD_COLLAPSE_GATE = 0.01
 
+    # Enveloppe de prévision relative au contexte — correctif G8.4b du
+    # 2026-08-23, mesuré sur le run mix_zs_1ep3e4 à 15 % d'époque :
+    # bitbrains_fast_storage/H/short a affiché un CRPS de 18 305 724 (la config
+    # vaut 0.62-0.67 sur toutes les évals voisines), soit x1.19 sur l'agrégat
+    # geomean des 97 configs À LUI SEUL. Diagnostic : ce n'est PAS l'échelle
+    # plancher (le repère était borné) — c'est la tête quantile mi-entraînée
+    # qui émet un quantile de queue |z| ≈ 15 en espace compressé, que sinh
+    # ré-amplifie en sinh(15)·échelle ≈ 10^6·échelle. Le plancher ne peut rien
+    # contre un z voyou : la garde correcte est en AVAL, sur l'inverse.
+    #
+    # Le prior encodé : une prévision ne sort pas de
+    #     [min(ctx) − K·w, max(ctx) + K·w],  w = max(étendue(ctx), échelle)
+    # avec K = 10 — dix fois l'étendue du contexte au-delà de ses bornes, très
+    # au-dessus de tout futur plausible des benchmarks, très en dessous des
+    # accidents sinh. Précédent structurel : le vocabulaire de Chronos borne
+    # ses sorties à ±15σ par construction. Le clamp est monotone (l'ordre des
+    # quantiles survit) et INACTIF sur toute prévision raisonnable — seuls les
+    # accidents de queue sont touchés. `w` est protégé par l'échelle pour les
+    # contextes dégénérés (étendue 0). Bonus mesurable attendu : borne aussi
+    # le biais haussier x10-30 des fenêtres quasi-nulles (l'observation
+    # london_smart_meters qui a ouvert G8.4b).
+    FORECAST_ENVELOPE = 10.0
+
     def __init__(self, eps: float = 1e-3):
         super().__init__()
         self.eps = eps
@@ -99,6 +122,8 @@ class RobustScale(nn.Module):
         self.register_buffer("is_robust", torch.ones(1))
         self.median: torch.Tensor | None = None
         self.scale: torch.Tensor | None = None
+        self.ctx_min: torch.Tensor | None = None
+        self.ctx_max: torch.Tensor | None = None
 
     def fit(self, context: torch.Tensor) -> None:
         """context: [B, L, C] — stats sur L, par instance et par canal."""
@@ -111,6 +136,9 @@ class RobustScale(nn.Module):
         self.scale = torch.where(
             mad_sigma > self.MAD_COLLAPSE_GATE * std, mad_sigma, fallback
         ).clamp_min(self.eps).detach()
+        # Bornes du contexte pour l'enveloppe de prévision (cf. FORECAST_ENVELOPE).
+        self.ctx_min = context.amin(dim=1, keepdim=True).detach()
+        self.ctx_max = context.amax(dim=1, keepdim=True).detach()
 
     def transform(self, x: torch.Tensor) -> torch.Tensor:
         assert self.median is not None, "fit(context) d'abord"
@@ -118,8 +146,12 @@ class RobustScale(nn.Module):
 
     def inverse(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Inverse point à point. Pour un tenseur de quantiles [B, n, Q], la
-        monotonie de sinh préserve l'ordre des niveaux — aucun re-tri requis.
+        Inverse point à point, borné par l'enveloppe de contexte (cf.
+        FORECAST_ENVELOPE). Pour un tenseur de quantiles [B, n, Q], la
+        monotonie de sinh ET du clamp préserve l'ordre des niveaux — aucun
+        re-tri requis. Toute valeur dont l'inverse exact tombe DANS l'enveloppe
+        (c.-à-d. toute prévision raisonnable, et tout aller-retour
+        transform→inverse de données réelles) est restituée exactement.
         """
         assert self.median is not None, "fit(context) d'abord"
         med, scale = self.median, self.scale
@@ -127,4 +159,6 @@ class RobustScale(nn.Module):
             # sorties quantiles [B, n, Q] contre stats [B, 1, C=1] : les stats
             # se diffusent sur la dimension Q (univarié, C=1).
             pass  # le broadcast [B,1,1] -> [B,n,Q] est déjà correct
-        return torch.sinh(x) * scale + med
+        raw = torch.sinh(x) * scale + med
+        half = self.FORECAST_ENVELOPE * torch.maximum(self.ctx_max - self.ctx_min, scale)
+        return raw.clamp(self.ctx_min - half, self.ctx_max + half)

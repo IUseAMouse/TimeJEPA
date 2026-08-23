@@ -276,6 +276,9 @@ class ForecastingHead(nn.Module):
         revin: Optional[nn.Module] = None,
         quantile_levels: Optional[Sequence[float]] = None,
         quantile_use_context: bool = True,
+        # ESJEPA — transmis à QuantileHead (gate d'étalement). Flag off ⇒
+        # state_dict et comportement bit-identiques.
+        error_signal: bool = False,
     ):
         super().__init__()
 
@@ -318,9 +321,18 @@ class ForecastingHead(nn.Module):
                 prediction_length=prediction_length,
                 quantile_levels=quantile_levels or DEFAULT_QUANTILES,
                 use_context=quantile_use_context,
+                use_error_signal=error_signal,
             )
         else:
             raise ValueError(f"Unknown decoder_type: {decoder_type}")
+
+        if error_signal and decoder_type != 'quantile':
+            # Un z entraîné au pretrain puis silencieusement inconsommé par un
+            # décodeur point est exactement la dégradation que le projet refuse.
+            raise ValueError(
+                f"error_signal=True exige decoder_type='quantile' (la voie z "
+                f"module l'étalement du fan) — reçu '{decoder_type}'."
+            )
 
         self.output_norm = nn.LayerNorm(num_features)
 
@@ -333,6 +345,7 @@ class ForecastingHead(nn.Module):
         x: torch.Tensor,
         skip_revin: bool = False,
         context_embeddings: Optional[torch.Tensor] = None,
+        z: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Generate forecasts.
@@ -343,6 +356,9 @@ class ForecastingHead(nn.Module):
             context_embeddings: Encoder output [B, N_ctx, d_model]. Only the
                 quantile head consumes it; the point decoders ignore it, so the
                 caller can always pass it.
+            z: ESJEPA — stats du résidu prédites [B, N, z_dim]. Contrairement à
+                context_embeddings, un z fourni à un décodeur point est REFUSÉ :
+                il n'existe que si l'arm est actif, le perdre serait silencieux.
 
         Returns:
             For point decoders: (forecast [B, L, C], forecast_denorm [B, L, C])
@@ -350,8 +366,13 @@ class ForecastingHead(nn.Module):
             — the caller extracts the median.
         """
         if self.decoder_type == 'quantile':
-            predictions = self.decoder(x, context_embeddings=context_embeddings)
+            predictions = self.decoder(x, context_embeddings=context_embeddings, z=z)
         else:
+            if z is not None:
+                raise ValueError(
+                    "z (ESJEPA) reçu par un décodeur point — la voie z module "
+                    "un fan quantile, decoder_type='quantile' requis."
+                )
             predictions = self.decoder(x)
 
         if skip_revin or self.revin is None:

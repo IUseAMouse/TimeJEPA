@@ -10,6 +10,7 @@ This model learns to predict future representations from past context:
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Optional, Dict, Any, Literal
 
 from .components.revin import RevIN
@@ -176,11 +177,35 @@ class JEPATST(nn.Module):
         # (voir components/robust_scale.py). Opt-in strict : à False, aucun
         # attribut, aucun chemin de calcul, state_dict inchangé.
         robust_scale: bool = False,
+
+        # ESJEPA — arm ErrorSignal : deuxième voie latente qui prédit les
+        # STATISTIQUES du résidu de lissage (hétéroscédasticité conditionnelle,
+        # jamais sa réalisation — irrécupérable par définition). z_target est
+        # calculé des données (EWMA causal, aucun encodeur), z_pred sort d'une
+        # tête sur le tronc du prédicteur, et au finetune z module l'étalement
+        # du fan quantile (gate zéro-init — la médiane est intouchable par
+        # construction). Opt-in strict : à False, aucun attribut, aucun chemin
+        # de calcul, state_dict inchangé au bit près.
+        error_signal: bool = False,
+
         affine: bool = True,
         subtract_last: bool = False,
     ):
         super().__init__()
-        
+
+        if error_signal and predictor_type != 'transformer':
+            raise ValueError(
+                "error_signal=True exige predictor_type='transformer' — la "
+                "tête z vit sur le tronc du prédicteur (MLPPredictor n'a ni "
+                "requêtes ni tokens cibles où la brancher)."
+            )
+        if error_signal and num_features != 1:
+            raise ValueError(
+                "error_signal=True n'est implémenté qu'en univarié "
+                "(num_features=1) — les stats de résidu par patch sont "
+                "calculées canal replié."
+            )
+
         self.input_length = input_length
         self.prediction_length = prediction_length
         self.num_features = num_features
@@ -189,6 +214,7 @@ class JEPATST(nn.Module):
         self.d_model = d_model
         self.use_revin = use_revin
         self.robust_scaler = RobustScale() if robust_scale else None
+        self.error_signal = error_signal
         
         # Calculate number of patches for context and target
         self.num_patches = (input_length - patch_size) // stride + 1
@@ -245,6 +271,7 @@ class JEPATST(nn.Module):
                 activation=activation,
                 max_target_patches=max_target_patches,
                 use_w_film=cross_resolution,
+                error_signal=error_signal,
             )
         elif predictor_type == 'mlp':
             self.predictor = MLPPredictor(
@@ -272,7 +299,8 @@ class JEPATST(nn.Module):
             prediction_length=prediction_length,
             num_features=num_features,
             decoder_type=decoder_type,
-            revin=self.revin
+            revin=self.revin,
+            error_signal=error_signal and decoder_type == 'quantile',
         )
         
         # Model state
@@ -367,20 +395,106 @@ class JEPATST(nn.Module):
             # [B, num_target_patches, d_model]
 
         # 5. Predict target representations from context embeddings
-        predictions = self.predictor.forward_simple(
-            context_embeddings=context_embeddings,
-            num_targets=num_target_patches,
-            # G9.2 : ratio d'échelle par item — None sur tous les chemins
-            # existants, donc bit-identique hors arm inter-résolution.
-            w=w,
-        )
+        if self.error_signal:
+            # ESJEPA : la même passe du tronc produit aussi z_pred [B, N, 4].
+            predictions, z_predictions = self.predictor.forward_simple(
+                context_embeddings=context_embeddings,
+                num_targets=num_target_patches,
+                w=w,
+                return_z=True,
+            )
+        else:
+            predictions = self.predictor.forward_simple(
+                context_embeddings=context_embeddings,
+                num_targets=num_target_patches,
+                # G9.2 : ratio d'échelle par item — None sur tous les chemins
+                # existants, donc bit-identique hors arm inter-résolution.
+                w=w,
+            )
         # [B, num_target_patches, d_model]
-        
-        return {
+
+        out = {
             'predictions': predictions,
             'targets': target_embeddings.detach(),
             'context_embeddings': context_embeddings,
         }
+        if self.error_signal:
+            # Clés ABSENTES flag off (le dict de sortie des configs existantes
+            # est épinglé par test).
+            out['z_predictions'] = z_predictions
+            out['z_targets'] = self._residual_stats(
+                context_norm, target_norm, num_target_patches)
+        return out
+
+    @torch.no_grad()
+    def _residual_stats(
+        self,
+        context_norm: torch.Tensor,
+        target_norm: torch.Tensor,
+        num_target_patches: int,
+    ) -> torch.Tensor:
+        """
+        ESJEPA — z_target : statistiques DÉTERMINISTES du résidu de lissage de
+        la fenêtre cible, par patch. [B, num_target_patches, 4].
+
+        Ground truth calculée des DONNÉES normalisées (post-arcsinh+RevIN),
+        indépendante de tout encodeur : rien à EMA-iser, rien qui puisse
+        s'effondrer, compatible contextualized_targets=false et
+        cross_resolution (en xres les grilles contexte/cible diffèrent — le
+        lissage traverse la jonction, approximation acceptée et documentée).
+
+        Lissage : EWMA CAUSAL (halflife = patch_size/2), implémenté en
+        convolution à noyau exponentiel tronqué, initialisé sur la queue du
+        contexte — aucun lookahead : la stat du patch t ne dépend que des
+        valeurs <= fin du patch t (épinglé par test).
+
+        Les 4 composantes par patch de résidu r :
+          0. log(RMS(r) + 1e-3)          — l'essentiel : l'échelle du bruit
+          1. log(MAD(r)·1.4826 + 1e-3)   — échelle robuste (queues lourdes)
+          2. tanh(mean(r³)/RMS³)          — asymétrie bornée
+          3. autocorrélation lag-1        — bruit blanc vs bruit structuré
+        Plancher 1e-3 : patches plats (solar de nuit — pathologie mesurée de
+        l'arm recon, cf. jepa_pretrain_module).
+        """
+        B, target_len, C = target_norm.shape
+        # Noyau exponentiel tronqué à K pas (couvre >99 % de la masse à
+        # halflife=8 pour K=64), jamais plus long que le contexte disponible.
+        halflife = self.patch_size / 2.0
+        alpha = 1.0 - 0.5 ** (1.0 / halflife)
+        K = min(context_norm.shape[1] + 1, 4 * self.patch_size)
+        lags = torch.arange(K, device=target_norm.device,
+                            dtype=target_norm.dtype)
+        kern = alpha * (1.0 - alpha) ** lags
+        kern = (kern / kern.sum()).flip(0).reshape(1, 1, K)
+
+        # Fenêtre = queue du contexte (K-1 pas) ‖ cible ; conv "valid" rend
+        # exactement target_len lissages causaux.
+        tail = torch.cat([context_norm[:, -(K - 1):], target_norm], dim=1)
+        x = tail.permute(0, 2, 1).reshape(B * C, 1, -1)
+        smooth = F.conv1d(x, kern).reshape(B, C, target_len).permute(0, 2, 1)
+        resid = (target_norm - smooth).squeeze(-1)          # [B, target_len]
+
+        # Découpe par patch sur la grille du Patching (16/8). Si la géométrie
+        # randomisée laisse un patch de padding (règle répétition du dernier
+        # point), on réplique la dernière stat — même politique que Patching.
+        patches = resid.unfold(1, self.patch_size, self.stride)  # [B, N', P]
+        rms = patches.pow(2).mean(-1).sqrt()
+        mad = (patches - patches.median(-1, keepdim=True).values).abs() \
+            .median(-1).values * 1.4826
+        asym = torch.tanh(patches.pow(3).mean(-1) / rms.pow(3).clamp_min(1e-9))
+        ac1 = (patches[..., :-1] * patches[..., 1:]).mean(-1) / \
+            patches.pow(2).mean(-1).clamp_min(1e-9)
+        z = torch.stack([
+            (rms + 1e-3).log(),
+            (mad + 1e-3).log(),
+            asym,
+            ac1.clamp(-1.0, 1.0),
+        ], dim=-1)                                          # [B, N', 4]
+
+        if z.shape[1] < num_target_patches:
+            pad = z[:, -1:, :].expand(-1, num_target_patches - z.shape[1], -1)
+            z = torch.cat([z, pad], dim=1)
+        return z[:, :num_target_patches, :].detach()
 
     def forward_finetune(
         self,
@@ -424,19 +538,34 @@ class JEPATST(nn.Module):
         # [B, num_patches, d_model]
         
         # 4. Predict future representations
-        predictions = self.predictor.forward_simple(
-            context_embeddings=context_embeddings,
-            num_targets=self.num_target_patches,
-            # Audit 2026-08-20 (T2) : après pretrain xres, le biais du FiLM est
-            # ENTRAÎNÉ — le comportement appris « à w=1 » l'inclut. Ne pas
-            # appliquer le FiLM au finetune/éval n'est donc PAS l'identité :
-            # c'est un modèle différent de celui qui a été pré-entraîné. On
-            # applique explicitement w=1 quand le FiLM existe ; sans FiLM
-            # (toutes les configs non-xres), w=None et rien ne change.
-            w=(torch.ones(context_embeddings.shape[0],
-                          device=context_embeddings.device)
-               if hasattr(self.predictor, 'w_film') else None),
-        )
+        z_pred = None
+        if self.error_signal:
+            # ESJEPA : z_pred sort de la même passe et modulera l'étalement du
+            # fan quantile ; recalculé à chaque roll par le rollout (qui passe
+            # par forward_finetune), y compris sur le batch B×Q du fan.
+            predictions, z_pred = self.predictor.forward_simple(
+                context_embeddings=context_embeddings,
+                num_targets=self.num_target_patches,
+                w=(torch.ones(context_embeddings.shape[0],
+                              device=context_embeddings.device)
+                   if hasattr(self.predictor, 'w_film') else None),
+                return_z=True,
+            )
+        else:
+            predictions = self.predictor.forward_simple(
+                context_embeddings=context_embeddings,
+                num_targets=self.num_target_patches,
+                # Audit 2026-08-20 (T2) : après pretrain xres, le biais du FiLM
+                # est ENTRAÎNÉ — le comportement appris « à w=1 » l'inclut. Ne
+                # pas appliquer le FiLM au finetune/éval n'est donc PAS
+                # l'identité : c'est un modèle différent de celui qui a été
+                # pré-entraîné. On applique explicitement w=1 quand le FiLM
+                # existe ; sans FiLM (toutes les configs non-xres), w=None et
+                # rien ne change.
+                w=(torch.ones(context_embeddings.shape[0],
+                              device=context_embeddings.device)
+                   if hasattr(self.predictor, 'w_film') else None),
+            )
         # [B, num_target_patches, d_model]
         
         # 5. Decode to forecast values
@@ -450,7 +579,12 @@ class JEPATST(nn.Module):
         # that only sees it cannot separate two contexts with the same expected
         # future but different volatility. Giving it the context restores that.
         forecast, forecast_denorm = self.decoder(
-            predictions, skip_revin=skip_revin, context_embeddings=context_embeddings
+            predictions, skip_revin=skip_revin,
+            context_embeddings=context_embeddings,
+            # ESJEPA : None hors arm (kwarg par défaut — chemin bit-identique) ;
+            # avec l'arm, la tête quantile refuse bruyamment un z manquant et
+            # un décodeur point refuse un z fourni.
+            z=z_pred,
         )
         # Point decoders: [B, prediction_length, C]
         # Quantile head:  [B, prediction_length, Q], sorted along Q
@@ -478,6 +612,11 @@ class JEPATST(nn.Module):
             result['quantile_levels'] = head.quantile_levels
             result['forecast'] = head.median(forecast)
             result['forecast_denorm'] = head.median(forecast_denorm)
+
+        if z_pred is not None:
+            # Exposé pour le vérificateur G12 (lecture de confiance par patch)
+            # et les sondes ; clé ABSENTE hors arm.
+            result['z'] = z_pred
 
         if return_representations:
             result['context_embeddings'] = context_embeddings
