@@ -172,6 +172,22 @@ EVAL_SAFE_OVERRIDES: Tuple[str, ...] = (
     # distinct, et GiftEvalPretrain le sanctionne.
     "australian_electricity_demand",
 
+    # --- solar_power : LA donnée 10T réelle du corpus v3 (levée 2026-08-24) --
+    # Les trois vérifications du contrat, faites une à une :
+    # 1. GIFT-Eval : `solar_power` figure dans GiftEvalPretrain, le corpus de
+    #    pré-entraînement SANCTIONNÉ par les auteurs du benchmark — déclaré
+    #    non-fuitant vis-à-vis de leurs 97 configs, solar/10T comprise (même
+    #    caution que kdd2022/taxi_30min ci-dessus, référence G8.1).
+    # 2. Nixtla : aucun benchmark solaire dans les 7 (electricity, etth1/2,
+    #    ettm1/2, traffic, weather) — aucun recoupement possible.
+    # 3. Suite Monash LOCALE : elle évalue solar-10-minute — c'est la SEULE
+    #    raison de l'ancienne exclusion, et cette suite est DÉPRÉCIÉE au profit
+    #    de GIFT-Eval (décision de périmètre prévue explicitement par la note
+    #    ci-dessous : « ils redeviennent admissibles »). Conséquence à dire :
+    #    la ligne solar de la suite Monash locale cesse d'être zero-shot — la
+    #    suite ne porte de toute façon aucun chiffre publiable (m=1, §1).
+    "solar_power",
+
     # --- qualité de l'air chinoise -----------------------------------------
     # ⚠️ L'entrée la moins tranchée du lot : l'éval GIFT kdd_cup_2018 est aussi
     # de la qualité de l'air pékinoise, et un recouvrement de FENÊTRES
@@ -395,6 +411,7 @@ def iter_dense_chunks(
     max_chunks: Optional[int] = None,
     max_nan_fraction: float = 0.05,
     stats: Optional[ChunkStats] = None,
+    pad_to: Optional[int] = None,
 ) -> Iterator[np.ndarray]:
     """
     Transforme un flux de séries de longueurs quelconques en un flux de morceaux
@@ -405,7 +422,21 @@ def iter_dense_chunks(
     C'est un vrai coût — une série de 5 000 pas est utilisable pour une fenêtre
     de 1 280 mais sera perdue si `chunk_length` vaut 8 192 — d'où `ChunkStats`,
     qui le rend visible au lieu de le laisser deviner.
+
+    `pad_to` (corpus v3, séries courtes — G7.1/roadmap S2) : si fourni, tout
+    morceau accepté plus court que `pad_to` est REMBOURRÉ À GAUCHE par
+    répétition de sa première valeur, jusqu'à `pad_to` exactement — la longueur
+    d'émission devient max(chunk_length, pad_to). Pourquoi à gauche : la donnée
+    RÉELLE occupe la fin du morceau, là où le dataset lit la CIBLE — la cible
+    est donc toujours réelle, et le contexte « plat puis données » est
+    précisément ce que l'évaluation impose déjà aux séries courtes
+    (prepare_context edge-padde à gauche, evaluate_gift.py). Le modèle
+    s'entraîne ainsi dans la condition où il sera évalué (m4_yearly : 19 pas
+    de contexte). ⚠️ La cible (256 pas) doit être réelle : appeler avec
+    `min_length ≥ 384` (256 de cible + ≥ 128 de contexte réel) — c'est le
+    réglage recommandé `--min-length 384 --pad-to 1280`.
     """
+    emit_len = max(chunk_length, pad_to) if pad_to else chunk_length
     emitted = 0
     for series in series_iter:
         arr = np.asarray(series, dtype=np.float32).ravel()
@@ -420,7 +451,13 @@ def iter_dense_chunks(
                 stats.lost_to_chunking += 1
 
         for chunk in segment_series(arr, chunk_length, min_length):
-            if chunk.shape[0] != chunk_length:
+            if pad_to and chunk.shape[0] < emit_len:
+                # rembourrage-bord GAUCHE : la donnée réelle reste à la fin
+                # (côté cible) — voir docstring.
+                chunk = np.concatenate([
+                    np.full(emit_len - chunk.shape[0], chunk[0],
+                            dtype=np.float32), chunk])
+            if chunk.shape[0] != emit_len:
                 continue
             if not _finite(chunk):
                 filled = impute_gaps(chunk, max_nan_fraction)
@@ -518,6 +555,7 @@ def convert_subset(
     max_chunks: int,
     max_nan_fraction: float = 0.05,
     sample_size: int = 200,
+    pad_to: Optional[int] = None,
 ) -> Tuple[int, ChunkStats, Optional[int]]:
     """
     Convertit UN sous-ensemble (flux de séries 1-D) en un `.npy` dense.
@@ -550,6 +588,7 @@ def convert_subset(
         yield from buffered
         yield from rest
 
+    emit_len = max(effective, pad_to) if pad_to else effective
     chunks = iter_dense_chunks(
         _chained(),
         chunk_length=effective,
@@ -557,8 +596,9 @@ def convert_subset(
         max_chunks=max_chunks,
         max_nan_fraction=max_nan_fraction,
         stats=stats,
+        pad_to=pad_to,
     )
     written = write_dense_npy(
-        chunks, out_path, chunk_length=effective, max_chunks=max_chunks
+        chunks, out_path, chunk_length=emit_len, max_chunks=max_chunks
     )
-    return written, stats, effective
+    return written, stats, emit_len

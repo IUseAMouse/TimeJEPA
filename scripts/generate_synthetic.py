@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.data.synthetic import (  # noqa: E402
     DEFAULT_FAMILIES,
+    V3_FAMILIES,
     write_synthetic_family,
 )
 
@@ -52,13 +53,17 @@ def main():
     ap.add_argument("--seed", type=int, default=0,
                     help="Graine racine ; chaque famille dérive la sienne.")
     ap.add_argument("--families", nargs="*", default=None,
-                    help="Restreindre à ces familles (défaut : les trois).")
+                    help="Restreindre à ces familles (défaut : toutes celles du set).")
+    ap.add_argument("--set", choices=["default", "v3"], default="default",
+                    help="v3 = les 3 familles v1 + ops_bursty (bizitobs/E19) "
+                         "+ intermittent (car_parts). Roadmap S2 2026-08-24.")
     args = ap.parse_args()
 
-    fams = [f for f in DEFAULT_FAMILIES
+    bank = V3_FAMILIES if args.set == "v3" else DEFAULT_FAMILIES
+    fams = [f for f in bank
             if args.families is None or f.name in args.families]
     if not fams:
-        known = ", ".join(f.name for f in DEFAULT_FAMILIES)
+        known = ", ".join(f.name for f in bank)
         raise SystemExit(f"aucune famille ne correspond — connues : {known}")
 
     total_obs = 0

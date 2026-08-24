@@ -1,0 +1,19 @@
+# @package _global_
+# Éval des checkpoints v3 (GIFT / Nixtla).
+#
+#   python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval \
+#       '+checkpoint_path="checkpoints/timejepa_lotsa_tiny_v3_zs/pretrain_False/<ckpt>"'
+#   # procédure officielle du projet : ajouter +tta_flip=true (E19b)
+#
+# robust_scale hérité de lotsa_tiny_mix_eval (le flag DOIT être porté — P3.2).
+# Le nom est surchargé pour que les résultats atterrissent dans
+# evaluation/timejepa_lotsa_tiny_v3_zs/.
+defaults:
+  - lotsa_tiny_mix_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_v3_zs"
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "robust-scale"]

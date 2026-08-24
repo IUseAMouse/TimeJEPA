@@ -109,6 +109,14 @@ def main():
                          "pour une fenêtre de 1280, et bien plus de séries.")
     ap.add_argument("--min-length", type=int, default=1280,
                     help="Séries plus courtes ignorées (= fenêtre requise).")
+    ap.add_argument("--pad-to", type=int, default=None,
+                    help="Corpus v3, séries courtes (G7.1/S2) : rembourre À "
+                         "GAUCHE tout morceau accepté jusqu'à cette longueur "
+                         "(répétition de la première valeur) — la cible reste "
+                         "réelle, le contexte 'plat puis données' est la "
+                         "condition d'éval des séries courtes. Réglage "
+                         "recommandé : --min-length 384 --pad-to 1280 "
+                         "--chunk-length 1280 sur m1/m3/tourism/nn5.")
     ap.add_argument("--max-chunks-per-subset", type=int, default=200_000,
                     help="Plafond par sous-ensemble.")
     ap.add_argument("--max-chunks-per-family", type=int, default=None,
@@ -216,6 +224,9 @@ def main():
                 yield from buffered
                 yield from rest
 
+            emit_len = max(effective, args.pad_to) if args.pad_to else effective
+            if emit_len != effective:
+                logger.info(f"    rembourrage-bord gauche : {effective} -> {emit_len}")
             stats = ChunkStats()
             chunks = iter_dense_chunks(
                 _chained(),
@@ -224,10 +235,11 @@ def main():
                 max_chunks=budget[subset],
                 max_nan_fraction=args.max_nan_fraction,
                 stats=stats,
+                pad_to=args.pad_to,
             )
             written = write_dense_npy(
                 chunks, out_path,
-                chunk_length=effective,
+                chunk_length=emit_len,
                 max_chunks=budget[subset],
             )
             # Toujours loggué, y compris (surtout) quand rien n'est écrit :

@@ -49,6 +49,30 @@ class AugmentationConfig:
     trend_magnitude: float = 0.1
     p_trend: float = 0.2
 
+    # --- Augmentations TiRex-style (v3, 2026-08-24) --------------------------
+    # LE plus gros poste de l'ablation TiRex (CRPS 0.411 -> 0.430 sans elles,
+    # devant CPM et devant le choix de backbone). Toutes DÉSACTIVÉES par
+    # défaut : les configs existantes sont bit-identiques ; le pretrain v3 les
+    # active. Contrairement à random_scale (INERTE sous arcsinh — médiane/MAD
+    # 1-homogènes, audit T5), ces trois-là changent la FORME du signal et
+    # survivent donc à la normalisation robuste.
+    # Modulation d'amplitude : multiplication par une tendance linéaire par
+    # morceaux (le niveau du signal dérive — non-stationnarité d'amplitude).
+    amplitude_mod_enabled: bool = False
+    amplitude_mod_knots: Tuple[int, int] = (2, 6)
+    amplitude_mod_range: Tuple[float, float] = (0.5, 1.5)
+    p_amplitude_mod: float = 0.5
+    # Censure : écrêtage à un quantile aléatoire de la fenêtre (capteurs
+    # saturés, capacités — le régime « l2c » de bizitobs).
+    censor_enabled: bool = False
+    censor_quantile_range: Tuple[float, float] = (0.85, 0.99)
+    p_censor: float = 0.5
+    # Injection de spikes PÉRIODIQUES épars (donc prédictibles — appliqués
+    # conjointement contexte+cible pour que le monde reste cohérent).
+    spike_enabled: bool = False
+    spike_amp_range: Tuple[float, float] = (3.0, 10.0)
+    p_spike: float = 0.05
+
 
 class TimeSeriesAugmentations:
     """
@@ -170,9 +194,101 @@ class TimeSeriesAugmentations:
         
         return context, target
     
+    def amplitude_modulation(
+        self,
+        context: torch.Tensor,
+        target: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        TiRex-style : multiplication par une tendance LINÉAIRE PAR MORCEAUX
+        (points de rupture aléatoires, pas une grille régulière comme le
+        magnitude warp) — le niveau du signal dérive par régimes. Courbe
+        continue sur [contexte‖cible], appliquée aux deux.
+        """
+        if not self.config.amplitude_mod_enabled:
+            return context, target
+        if torch.rand(1).item() >= self.config.p_amplitude_mod:
+            return context, target
+
+        total_len = context.shape[-1] + target.shape[-1]
+        lo, hi = self.config.amplitude_mod_knots
+        n_knots = int(torch.randint(lo, hi + 1, (1,)).item())
+        # positions de rupture aléatoires (triées), valeurs indépendantes
+        pos = torch.sort(torch.rand(n_knots)).values
+        pos = torch.cat([torch.zeros(1), pos, torch.ones(1)])
+        a, b = self.config.amplitude_mod_range
+        vals = torch.rand(n_knots + 2) * (b - a) + a
+        grid = torch.linspace(0, 1, total_len)
+        idx = torch.searchsorted(pos, grid.clamp(max=pos[-1] - 1e-9)).clamp(min=1)
+        left, right = pos[idx - 1], pos[idx]
+        t = (grid - left) / (right - left).clamp_min(1e-9)
+        curve = vals[idx - 1] * (1 - t) + vals[idx] * t
+
+        ctx_len = context.shape[-1]
+        c_curve = curve[:ctx_len].to(context.device)
+        t_curve = curve[ctx_len:].to(target.device)
+        if context.dim() == 1:
+            return context * c_curve, target * t_curve
+        return context * c_curve.unsqueeze(0), target * t_curve.unsqueeze(0)
+
+    def censor(
+        self,
+        context: torch.Tensor,
+        target: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        TiRex-style : écrêtage au quantile q ~ U(censor_quantile_range) de la
+        fenêtre complète — capteur saturé, capacité atteinte. Même seuil pour
+        contexte et cible (le plafond est une propriété du monde).
+        """
+        if not self.config.censor_enabled:
+            return context, target
+        if torch.rand(1).item() >= self.config.p_censor:
+            return context, target
+        a, b = self.config.censor_quantile_range
+        q = torch.rand(1).item() * (b - a) + a
+        full = torch.cat([context.reshape(-1), target.reshape(-1)])
+        cap = torch.quantile(full.float(), q).to(context.dtype)
+        return torch.clamp(context, max=cap), torch.clamp(target, max=cap)
+
+    def spike_injection(
+        self,
+        context: torch.Tensor,
+        target: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        TiRex-style : spikes PÉRIODIQUES épars — la période continue du
+        contexte dans la cible, donc le motif est prédictible et appliqué aux
+        deux (un spike aléatoire dans la seule cible serait du bruit
+        inapprenable ; un motif périodique est un signal).
+        """
+        if not self.config.spike_enabled:
+            return context, target
+        if torch.rand(1).item() >= self.config.p_spike:
+            return context, target
+
+        total_len = context.shape[-1] + target.shape[-1]
+        period = int(torch.randint(16, max(17, total_len // 8), (1,)).item())
+        offset = int(torch.randint(0, period, (1,)).item())
+        a, b = self.config.spike_amp_range
+        amp = torch.rand(1).item() * (b - a) + a
+        sign = 1.0 if torch.rand(1).item() < 0.8 else -1.0
+        full = torch.cat([context.reshape(1, -1) if context.dim() == 1
+                          else context,
+                          target.reshape(1, -1) if target.dim() == 1
+                          else target], dim=-1)
+        scale = full.float().std().clamp_min(1e-6)
+        spikes = torch.zeros(total_len, device=full.device)
+        spikes[offset::period] = sign * amp * scale
+        ctx_len = context.shape[-1]
+        if context.dim() == 1:
+            return context + spikes[:ctx_len], target + spikes[ctx_len:]
+        return (context + spikes[:ctx_len].unsqueeze(0),
+                target + spikes[ctx_len:].unsqueeze(0))
+
     def diverse_resolution_sampling(
-        self, 
-        context: torch.Tensor, 
+        self,
+        context: torch.Tensor,
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -307,11 +423,18 @@ class TimeSeriesAugmentations:
         context, target = self.diverse_resolution_sampling(context, target)
         context, target = self.random_scale(context, target)
         context, target = self.magnitude_warp(context, target)
+        # TiRex-style (v3) — off par défaut, activées par le pretrain v3 :
+        # modulation d'amplitude, puis spikes (dans le signal), puis censure
+        # (le plafond écrête tout ce qui précède, spikes compris — comme un
+        # vrai capteur saturé).
+        context, target = self.amplitude_modulation(context, target)
+        context, target = self.spike_injection(context, target)
+        context, target = self.censor(context, target)
         context, target = self.add_trend(context, target)
-        
+
         # Context-only augmentations (target stays clean for JEPA)
         context = self.jitter(context)
-        
+
         return context, target
 
 

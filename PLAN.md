@@ -36,12 +36,20 @@ mini GELÉ jusqu'au verdict v3 ; G12+calibration en semaine 3.
   contrôle v3** (décision utilisateur 2026-08-24 : E19 montre des termes PLATS — h512 n'est
   plus qu'un gate pour l'horizon natif 768 du run-recette ; couru sur v3+ration, il devient
   l'ablation directe de la recette au lieu d'un résultat à re-vérifier).
-- **S2 — corpus v3 (bundle assumé)** : synthétique ~40-50 % du batch (GP
-  KernelSynth/CauKer-style + familles P2.5d ciblées sur la queue per-config, morceaux 8192) ·
-  --min-length 256 (admet m1/m3/tourism/nn5 → ~15 configs A/Q/M/W) · solar_power +
-  décimation 5T→10T/15T · augmentations TiRex-style (amplitude p=0.5 / censoring p=0.5 /
-  spikes p=0.05 — actives sous arcsinh) · ration_oversample · audit d'équilibre. Pretrain
-  recette gelée + finetune protocole gelé. **Jalon : ~0.585-0.60 avant couches.**
+- **S2 — corpus v3 (bundle assumé) — CODE LIVRÉ (2026-08-24 soir, commits 8eef4ba + suivant)** :
+  familles synthétiques ops_bursty (bizitobs/E19) + intermittent (car_parts) dans
+  `synthetic.py` (--set v3) · séries courtes réelles par REMBOURRAGE-BORD GAUCHE
+  (`prepare_lotsa.py --min-length 384 --pad-to 1280` — la cible reste réelle, le contexte
+  « plat puis données » = la condition d'éval des séries courtes) · `solar_power` réadmis
+  (3 vérifications dans lotsa.py) · `decimate_corpus.py` (5T→10T/15T, mean-pooling) ·
+  augmentations TiRex-style livrées (amplitude/censor/spikes, off par défaut) · trio de
+  configs `lotsa_tiny_v3{,_zeroshot,_eval}` (ration_oversample + augmentations on,
+  finetune 1 ép. save_top_k=-1, recette d'assemblage en en-tête).
+  **RESTE — S2.4, l'ASSEMBLAGE sur le pod (à faire À DEUX au moment venu)** : génération
+  --set v3 dimensionnée par l'audit (« le batch cible d'abord » : ~40-50 % de part de
+  batch synthétique), conversions courtes+solar, décimation, symlinks lotsa_v3, audit
+  d'équilibre `audit_batch_schedule.py` consigné, puis pretrain+finetune protocole gelé.
+  **Jalon : ~0.585-0.60 avant couches** (prédictions P-v3.1..4 gravées en E19).
 - **S3** : xres vs contrôle v3 (une variable) · **h512 vs contrôle v3** (une variable —
   l'horizon ; gate du h768 natif du run-recette) · G12 sur GIFT (hybride vérificateur +
   raffinement par gradient, métrique UPLIFT, coût éval ×5-10 accepté en éval dédiée) ·
@@ -1339,6 +1347,38 @@ la variante mono-modèle. Nuance gardée au registre : le finetune génératif c
 le pretrain comme initialisation (E12/E15 restent vrais) et en détruit la structure
 de juge — les DEUX produits sortent du même pretrain. Backlog : derrière la file
 générative (mix -> xres -> E19 -> h512 -> mini), décision utilisateur maintenue.
+
+### G13 — World model unifié forecast+contrôle (direction LONG TERME, post-roadmap ; conçue 2026-08-25)
+
+La promesse d'origine du nom TimeJEPA, formalisée en note de conception (artifact « Un arm,
+deux métiers », discussion utilisateur 2026-08-25). L'idée en une phrase : le prédicteur est
+déjà un world model d'un système AUTONOME ; lui donner une entrée d'action `a` (`a_film` =
+la généralisation vectorielle du pattern w_film, zéro-init, identité exacte sans action)
+unifie forecast et contrôle prédictif en UN SEUL arm — le « contrôleur » n'est pas un
+réseau, c'est une optimisation à l'inférence (planning by backprop = E18f avec l'ACTION
+comme variable optimisée au lieu du forecast ; ou propose-juge G12 sur des plans candidats ;
+fan quantile + z ESJEPA = planification prudente/CVaR).
+
+Points doctrinaux tranchés dans la discussion :
+* le prédicteur ne DÉCIDE jamais — il simule (« et si ? ») ; le décideur est la boucle ;
+* l'action ≠ une retouche du forecast : c'est un levier du monde (E18f optimise la
+  prédiction, le contrôle optimise l'intervention — même outil, variables de sens opposé) ;
+* `a` inconnu n'est jamais bloquant : spectateur ⇒ mode marginal `a=∅` (identité zéro-init,
+  = le forecaster actuel, GIFT inchangé) ; acteur ⇒ `a` connu par définition (c'est SA
+  décision candidate) ;
+* deux régimes d'entraînement cohabitent comme dans xres : corpus normal à `a=∅` (dynamique
+  marginale) + synthétique CAUSAL à interventions étiquetées (la poignée) ;
+* le VRAI mur n'est pas architectural : données d'actions inexistantes dans LOTSA +
+  CONFONDAGE observationnel (un MPC sur modèle corrélationnel « coupe le chauffage pour
+  réchauffer ») — sortie identifiée : générateurs synthétiques causaux type CauKer/TCM
+  greffés sur le pipeline v3 (« corpus causal v4 ») ;
+* lien conceptuel : une action présente mais non observée EST une variable latente
+  expliquant le futur — le z de LeCun, dont ESJEPA est l'ombre déterministe ; `a_film`
+  (déclarer l'action) et ESJEPA (estimer les stats des actions invisibles) sont deux
+  facettes de la même question.
+Chemin si un jour couru : ① a_film ② corpus causal ③ planificateur (déjà écrit, E18f/G12).
+NON prioritaire — rien avant la fin de la roadmap S1-S4. Zones d'ombre en cours de
+pondération par l'utilisateur.
 
 ### AUDIT D'ARCHITECTURE du 2026-08-20 (avant les runs mix/xres) — verdicts et correctifs
 

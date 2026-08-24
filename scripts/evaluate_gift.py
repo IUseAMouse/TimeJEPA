@@ -120,15 +120,27 @@ def _negated(out: dict) -> dict:
 
 
 def tta_forecast(model, batch: torch.Tensor, h: int,
-                 lookbacks=None, flip: bool = False) -> dict:
+                 lookbacks=None, flip: bool = False, shifts=None) -> dict:
     """
     Moyenne de variantes d'inférence du MÊME checkpoint :
       * multi-lookback : le contexte tronqué à L' pour chaque L' de `lookbacks`
         (borné à la longueur disponible, aligné sur le stride) ;
-      * miroir sign-flip optionnel sur chaque lookback.
-    Les fans de quantiles sont moyennés niveau à niveau (la moyenne de
-    vecteurs triés reste triée) ; la médiane est relue dans le fan moyenné.
-    Sans lookbacks ni flip : strictement équivalent à model.forecast.
+      * miroir sign-flip optionnel sur chaque variante ;
+      * `shifts` (2026-08-25, idée utilisateur — équivariance de translation) :
+        pour chaque s, une variante prévoit depuis l'origine t−s (les s points
+        les plus récents retirés, longueur ré-alignée sur le stride → la PHASE
+        du grid de patchs change) ; sa prévision est RÉALIGNÉE sur l'horizon
+        (l'indice p+s−1 de la variante = la position p de l'horizon) et
+        moyennée par position avec masque de couverture (les s dernières
+        positions ne sont couvertes que par les variantes moins décalées).
+        Recommandé : s petits (1..7 = moins d'un patch de péremption).
+    NB théorique (testé, pas seulement affirmé) : la variante d'échelle
+    f(kx)/k est un NO-OP EXACT sous RobustScale+RevIN (médiane et MAD sont
+    1-homogènes → entrée normalisée bit-identique) — le seul élément du groupe
+    affine non quotienté par la normalisation est le SIGNE, c'est le flip.
+    Les fans sont moyennés niveau à niveau (la moyenne pondérée de vecteurs
+    triés reste triée) ; la médiane est relue dans le fan moyenné.
+    Sans options : strictement équivalent à model.forecast.
     """
     L = batch.shape[1]
     stride = model.patching.stride
@@ -137,29 +149,56 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
                     if min(int(lb), L) >= model.patching.patch_size})
     if not looks:
         looks = [L]
+    # s >= h : la variante décalée ne couvrirait AUCUNE position de l'horizon
+    # (mesuré : m4_yearly a h=6 — un shift de 7 cassait l'alignement).
+    shift_list = [0] + sorted({int(s) for s in (shifts or [])
+                               if 0 < int(s) < h})
 
-    outs = []
+    outs = []                                  # (sortie, décalage s)
     for lb in looks:
-        ctx = batch[:, -lb:]
-        outs.append(model.forecast(ctx, n=h))
-        if flip:
-            outs.append(_negated(model.forecast(-ctx, n=h)))
+        for s in shift_list:
+            ctx = batch[:, -lb:L - s if s else None] if s else batch[:, -lb:]
+            # ré-alignement stride : tronquer À GAUCHE (jamais à droite — le
+            # padding de Patching fabriquerait des points après l'origine)
+            trim = ctx.shape[1] % stride
+            if trim:
+                ctx = ctx[:, trim:]
+            if ctx.shape[1] < model.patching.patch_size:
+                continue
+            outs.append((model.forecast(ctx, n=h), s))
+            if flip:
+                outs.append((_negated(model.forecast(-ctx, n=h)), s))
 
     if len(outs) == 1:
-        return outs[0]
+        return outs[0][0]
 
-    res = {"forecast_denorm":
-           torch.stack([o["forecast_denorm"] for o in outs]).mean(0)}
-    fans = [o.get("quantiles_denorm") for o in outs]
-    if all(f is not None for f in fans):
-        fan = torch.stack(fans).mean(0)
+    def _aligned_mean(key):
+        vals = [(o.get(key), s) for o, s in outs]
+        if any(v is None for v, _ in vals):
+            return None
+        ref = vals[0][0]
+        acc = torch.zeros_like(ref)
+        cnt = torch.zeros(h, device=ref.device)
+        for v, s in vals:
+            if s == 0:
+                acc += v
+                cnt += 1.0
+            else:
+                # indices s..h−1 de la variante ↔ positions 0..h−s−1
+                acc[:, :h - s] += v[:, s:]
+                cnt[:h - s] += 1.0
+        shape = [1, h] + [1] * (ref.dim() - 2)
+        return acc / cnt.reshape(shape)
+
+    res = {"forecast_denorm": _aligned_mean("forecast_denorm")}
+    fan = _aligned_mean("quantiles_denorm")
+    if fan is not None:
         res["quantiles_denorm"] = fan
-        levels = next((o["quantile_levels"] for o in outs
+        levels = next((o["quantile_levels"] for o, _ in outs
                        if "quantile_levels" in o), None)
         if levels is not None:
             mid = min(range(len(levels)), key=lambda i: abs(levels[i] - 0.5))
-            qdim = -2 if fan.dim() == 4 else -1
-            res["forecast_denorm"] = fan.select(qdim, mid).unsqueeze(qdim) \
+            res["forecast_denorm"] = fan.select(-2, mid).unsqueeze(-2) \
                 if fan.dim() == 4 else fan[..., mid:mid + 1]
             res["quantile_levels"] = levels
     return res
@@ -172,7 +211,7 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
 def evaluate_config(model, config: str, gift_root: Path, device,
                     batch_size: int, max_series: int = 0,
                     max_context: int = 0, tta_lookbacks=None,
-                    tta_flip: bool = False) -> dict:
+                    tta_flip: bool = False, tta_shifts=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -214,7 +253,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
 
             with torch.no_grad():
                 out = tta_forecast(model, batch, h,
-                                   lookbacks=tta_lookbacks, flip=tta_flip)
+                                   lookbacks=tta_lookbacks, flip=tta_flip,
+                                   shifts=tta_shifts)
 
             median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h]
             quants = out.get("quantiles_denorm")
@@ -282,6 +322,10 @@ def main(cfg: DictConfig):
     tta_lookbacks = ([int(x) for x in str(cfg.tta_lookbacks).split(",")]
                      if cfg.get("tta_lookbacks") else None)
     tta_flip = bool(cfg.get("tta_flip", False))
+    #   +tta_shifts='2,4,6'  (translation : origines t−s réalignées, s < stride
+    #                         recommandé — moins d'un patch de péremption)
+    tta_shifts = ([int(x) for x in str(cfg.tta_shifts).split(",")]
+                  if cfg.get("tta_shifts") else None)
 
     configs = [c for c in gift.GIFT_CONFIGS
                if (not only or c in only)
@@ -302,6 +346,8 @@ def main(cfg: DictConfig):
         tag += "_lb" + "-".join(str(x) for x in tta_lookbacks)
     if tta_flip:
         tag += "_flip"
+    if tta_shifts:
+        tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     out_dir = (Path("evaluation") / cfg.model.name
                / Path(checkpoint_path).stem / f"gift{tag}")
     per_config = out_dir / "per_config"
@@ -339,7 +385,8 @@ def main(cfg: DictConfig):
                                   batch_size, max_series,
                                   max_context=max_context,
                                   tta_lookbacks=tta_lookbacks,
-                                  tta_flip=tta_flip)
+                                  tta_flip=tta_flip,
+                                  tta_shifts=tta_shifts)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return

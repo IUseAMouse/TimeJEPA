@@ -517,7 +517,10 @@ def test_temperature_sampler_constructs():
     "traffic_hourly", "traffic_weekly", "weather", "oikolab_weather",
     "cdc_fluview_ilinet",
     # datasets d'évaluation Monash locale
-    "solar_power", "wiki-rolling_nips", "extended_web_traffic_with_missing",
+    # (solar_power RÉADMIS 2026-08-24 — corpus v3, trois vérifications dans
+    #  lotsa.py : GiftEvalPretrain le sanctionne, absent de Nixtla, la suite
+    #  Monash locale qui le bloquait est dépréciée au profit de GIFT.)
+    "wiki-rolling_nips", "extended_web_traffic_with_missing",
     "kaggle_web_traffic_weekly",
 ])
 def test_eval_datasets_stay_excluded_from_pretraining(name):
@@ -534,6 +537,7 @@ def test_eval_datasets_stay_excluded_from_pretraining(name):
     "taxi_30min", "kdd2022", "covid19_energy", "covid_mobility",
     "Q-TRAFFIC", "australian_electricity_demand",
     "beijing_air_quality", "china_air_quality",
+    "solar_power",
 ])
 def test_safe_overrides_are_readmitted(name):
     """

@@ -1378,7 +1378,24 @@ solar/10T/short −27 % : le modèle veut plus de contexte exactement sur la que
 ⇒ motivation chiffrée du CURRICULUM LONG-CONTEXTE au pretrain v3 (le levier est réel,
 il s'achète à l'entraînement) ; ctx2048 EXCLU des moyennes TTA (pollution horaire).
 
-**VERDICT COMBINAISON (même jour)** : flip+lb512-1024 = 0.8813/0.6063 — MOINS bon que le
+**E19c — le tour du groupe de symétries (2026-08-25, idée utilisateur) :**
+- **Échelle f(kx)=k·f(x) : NO-OP PROUVÉ, pas mesuré** — RobustScale+RevIN quotientent tout
+  le groupe affine (médiane/MAD 1-homogènes ⇒ entrée normalisée bit-identique) ; seul le
+  SIGNE échappe à la normalisation = le flip. Épinglé par test sur le vrai modèle
+  (`test_scale_tta_is_a_provable_noop`). Même théorème que l'inertie de random_scale (T5),
+  vu côté inférence.
+- **Translation (+tta_shifts='1,3,5,7', impairs pour maximiser le changement de phase du
+  grid — choix utilisateur) : NÉGATIF mesuré** — 0.8976/0.6269 vs 0.8950/0.6239 nu : la
+  péremption (perdre les 1-7 points les plus récents) coûte plus que la décorrélation de
+  phase ne rapporte. ARCHIVÉ comme le multi-lookback. Bug attrapé au passage : shift ≥
+  horizon (m4_yearly h=6) cassait l'alignement — garde s<h + test de régression.
+⇒ le groupe est épuisé : **flip seul reste la procédure officielle**. Équité vis-à-vis du
+leaderboard (question utilisateur) : le TTA uniforme mono-checkpoint est dans les normes
+déclarées du haut du classement (TimesFM expose force_flip_invariance en flag, YingLong
+publie DCoT+multi-lookback, Toto-FnF est un ensemble de 10 modèles classé 1er) — notre
+règle : TOUJOURS publier les deux chiffres (nu et ×flip) dans la table de fairness.
+
+**VERDICT COMBINAISON (2026-08-24)** : flip+lb512-1024 = 0.8813/0.6063 — MOINS bon que le
 flip seul (le multi-lookback dilue, cohérent avec sa mesure isolée).
 **PROCÉDURE OFFICIELLE DU PROJET : miroir sign-flip seul** (`+tta_flip=true`), coût ×2
 forwards, une ligne dans la table de fairness. Référence de soumission :
@@ -1754,6 +1771,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-25** — **G13 posé au PLAN** : world model unifié forecast+contrôle (la promesse
+  d'origine du nom TimeJEPA), conçu en discussion + note visuelle (artifact « Un arm, deux
+  métiers »). Contenu : prédicteur conditionné par l'action via `a_film` (w_film
+  vectorisé, zéro-init ⇒ `a=∅` = identité = le forecaster actuel, GIFT inchangé) ;
+  contrôle = planning by backprop (E18f, variable optimisée = l'action) ou propose-juge
+  (G12) ; planification prudente via fan + z ESJEPA. Mur identifié : pas d'actions dans
+  LOTSA + confondage observationnel ⇒ sortie = synthétique CAUSAL (CauKer/TCM sur le
+  pipeline v3). Clarifications doctrinales consignées en G13 (le prédicteur simule, ne
+  décide pas ; action ≠ retouche de forecast ; a inconnu jamais bloquant — marginal vs
+  acteur). Long terme, post-roadmap ; l'utilisateur pondère.
+- **2026-08-25 (nuit)** — **NOUVEAU CHAMPION : ration@45 % × flip = 0.8702/0.5959 (~91e
+  CRPS, Migas doublé ; ~99e MASE)** — bat champion×flip (0.8735/0.5984) sur les deux
+  métriques. Et la prédiction G10.2 « pic plus tardif » SE RÉALISE : trajectoire nu du run
+  ration 0.6345(25 %) → 0.6305 → 0.6329 → 0.6303 → **0.6239(45 %)** — amélioration tardive
+  continue là où 1ep3e4 s'érodait dès 25 %. Le cosinus a encore 55 % d'époque sur
+  composition constante. Checkpoint copié champions/. Verdicts finaux (rationnement au
+  protocole ? soup ?) à la fin du run.
 - **2026-08-24 (soir)** — **ROADMAP SOTA 4 semaines adoptée** (PLAN §0bis) après triple
   rapport : audit intégral du registre (trous relevés : per-config du champion jamais fait =
   E19 manquant ; 3 leviers positifs jamais exploités — raffinement E18f/h, hybride E18e/g,

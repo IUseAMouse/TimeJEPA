@@ -131,6 +131,13 @@ class SyntheticSpec:
     `period_range` est le levier de couverture fréquentielle : une famille aux
     périodes courtes (24-150 pas) imite un cycle journalier vu en sub-horaire,
     une famille aux périodes longues (300-2048) imite du bas-fréquence.
+
+    `kind` (v3, 2026-08-24) dispatche le générateur :
+      * "kernel"       : compositions KernelSynth/RFF (le générateur d'origine) ;
+      * "ops"          : IT-ops façon bizitobs — LA cible n°1 de la carte E19
+        (le seul domaine encore rouge : 10S geomean 1.387, et bizitobs perd
+        aussi en 5T/H face au top — un problème de DOMAINE, pas de grille) ;
+      * "intermittent" : demande entière éparse façon car_parts (Croston).
     """
     name: str
     chunk_length: int = 8192
@@ -139,9 +146,97 @@ class SyntheticSpec:
     p_smooth: float = 0.7
     p_trend: float = 0.6
     noise_scale: tuple = (0.05, 0.5)
+    kind: str = "kernel"
+
+
+def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+    """
+    Série IT-ops : plancher faible et positif, RAFALES à arrivées Poisson
+    (montée abrupte, décroissance exponentielle, amplitudes à queue lourde),
+    zéro-inflation par segments (service éteint), modulation diurne du taux
+    d'arrivée, saturation-capacité optionnelle (le « l2c » de bizitobs),
+    quantification optionnelle (compteurs). Les zéros restent EXACTEMENT zéro
+    (pas d'offset) : c'est le régime quasi-nul que G8.4b et la tête quantile
+    doivent apprendre à traiter, pas un artefact à éviter.
+    """
+    n = spec.chunk_length
+    t = np.arange(n, dtype=np.float64)
+
+    base_level = np.exp(rng.uniform(np.log(0.02), np.log(2.0)))
+    base = base_level * np.clip(1.0 + 0.3 * _smooth_gp(n, rng), 0.0, None)
+
+    # modulation diurne du taux d'arrivée des rafales
+    rate_mod = np.ones(n)
+    if rng.random() < 0.7:
+        period = np.exp(rng.uniform(np.log(spec.period_range[0]),
+                                    np.log(spec.period_range[1])))
+        phase = rng.uniform(0, 2 * np.pi)
+        rate_mod = np.clip(1.0 + rng.uniform(0.4, 1.0)
+                           * np.sin(2 * np.pi * t / period + phase), 0.05, None)
+
+    x = base.copy()
+    expected_bursts = rng.uniform(3, 60)
+    arrivals = np.nonzero(rng.random(n) < (expected_bursts / n) * rate_mod)[0]
+    for idx in arrivals:
+        amp = base_level * np.exp(rng.uniform(np.log(3.0), np.log(300.0)))
+        dur = int(rng.integers(2, 96))
+        decay = np.exp(-np.arange(dur) / max(1.0, dur / 4.0))
+        end = min(n, idx + dur)
+        x[idx:end] += amp * decay[:end - idx]
+
+    # zéro-inflation : segments où le service est éteint
+    if rng.random() < 0.5:
+        for _ in range(rng.integers(1, 4)):
+            s = int(rng.integers(0, n))
+            seg = int(rng.integers(n // 64, n // 8))
+            x[s:s + seg] = 0.0
+
+    # saturation-capacité (le plafond dur des métriques « load to capacity »)
+    if rng.random() < 0.3:
+        cap = np.quantile(x[x > 0] if (x > 0).any() else x,
+                          rng.uniform(0.90, 0.995))
+        x = np.minimum(x, max(cap, base_level))
+
+    # quantification (latences arrondies, compteurs entiers)
+    if rng.random() < 0.4:
+        step = base_level * float(rng.choice([0.01, 0.1, 1.0]))
+        x = np.round(x / step) * step
+
+    x = x * np.exp(rng.uniform(0.0, 4.0))     # échelle positive, zéros intacts
+    return x.astype(np.float32)
+
+
+def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+    """
+    Demande intermittente ENTIÈRE (car_parts, hierarchical_sales) : zéros
+    majoritaires, événements de taille binomiale-négative, saisonnalité
+    d'occurrence optionnelle, dérive lente de la demande. Valeurs entières —
+    la forme que la tête quantile doit calibrer sur les M/short épars.
+    """
+    n = spec.chunk_length
+    p_event = np.exp(rng.uniform(np.log(0.02), np.log(0.35)))
+    occ = np.full(n, p_event)
+    if rng.random() < 0.5:                     # saisonnalité d'occurrence
+        period = np.exp(rng.uniform(np.log(spec.period_range[0]),
+                                    np.log(spec.period_range[1])))
+        occ *= np.clip(1.0 + 0.8 * np.sin(
+            2 * np.pi * np.arange(n) / period + rng.uniform(0, 2 * np.pi)),
+            0.05, None)
+    events = rng.random(n) < np.clip(occ, 0.0, 0.95)
+    sizes = 1.0 + rng.negative_binomial(int(rng.integers(1, 4)),
+                                        rng.uniform(0.3, 0.8), size=n)
+    x = np.where(events, sizes.astype(np.float64), 0.0)
+    if rng.random() < 0.4:                     # dérive lente de la demande
+        x = np.round(x * np.clip(1.0 + 0.5 * _smooth_gp(n, rng), 0.2, None))
+    unit = float(rng.choice([1.0, 1.0, 1.0, 6.0, 12.0]))   # unités de vente
+    return (x * unit).astype(np.float32)
 
 
 def sample_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+    if spec.kind == "ops":
+        return _sample_ops_series(spec, rng)
+    if spec.kind == "intermittent":
+        return _sample_intermittent_series(spec, rng)
     n = spec.chunk_length
     parts = []
     if rng.random() < spec.p_seasonal:
@@ -204,4 +299,22 @@ DEFAULT_FAMILIES = (
     # fréquence », pas la longueur du morceau.
     SyntheticSpec("synthetic_lowfreq", chunk_length=8192,
                   period_range=(4.0, 52.0), p_trend=0.8),
+)
+
+# Familles v3 (roadmap S2, carte E19 du 2026-08-24) : les trois familles v1
+# PLUS les deux régimes que la carte per-config du champion a désignés comme
+# les trous restants du corpus. Dimensionnement par famille au moment de la
+# génération (principe « le batch cible d'abord » — audit d'équilibre après
+# mélange, comme toujours).
+V3_FAMILIES = DEFAULT_FAMILIES + (
+    # IT-ops façon bizitobs — LE domaine encore rouge d'E19 (10S 1.387, et
+    # ×1.7-2.8 face au top jusqu'en 5T/H). Aucune donnée publique n'existe à
+    # 10S : le synthétique est ici SANS alternative. Périodes 256-4096 pas :
+    # le cycle diurne vu aux grilles 10S-5T à l'échelle du morceau 8192.
+    SyntheticSpec("synthetic_ops_bursty", chunk_length=8192,
+                  period_range=(256.0, 4096.0), kind="ops"),
+    # Demande intermittente entière (car_parts 0.98 de CRPS ratio, M/short
+    # épars). Périodes courtes : la saisonnalité annuelle vue en mensuel.
+    SyntheticSpec("synthetic_intermittent", chunk_length=8192,
+                  period_range=(6.0, 52.0), kind="intermittent"),
 )

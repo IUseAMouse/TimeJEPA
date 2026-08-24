@@ -1,0 +1,33 @@
+# @package _global_
+# Finetune zero-shot du corpus v3 — protocole G7.3c gelé (1 époque cosinus,
+# sélection par éval GIFT, tous les checkpoints conservés).
+#
+#   python scripts/train.py --config-name lotsa_tiny_v3_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/last.ckpt"'
+#
+# Les augmentations de FINETUNE restent celles héritées (légères) — les
+# TiRex-style sont un levier de PRETRAIN ; en mettre au finetune serait une
+# variable de plus non mesurée. Rationnement hérité de lotsa_tiny_v3 (même
+# sampler des deux côtés du pretrain/finetune v3 — cohérence du bundle).
+defaults:
+  - lotsa_tiny_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_v3_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+  max_epochs: 1
+
+checkpoint:
+  # Doctrine G7.3c : la sélection se fait par éval GIFT, pas par val_loss —
+  # on garde TOUT (≈20 checkpoints × 16 Mo), et le soup SWA devient possible.
+  save_top_k: -1
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "robust-scale"]
