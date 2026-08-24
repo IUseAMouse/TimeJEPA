@@ -1304,6 +1304,88 @@ par éval GIFT devient l'outil de production officiel. Habitude actée après
 l'éviction du champion : `cp` immédiat de tout checkpoint couronné par une éval
 vers `checkpoints/champions/`.
 
+### E19 — La carte per-config du champion : la recette mix A comprimé la queue (2026-08-24)
+
+**Protocole.** Décomposition des 97 configs du champion mix-1ep3e4@25 % (0.8914/0.6134,
+harnais enveloppe), convention leaderboard (ratios vs SN officiel), diff contre les
+per-config OFFICIELS vendorés de 5 concurrents (`scripts/gift_gap.py`, snapshot 2026-08-22).
+
+**1. La prédiction d'E18 est VÉRIFIÉE — la queue est passée de 16 à 6 configs.**
+E18 prédisait : « le mix (synthétique sub-horaire) doit comprimer précisément la queue de
+16 configs ». Mesuré : **seules 6 configs restent au-dessus de 1.0** (bizitobs_application/
+service 10S long+medium ×1.55-2.02, electricity/15T/long 1.206, us_births/M 1.156).
+Les anciennes coupables sont RENTRÉES DANS LE RANG : solar/10T ×2.1-2.4 (E17) → **0.94-0.99** ;
+ett/electricity 15T ×1.3-1.45 → 0.78-0.98 ; 10T geomean **0.549**, 15T 0.780, 5T 0.593.
+Le synthétique v1 + arcsinh ont fait leur travail sur 10T/15T. Queue(16) résiduelle ≈ 7 pts
+de geomean (0.6134 → 0.5424 sans elle), contre ~12 pts en E18.
+
+**2. Le noyau dur restant a un nom : bizitobs — un problème de DOMAINE, plus de fréquence.**
+10S est la seule fréquence rouge (geomean 1.387, MASE 2.385) ; et contre TTM/Toto/FlowState,
+bizitobs_l2c perd aussi en 5T et à l'HEURE (×1.7-2.8) — c'est le domaine IT-ops/CloudOps qui
+manque, pas la grille. Piste croisée avec G10.2 : alibaba_cluster_trace (CloudOps 5T)
+s'ÉTEIGNAIT à mi-époque dans l'ancien sampler — le rationnement le maintient présent, à
+surveiller sur le run ration (indice au 15 % : bizitobs_application MASE 6.5 vs 11.2). Autres
+résidus : bloc séries courtes A/Q/M (0.81-0.99, us_births/M 1.156, m4_yearly 0.989 —
+cible --min-length 256) ; electricity/15T/long 1.206 (candidat contexte long : 1024 pts =
+10.7 j à 15T, l'historique utile dépasse).
+
+**3. La structure de l'écart aux concurrents a DEUX étages — et le what-if les sépare.**
+- vs YingLong_6m (0.6090, 7.3M) : on gagne 44/97 configs ; queue→leur niveau = **0.5940**.
+  Le barreau YingLong se prend avec la queue + un cheveu de corps.
+- vs TTM-R3-PT/Toto-4m/FlowState (0.50-0.52) : on ne gagne que 17-23/97 ; queue→leur niveau
+  = seulement **0.5637-0.5723**. L'écart à la classe 0.50 est LARGE, pas concentré : ils
+  gagnent un peu partout (le corps de 81 configs vaut ~0.54 chez nous contre ~0.47 chez eux).
+  ⇒ la queue paie le barreau YingLong ; la classe Toto exige des gains de CORPS
+  (TTA/calibration/augmentations/densité de supervision) EN PLUS du corpus.
+- Poches de fierté : solar/W ×0.43-0.75 contre TOUS ; m_dense/H bat Toto-4m ; bitbrains_rnd
+  bat TTM et FlowState ; car_parts (ex-pire config) bat TTM.
+
+**4. Termes plats confirmés** (short 0.611 / medium 0.619 / long 0.616) — l'horizon n'est
+toujours pas l'axe du problème ; attente h512 recalibrée à « modeste, configs long hors
+queue ».
+
+**Prédictions v3 recalibrées par cette carte (remplacent celles du §0bis du PLAN) :**
+P-v3.1 : bizitobs 10S geomean 1.387 → < 1.0 (familles synthétiques IT-ops : rafales,
+zéro-inflation — aucune donnée publique n'existe) ; P-v3.2 : bloc A/Q/M/W −10 % via
+--min-length 256 ; P-v3.3 : electricity/15T/long < 1.0 (contexte long ou données 15T
+réelles ENTSO-E) ; P-v3.4 : agrégat ≤ 0.59 avant couches d'inférence. Le rationnement est
+attendu comme co-acteur sur bizitobs (mécanisme alibaba ci-dessus).
+
+### E19b — TTA uniforme : le miroir casse le mur des 0.60 (2026-08-24)
+
+Trois procédures d'inférence mesurées UNE PAR UNE sur le champion (0.8914/0.6134), un seul
+checkpoint, procédure identique sur les 97 configs (doctrine TTA validée par l'utilisateur) :
+
+| procédure | MASE | CRPS | verdict |
+|---|---|---|---|
+| nu (référence) | 0.8914 | 0.6134 | 99e CRPS |
+| multi-lookback {512,1024} | 0.8964 | 0.6228 | mitigé : CRPS −1.5 % mais MASE DÉGRADÉE — pas concluant seul |
+| **miroir sign-flip** | **0.8735** | **0.5984** | **−2.0 %/−2.4 % ; passe sous Moirai_large/YingLong/Moirai_base/Reverso/TimeTron/tft → ~92e CRPS (+7 places), ~100e MASE. Coût ×2 forwards.** |
+| ctx 2048 (G9.1, inférence seule) | 1.1898 | 0.8759 | échec global INSTRUCTIF (voir ci-dessous) |
+
+**Le miroir** (`forecast(−x)` nié et renversé sur l'axe des niveaux, précédents TimesFM
+`force_flip_invariance`/YingLong) : moyenner sur la transformation impose une équivariance
+de signe que le modèle n'a qu'à moitié apprise, et réduit la variance d'erreurs
+quasi indépendantes. Gains diffus sur tout le corps (loop_seattle/H 0.065 vs 0.071,
+ett1/H long 0.263 vs 0.278, solar/10T ↓, m4_quarterly ↓) — exactement le « gain de corps »
+que E19 réclamait pour la classe Toto.
+
+**G9.1 tranché : le contexte long ne se prend PAS à l'inférence seule** — les configs
+horaires s'effondrent (electricity/H MASE 4.5-5.0, solar/H ×3.0-3.7, m_dense/H ×3.5 :
+255 patches jamais vus, RoPE hors distribution sur structures périodiques) — MAIS
+bizitobs_l2c/5T long/medium : **CRPS divisé par 2** (0.314/0.252 vs 0.631/0.364) et
+solar/10T/short −27 % : le modèle veut plus de contexte exactement sur la queue E19.
+⇒ motivation chiffrée du CURRICULUM LONG-CONTEXTE au pretrain v3 (le levier est réel,
+il s'achète à l'entraînement) ; ctx2048 EXCLU des moyennes TTA (pollution horaire).
+
+**VERDICT COMBINAISON (même jour)** : flip+lb512-1024 = 0.8813/0.6063 — MOINS bon que le
+flip seul (le multi-lookback dilue, cohérent avec sa mesure isolée).
+**PROCÉDURE OFFICIELLE DU PROJET : miroir sign-flip seul** (`+tta_flip=true`), coût ×2
+forwards, une ligne dans la table de fairness. Référence de soumission :
+**champion × flip = MASE 0.8735 / CRPS 0.5984, ~92e CRPS / ~100e MASE.** Le multi-lookback
+est ARCHIVÉ (ne revient que si un futur checkpoint entraîné à contextes variables le
+réhabilite) ; ctx2048 attend le curriculum v3.
+
 ---
 
 ## 3. Ce qui est établi

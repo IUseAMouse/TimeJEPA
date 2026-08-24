@@ -97,11 +97,82 @@ def prepare_context(past: np.ndarray, max_len: int, stride: int,
 
 
 # ---------------------------------------------------------------------------
+# TTA — procédures d'inférence UNIFORMES sur les 97 configs (roadmap S1.5,
+# décision utilisateur 2026-08-24 : TTA oui / multi-checkpoints non).
+# Un seul checkpoint ; chaque variante est une transformation déterministe du
+# contexte, identique pour toutes les configs — pas d'adaptation par config.
+# ---------------------------------------------------------------------------
+
+def _negated(out: dict) -> dict:
+    """Miroir par inversion de signe : q_k(-X) = -q_{1-k}(X) — la médiane se
+    nie, le fan se nie ET se renverse sur l'axe des niveaux (l'ordre croissant
+    est préservé). Précédents : TimesFM `force_flip_invariance`, YingLong.
+    Bien défini sous arcsinh/RevIN : les deux repères sont impairs autour de
+    leur centre (médiane/moyenne du contexte nié = négation du centre)."""
+    res = {"forecast_denorm": -out["forecast_denorm"]}
+    q = out.get("quantiles_denorm")
+    if q is not None:
+        qdim = -2 if q.dim() == 4 else -1
+        res["quantiles_denorm"] = torch.flip(-q, dims=(qdim,))
+    if "quantile_levels" in out:
+        res["quantile_levels"] = out["quantile_levels"]
+    return res
+
+
+def tta_forecast(model, batch: torch.Tensor, h: int,
+                 lookbacks=None, flip: bool = False) -> dict:
+    """
+    Moyenne de variantes d'inférence du MÊME checkpoint :
+      * multi-lookback : le contexte tronqué à L' pour chaque L' de `lookbacks`
+        (borné à la longueur disponible, aligné sur le stride) ;
+      * miroir sign-flip optionnel sur chaque lookback.
+    Les fans de quantiles sont moyennés niveau à niveau (la moyenne de
+    vecteurs triés reste triée) ; la médiane est relue dans le fan moyenné.
+    Sans lookbacks ni flip : strictement équivalent à model.forecast.
+    """
+    L = batch.shape[1]
+    stride = model.patching.stride
+    looks = sorted({min(int(lb), L) - (min(int(lb), L) % stride)
+                    for lb in (lookbacks or [L])
+                    if min(int(lb), L) >= model.patching.patch_size})
+    if not looks:
+        looks = [L]
+
+    outs = []
+    for lb in looks:
+        ctx = batch[:, -lb:]
+        outs.append(model.forecast(ctx, n=h))
+        if flip:
+            outs.append(_negated(model.forecast(-ctx, n=h)))
+
+    if len(outs) == 1:
+        return outs[0]
+
+    res = {"forecast_denorm":
+           torch.stack([o["forecast_denorm"] for o in outs]).mean(0)}
+    fans = [o.get("quantiles_denorm") for o in outs]
+    if all(f is not None for f in fans):
+        fan = torch.stack(fans).mean(0)
+        res["quantiles_denorm"] = fan
+        levels = next((o["quantile_levels"] for o in outs
+                       if "quantile_levels" in o), None)
+        if levels is not None:
+            mid = min(range(len(levels)), key=lambda i: abs(levels[i] - 0.5))
+            qdim = -2 if fan.dim() == 4 else -1
+            res["forecast_denorm"] = fan.select(qdim, mid).unsqueeze(qdim) \
+                if fan.dim() == 4 else fan[..., mid:mid + 1]
+            res["quantile_levels"] = levels
+    return res
+
+
+# ---------------------------------------------------------------------------
 # Per-config evaluation
 # ---------------------------------------------------------------------------
 
 def evaluate_config(model, config: str, gift_root: Path, device,
-                    batch_size: int, max_series: int = 0) -> dict:
+                    batch_size: int, max_series: int = 0,
+                    max_context: int = 0, tta_lookbacks=None,
+                    tta_flip: bool = False) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -118,7 +189,11 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # rectangular batch. Within a config almost everything lands in one bucket
     # (most series are longer than the 1024-step cap).
     buckets = defaultdict(list)
-    max_len = model.input_length if hasattr(model, "input_length") else 1024
+    # G9.1 — max_context peut DÉPASSER model.input_length : l'encodeur est
+    # RoPE (agnostique à la longueur), le prédicteur ne dépend que du nombre
+    # de requêtes cibles. C'est le test « contexte 2048 à l'inférence seule ».
+    max_len = max_context or (model.input_length
+                              if hasattr(model, "input_length") else 1024)
     stride = model.patching.stride
     n_inst = 0
     for inst in gift.iter_test_instances(series, h, windows):
@@ -138,7 +213,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             batch = batch.unsqueeze(-1).to(device)          # [B, L, 1]
 
             with torch.no_grad():
-                out = model.forecast(batch, n=h)
+                out = tta_forecast(model, batch, h,
+                                   lookbacks=tta_lookbacks, flip=tta_flip)
 
             median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h]
             quants = out.get("quantiles_denorm")
@@ -197,6 +273,16 @@ def main(cfg: DictConfig):
     batch_size = int(cfg.get("gift_batch_size", 64))
     max_series = int(cfg.get("gift_max_series", 0))
 
+    # TTA / contexte long (roadmap S1) — opt-in, défauts = comportement exact
+    # d'avant. Exemples :
+    #   +max_context=2048                       (G9.1, inférence seule)
+    #   +tta_lookbacks='512,1024'               (multi-lookback moyenné)
+    #   +tta_flip=true                          (miroir sign-flip)
+    max_context = int(cfg.get("max_context", 0))
+    tta_lookbacks = ([int(x) for x in str(cfg.tta_lookbacks).split(",")]
+                     if cfg.get("tta_lookbacks") else None)
+    tta_flip = bool(cfg.get("tta_flip", False))
+
     configs = [c for c in gift.GIFT_CONFIGS
                if (not only or c in only)
                and (not terms or c.split("/")[2] in terms)]
@@ -206,8 +292,18 @@ def main(cfg: DictConfig):
     model = create_model_from_config(cfg)
     model = load_checkpoint(model, checkpoint_path, device)
 
+    # Chaque variante d'inférence a son PROPRE répertoire : les JSON per_config
+    # servent de marqueurs de reprise, mélanger deux procédures dans le même
+    # cache relirait les chiffres de l'une comme s'ils mesuraient l'autre.
+    tag = ""
+    if max_context:
+        tag += f"_ctx{max_context}"
+    if tta_lookbacks:
+        tag += "_lb" + "-".join(str(x) for x in tta_lookbacks)
+    if tta_flip:
+        tag += "_flip"
     out_dir = (Path("evaluation") / cfg.model.name
-               / Path(checkpoint_path).stem / "gift")
+               / Path(checkpoint_path).stem / f"gift{tag}")
     per_config = out_dir / "per_config"
     per_config.mkdir(parents=True, exist_ok=True)
 
@@ -240,7 +336,10 @@ def main(cfg: DictConfig):
         t0 = time.time()
         try:
             res = evaluate_config(model, config, gift_root, device,
-                                  batch_size, max_series)
+                                  batch_size, max_series,
+                                  max_context=max_context,
+                                  tta_lookbacks=tta_lookbacks,
+                                  tta_flip=tta_flip)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return

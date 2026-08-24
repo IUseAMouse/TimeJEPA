@@ -28,18 +28,22 @@ LE CORPUS ENSUITE » (le synthétique se dimensionne pour combler les régimes s
 ET garantir, avec ration_oversample, une composition stable et diverse sur toute l'époque) ;
 mini GELÉ jusqu'au verdict v3 ; G12+calibration en semaine 3.
 
-- **S1 — mesurer + gratuit + arsenal** : décomposition per-config du champion (E19, EN
-  PREMIER — vs per-config vendorés YingLong/Moirai/TTM/Toto/FlowState) · verdict
-  ration_oversample · G9.1 ctx 2048 inférence seule (1 soirée) · h512 (1 j GPU) · harness TTA
-  (multi-lookback {512,1024,2048} + miroir sign-flip, mesurés UN PAR UN) · ESJEPA v1 (2 j
-  GPU, contrôle = pretrain mix existant). **Jalon : 0.60-0.605 = +8 places.**
+- **S1 — mesurer + gratuit + arsenal** : décomposition per-config du champion (E19 — FAIT :
+  queue 16→6 configs, prédiction E18 vérifiée) · verdict ration_oversample · G9.1 ctx 2048
+  inférence seule (FAIT, E19b : échec instructif → curriculum v3) · harness TTA (FAIT,
+  E19b : **flip seul = procédure officielle, 0.8735/0.5984, ~92e — jalon S1 ATTEINT J1**) ·
+  ESJEPA v1 (2 j GPU, contrôle = pretrain mix existant). **h512 REPORTÉ en S3 sur le
+  contrôle v3** (décision utilisateur 2026-08-24 : E19 montre des termes PLATS — h512 n'est
+  plus qu'un gate pour l'horizon natif 768 du run-recette ; couru sur v3+ration, il devient
+  l'ablation directe de la recette au lieu d'un résultat à re-vérifier).
 - **S2 — corpus v3 (bundle assumé)** : synthétique ~40-50 % du batch (GP
   KernelSynth/CauKer-style + familles P2.5d ciblées sur la queue per-config, morceaux 8192) ·
   --min-length 256 (admet m1/m3/tourism/nn5 → ~15 configs A/Q/M/W) · solar_power +
   décimation 5T→10T/15T · augmentations TiRex-style (amplitude p=0.5 / censoring p=0.5 /
   spikes p=0.05 — actives sous arcsinh) · ration_oversample · audit d'équilibre. Pretrain
   recette gelée + finetune protocole gelé. **Jalon : ~0.585-0.60 avant couches.**
-- **S3** : xres vs contrôle v3 (une variable) · G12 sur GIFT (hybride vérificateur +
+- **S3** : xres vs contrôle v3 (une variable) · **h512 vs contrôle v3** (une variable —
+  l'horizon ; gate du h768 natif du run-recette) · G12 sur GIFT (hybride vérificateur +
   raffinement par gradient, métrique UPLIFT, coût éval ×5-10 accepté en éval dédiée) ·
   pondération par source (dernière brique papier court) · G4.2 calibration conforme
   doctrine-compatible (facteurs par niveau de quantile calibrés sur corpus de FINETUNE,
