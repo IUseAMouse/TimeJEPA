@@ -1672,6 +1672,69 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-24 (soir)** — **ROADMAP SOTA 4 semaines adoptée** (PLAN §0bis) après triple
+  rapport : audit intégral du registre (trous relevés : per-config du champion jamais fait =
+  E19 manquant ; 3 leviers positifs jamais exploités — raffinement E18f/h, hybride E18e/g,
+  λ-ancrage E18b ; G9.1/G11/G4.2 jamais courus ; §10 périmé) × recherche des recettes
+  concurrentes (ablations sourcées : synthétique majoritaire Toto-2 57.5 %/0 % public ;
+  augmentations = plus gros poste TiRex +0.019 ; horizon un-forward +0.013-0.026 ; TTA
+  YingLong −10.5 % MASE ; la TAILLE n'est pas le levier) × inventaire local (champion +
+  data/gift_eval + per-config concurrents = décomposition 100 % offline). Arbitrages
+  utilisateur : TTA uniforme OUI / G11 NON ; corpus v3 bundle complet avec principe « le
+  batch cible d'abord, le corpus ensuite » ; mini gelé jusqu'au verdict v3 ; G12+calibration
+  S3. Jalons : 0.605 (+8 places) / ~0.57 (TTM déshabillé) / 0.52-0.54 (étirement classe
+  Toto-4m). Corrections d'audit : G8.1 clos « levier vide », doctrine G7.2 périmée barrée.
+  Première action lancée : éval 97-configs du champion en local CPU → E19.
+- **2026-08-24 (après-midi)** — **G10.2 MESURÉ et corrigé (opt-in).** L'audit
+  (`audit_batch_schedule.py`, corpus mix finetune, 71 familles) chiffre la dérive de
+  composition intra-époque : 16 familles éteintes avant 1 % de l'époque, ~53 avant la fin ;
+  part des familles plafonnées 46.6 % → 35.7 % du batch entre premier et dernier décile ;
+  batch 493 → 409 (−17 %, slots non réalloués) ; wind_farms/alibaba/m5/subseasonal → 0 %.
+  La fin d'époque sur-entraîne les grosses familles (buildings_900k, largest_*) — mécanisme
+  cohérent avec la dérive GIFT post-25 % (G7.3c) et l'inflexion au même step des deux runs
+  (extinctions déterministes). Nuances de lecture : (a) N'INVALIDE PAS les comparaisons
+  passées — tous les runs (mini en cours compris) partagent le même schedule ; ça plafonne
+  le rendement du dernier tiers d'époque, plafond désormais levable ; (b) les augmentations
+  ne peuvent pas compenser (elles diversifient les échantillons PRÉSENTS, pas les familles
+  ABSENTES — et au finetune mix il ne reste qu'un jitter 1 % p=0.1, random_scale étant
+  inerte sous arcsinh, T5). Correctif livré : `data.ration_oversample: true` — même budget
+  3× par famille, étalé uniformément (quota fractionnaire par batch) ; opt-in strict,
+  5 tests (dont itération bit-identique flag off et budget préservé), 295 verts au total.
+  Ablation à courir sur tiny 1ep (une variable vs 1ep3e4, même seed) avant d'en faire le
+  défaut. **SWA : verdict NON rendu** — les 3 checkpoints survivants du top-k val sont tous
+  de fin d'époque (0.5855/64/65 → soup 0.9084/0.6312 ≈ le point tardif 0.6309) : le soup de
+  la fenêtre des gains exige de garder tous les checkpoints → prochains finetunes avec
+  `checkpoint.save_top_k=-1`.
+- **2026-08-24 (midi)** — **Fin du run mix 1ep-3e-4 : verdict G7.3c rendu.** Fin d'époque
+  (best-val 0.5855 @ ~95 % ; `last.ckpt` = le MÊME état, 97 configs bit-identiques — `last`
+  pointe sur la dernière sauvegarde top-k) : **0.9098/0.6309**. La prédiction « pic en fin
+  d'époque » est RÉFUTÉE : pic encore à 25 % (0.8914/0.6134) puis dérive — mais ~2× plus
+  faible que v2 (courbes val_wql : v2 s'envole après ~470k, 1ep dérive mollement ; champion
+  1ep 0.6134 < champion v2 0.6190). Enfoncement du clou sélection : le checkpoint à
+  meilleure val_loss ET meilleur sMAPE fait 0.6309 vs 0.6134 au champion — AUCUNE métrique
+  val ne sélectionne le champion GIFT. **Doctrine finale actée : la marche dans le plateau
+  est intrinsèque à la loss ; protocole de production = finetune 1 époque cosinus (dérive
+  amortie) + évals GIFT intermédiaires (~toutes les 5-10 %) + sélection par éval + cp
+  champions/ immédiat.** Le schedule 1ep reste supérieur à 3ep (champion meilleur, dérive
+  moitié moindre, coût /3) — c'est le protocole que mini et xres copient. **Mini-mix : GO**
+  (configs d627509, smoke puis pretrain).
+- **2026-08-24** — **Champion absolu : mix 1ep-3e-4 @ 25 %** (`epoch00_valloss0.5879` du
+  dossier `_1ep3e4`, copié `champions/mix1ep3e4_25pct_mase0.8914_crps0.6134.ckpt`) :
+  **GIFT MASE 0.8914 / CRPS 0.6134** — bat le champion v2 (0.8955/0.6190) au même point de
+  la même trajectoire, seule variable le schedule (cosinus 1 époque, LR ~6 % plus froid à ce
+  step), aucun flare. Rangs snapshot : 99e CRPS (paquet dense — ≤0.6121 pour TimeTron-33M,
+  ≤0.6089 pour doubler YingLong_6m+Moirai_base), ~104e MASE (iTransformer doublé).
+  **Nixtla (zero-shot authentique), même checkpoint — première table complète consignée** :
+  MASE moyenne par dataset (h ∈ {96,192,336,720}) : electricity 1.025, etth1 1.176,
+  etth2 1.560, ettm1 1.047, ettm2 1.164, traffic 0.769, weather 1.029 — moyenne ~1.110,
+  **TimeJEPA meilleur modèle sur 7/7** vs SeasonalNaive/NaiveLast/ContextMean. Skill vs SN :
+  traffic +41 %, electricity +22 %, etth1 +21 % ; poches négatives restantes : etth2 h192
+  (−11 %), ettm2 h720 (−6 %), ettm1 h336/720 (~−1-2 %) — les longs horizons par rollout
+  restent la faiblesse Nixtla. Mémo de comparaison (chiffres de conversation, non consignés
+  à l'époque) : v2@5 % donnait ettm1 ~0.996 et moyenne ~1.098 — le champion GIFT n'est pas
+  uniformément meilleur sur Nixtla (pondérations et horizons différents), les deux suites ne
+  bougent pas ensemble. Attente posée : dégradation post-25 % plus faible que v2 puis
+  reprise en fin d'époque quand le cosinus gèle la marche (prédiction G7.3c).
 - **2026-08-23 (nuit)** — **ESJEPA implémenté** (G8.6, arm `model.error_signal`) : voie z =
   statistiques déterministes du résidu EWMA causal par patch cible [B,31,4], tête z sur le
   tronc du prédicteur (~8.5k params, `predictor.z_head.*` core P3.2, survit au finetune),

@@ -48,6 +48,21 @@ class TemperatureSampler(Sampler):
         seed: int = 42,
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
+        # G10.2 — RATIONNEMENT du plafond (2026-08-24). Par défaut (False), le
+        # plafond max_oversample_ratio est consommé EN DÉBUT d'époque : dès
+        # qu'une famille l'atteint, elle disparaît de TOUS les batchs restants
+        # (le `continue` de __iter__) et le batch rétrécit. Mesuré
+        # (scripts/audit_batch_schedule.py, corpus mix, finetune) : 16 familles
+        # éteintes avant 1 % de l'époque, part des familles plafonnées
+        # 46.6 % -> 35.7 % du batch entre premier et dernier décile, batch
+        # 493 -> 409. La composition DÉRIVE donc vers les grosses familles —
+        # candidat mécanisme de la dérive GIFT de fin de finetune (G7.3c).
+        # Avec ration_oversample=True, le même budget max_samples[i] est étalé
+        # UNIFORMÉMENT sur l'époque (quota fractionnaire par batch, arrondi par
+        # accumulation) : même exposition totale par famille, composition et
+        # taille de batch quasi constantes. Opt-in strict : False = itération
+        # bit-identique à l'existant.
+        ration_oversample: bool = False,
     ):
         """
         Args:
@@ -75,6 +90,7 @@ class TemperatureSampler(Sampler):
         self.batch_size = batch_size
         self.temperature = temperature
         self.max_oversample_ratio = max_oversample_ratio
+        self.ration_oversample = bool(ration_oversample)
         self.drop_last = drop_last
         self.shuffle = shuffle
         self.seed = seed
@@ -211,21 +227,37 @@ class TemperatureSampler(Sampler):
         # Track samples drawn per dataset for max_oversample enforcement
         samples_drawn = [0] * self.num_datasets
         max_samples = [int(size * self.max_oversample_ratio) for size in self.dataset_sizes]
-        
+
+        # G10.2 — quota par batch en mode rationné : le budget de la famille
+        # étalé uniformément sur l'époque, accumulé fractionnairement (une
+        # famille à 0.4 échantillon/batch contribue 2 échantillons tous les 5
+        # batchs au lieu de brûler son budget au début puis disparaître).
+        if self.ration_oversample:
+            per_batch_quota = [m / max(self._num_batches, 1) for m in max_samples]
+            allowance = [0.0] * self.num_datasets
+
         for batch_idx in range(self._num_batches):
             batch = []
-            
+
             for i in range(self.num_datasets):
                 n_samples = self.samples_per_dataset[i]
                 dataset_size = self.dataset_sizes[i]
                 offset = self.dataset_offsets[i]
-                
+
                 # Enforce max_oversample_ratio
                 remaining = max_samples[i] - samples_drawn[i]
                 if remaining <= 0:
                     continue
-                
-                actual_samples = min(n_samples, remaining)
+
+                if self.ration_oversample:
+                    allowance[i] += per_batch_quota[i]
+                    quota_now = int(allowance[i])
+                    actual_samples = min(n_samples, quota_now, remaining)
+                    allowance[i] -= actual_samples
+                    if actual_samples <= 0:
+                        continue
+                else:
+                    actual_samples = min(n_samples, remaining)
                 
                 # Generate random indices on-the-fly (NOT stored!)
                 local_indices = rng.integers(0, dataset_size, size=actual_samples)
@@ -543,6 +575,9 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         balanced_sampling: bool = True,
         sampling_temperature: float = 0.5,  # sqrt sampling by default
         max_oversample_ratio: float = 5.0,  # cap repetitions
+        # G10.2 : étale le plafond uniformément sur l'époque au lieu de le
+        # consommer au début (voir TemperatureSampler.ration_oversample).
+        ration_oversample: bool = False,
         # Standard params
         batch_size: int = 64,
         stride: int = 1,
@@ -593,6 +628,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.balanced_sampling = balanced_sampling
         self.sampling_temperature = sampling_temperature
         self.max_oversample_ratio = max_oversample_ratio
+        self.ration_oversample = bool(ration_oversample)
         self.context_length = context_length
         self.prediction_length = prediction_length
         self.batch_size = batch_size
@@ -795,6 +831,9 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         batch_size=self.batch_size,
                         temperature=self.sampling_temperature,
                         max_oversample_ratio=self.max_oversample_ratio,
+                        # G10.2 : opt-in, False par défaut — les runs existants
+                        # sont bit-identiques.
+                        ration_oversample=self.ration_oversample,
                         drop_last=True,
                         shuffle=True,
                         seed=self.seed

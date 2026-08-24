@@ -4,7 +4,51 @@
 > **Règle absolue : aucune suppression de fichier. Lecture / écriture / modification uniquement.**
 > Ce fichier est le point de reprise si la session est coupée. Mettre à jour les cases à cocher au fur et à mesure.
 
-**Dernière mise à jour :** 2026-08-18 — E16 : GIFT-Eval 0.979 MASE / 0.677 CRPS à ~1M params en zero-shot ; signal d'horizon G6 répliqué. G7 : courbe d'échelle sur corpus complet.
+**Dernière mise à jour :** 2026-08-24 — champion 0.8914/0.6134 (99e/126) ; ROADMAP SOTA 4
+semaines adoptée (§0bis ci-dessous) après audit intégral + recherche concurrence.
+
+---
+
+## 0bis. ROADMAP SOTA — 4 semaines (adoptée 2026-08-24, arbitrages utilisateur actés)
+
+Issue du croisement : audit intégral PLAN+registre × recherche des recettes concurrentes
+(FlowState/Toto-2/Chronos-2/TiRex/YingLong/t0-alpha/TTM-R3, ablations sourcées) × inventaire
+des actifs locaux. **L'écart 0.6134 → ~0.52 vit dans 3 gisements cumulables** : (1) couverture
+corpus (~12 pts de geomean : queue 16 configs 10S/10T/15T + ~15 configs séries courtes) ;
+(2) couches d'inférence (−3 à −6 % quasi gratuits, 0 GPU — 11 du top 12 en ont) ;
+(3) objectif/architecture (h512/xres/esjepa, ~1-2 % chacun). Consensus concurrent : la TAILLE
+n'est pas le levier (Chronos-2 120M vs 28M ≈ 1 pt) ; les leviers chiffrés = synthétique
+majoritaire (Toto-2 57.5 %, 0 % public), augmentations du signal (TiRex +0.019, leur plus
+gros poste), horizon en un forward (TiRex +0.013, FlowState +0.026), long contexte, TTA
+(YingLong −10.5 % MASE gratuits).
+
+**Arbitrages utilisateur** : TTA uniforme OUI (multi-lookback+miroir, un checkpoint) / G11
+multi-checkpoints NON ; corpus v3 = bundle complet béni, principe « LE BATCH CIBLE D'ABORD,
+LE CORPUS ENSUITE » (le synthétique se dimensionne pour combler les régimes sous-représentés
+ET garantir, avec ration_oversample, une composition stable et diverse sur toute l'époque) ;
+mini GELÉ jusqu'au verdict v3 ; G12+calibration en semaine 3.
+
+- **S1 — mesurer + gratuit + arsenal** : décomposition per-config du champion (E19, EN
+  PREMIER — vs per-config vendorés YingLong/Moirai/TTM/Toto/FlowState) · verdict
+  ration_oversample · G9.1 ctx 2048 inférence seule (1 soirée) · h512 (1 j GPU) · harness TTA
+  (multi-lookback {512,1024,2048} + miroir sign-flip, mesurés UN PAR UN) · ESJEPA v1 (2 j
+  GPU, contrôle = pretrain mix existant). **Jalon : 0.60-0.605 = +8 places.**
+- **S2 — corpus v3 (bundle assumé)** : synthétique ~40-50 % du batch (GP
+  KernelSynth/CauKer-style + familles P2.5d ciblées sur la queue per-config, morceaux 8192) ·
+  --min-length 256 (admet m1/m3/tourism/nn5 → ~15 configs A/Q/M/W) · solar_power +
+  décimation 5T→10T/15T · augmentations TiRex-style (amplitude p=0.5 / censoring p=0.5 /
+  spikes p=0.05 — actives sous arcsinh) · ration_oversample · audit d'équilibre. Pretrain
+  recette gelée + finetune protocole gelé. **Jalon : ~0.585-0.60 avant couches.**
+- **S3** : xres vs contrôle v3 (une variable) · G12 sur GIFT (hybride vérificateur +
+  raffinement par gradient, métrique UPLIFT, coût éval ×5-10 accepté en éval dédiée) ·
+  pondération par source (dernière brique papier court) · G4.2 calibration conforme
+  doctrine-compatible (facteurs par niveau de quantile calibrés sur corpus de FINETUNE,
+  uniformes) · SWA. **Jalon : ~0.565-0.58 (« TTM déshabillé »).**
+- **S4** : run-recette final (2e bundle : meilleur pretrain + h768 si h512 valide +
+  curriculum long-contexte si G9.1 positif + densité de supervision multi-offsets) ·
+  G7.7 dimension intrinsèque · papiers (§10 à remettre à niveau). Mini/G7.4 seulement si
+  plafond >~0.57 à recette constante. **Jalon étirement : 0.52-0.54 ; médian défendable
+  0.565-0.58.**
 
 ---
 
@@ -786,10 +830,12 @@ deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE vari
       d'observations : E13b a montré que 83 M de fenêtres venaient de ~800 k morceaux seulement).
       Consigner les deux chiffres — observations et fenêtres distinctes — pour chaque run du
       papier. Sans cela, la courbe d'échelle n'a pas d'abscisse défendable.
-- [ ] **G7.2** Tiny sur corpus complet :
-      `make train CONFIG=lotsa_tiny_full ARGS="wandb.run_name=tiny-full"`
-      ⚠️ Sélection : prendre le DERNIER checkpoint, pas le meilleur val_loss — avec un recuit
-      correct sur max_epochs=2 le dernier est le légitime (E12/E13).
+- [x] **G7.2** Tiny sur corpus complet — FAIT (tiny-full, E18).
+      ⚠️ DOCTRINE DE SÉLECTION PÉRIMÉE ci-dessous (corrigée 2026-08-24) : ni le dernier ni le
+      meilleur val_loss — **sélection par éval GIFT intermédiaire** (G7.3c : best-val ET
+      best-sMAPE font 0.6309 contre 0.6134 au champion ; aucune métrique val ne sélectionne).
+      ~~Sélection : prendre le DERNIER checkpoint, pas le meilleur val_loss — avec un recuit
+      correct sur max_epochs=2 le dernier est le légitime (E12/E13).~~
 - [x] **G7.3** Finetune zero-shot + evals — FAIT (2026-08-21), GIFT évalué à chaque
       checkpoint de validation (8 points) : final recuit **0.9685 / 0.6664**. Voir E18.
 - [x] **G7.3b** POINT DE CONTRÔLE tranché (2026-08-21) — voir E18. Corpus ×6 ⇒ CRPS
@@ -816,6 +862,13 @@ deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE vari
       devient l'outil officiel. xres COPIE ce protocole (duel à une variable, coût ~1 j
       au lieu de 3). Habitude : cp immédiat des checkpoints couronnés vers
       `checkpoints/champions/` (leçon de l'éviction du champion par save_top_k).
+      **VERDICT (2026-08-24, run 1ep-3e-4 terminé)** : prédiction à moitié réfutée — pic
+      ENCORE à 25 % (0.8914/0.6134, champion absolu, > champion v2 0.6190) puis dérive vers
+      0.6309 en fin d'époque, mais ~2× plus faible que v2 ; et le checkpoint best-val/best-
+      sMAPE (0.5855) fait 0.6309 — aucune métrique val ne sélectionne le champion GIFT.
+      **Doctrine de production finale : 1 époque cosinus + évals GIFT intermédiaires
+      (~toutes les 5-10 %) + sélection par éval + cp champions/.** Le 1ep reste supérieur au
+      3ep sur tout (champion, dérive, coût /3) — protocole gelé pour mini et xres.
 - [ ] **G7.4** Mini sur corpus complet — avec une PRÉDICTION ÉCRITE AVANT LE RUN (2026-08-19,
       hypothèse utilisateur pendant tiny-full : « on touche la limite de capacité du tiny sur
       un corpus si gros/complexe ») :
@@ -839,7 +892,11 @@ deux leviers restants, corpus complet puis capacité, en ne bougeant qu'UNE vari
 E17 montre que l'écart au leaderboard suit la couverture fréquentielle (×1,08 sur 5T, ×2,42 sur
 10S) et non l'horizon. Par effet attendu décroissant :
 
-- [ ] **G8.1** Aligner les motifs d'exclusion sur `GiftEvalPretrain` (152 sous-ensembles) plutôt
+- [x] **G8.1** CLOS PAR LA MESURE (2026-08-24, constat G7.1 : gain réel 0,20 Md = 0,9 % du
+      corpus, dont 93 % pour Q-TRAFFIC — « levier vide », GiftEvalPretrain ≡ LOTSA moins les
+      évals). Les 20 sous-ensembles réadmis restent acquis ; `solar_power` sera levé dans le
+      cadre corpus v3 (roadmap S2), pas comme item G8.1. Texte d'origine conservé :
+      ~~Aligner les motifs d'exclusion sur `GiftEvalPretrain` (152 sous-ensembles) plutôt~~
       que sur une liste maison plus stricte : `solar_power`, `taxi_30min`, `kdd2022`, `LOS_LOOP`,
       `covid19_energy` y sont AUTORISÉS et nous les excluons. Vérifier un par un qu'il n'y a pas
       de recoupement réel avec un dataset d'éval avant de les réintégrer.
@@ -1193,6 +1250,25 @@ standalone imposées (garde ValueError contre contextualized_targets). Une seule
 ---
 
 ### G10 — Échantillonnage à deux niveaux (dette identifiée le 2026-08-19, à traiter APRÈS G7)
+
+**G10.2 — DÉRIVE DE COMPOSITION INTRA-ÉPOQUE (identifiée 2026-08-24, lecture de code
+confirmée).** L'hypothèse « composition stable sur l'époque » est fausse par construction :
+`TemperatureSampler.__iter__` retire une famille de TOUS les batchs restants dès son plafond
+`max_oversample_ratio` atteint (le `continue`), et le batch RÉTRÉCIT (slots non réalloués).
+Les petites familles, suréchantillonnées par T=0.5, s'éteignent tôt — la fin d'époque est
+dominée par les grosses familles. Candidat mécanisme de la dérive GIFT de fin de finetune
+(G7.3c : les runs mix v2 et 1ep s'infléchissent au MÊME step ~430-470k — l'extinction est
+déterministe, mêmes tailles/seed). Instrumentation livrée : `scripts/audit_batch_schedule.py`
+(itère le sampler réel sans lire de données : extinctions, composition par décile,
+mouvements début→fin). **Correctif candidat, à UNE variable, après mesure : RATIONNEMENT du
+plafond** — au lieu d'épuiser `max_samples[i]` en début d'époque, tirer
+`min(n_samples, max_samples[i]/num_batches)` par batch (arrondi stochastique) : même
+exposition totale par famille, étalée uniformément ⇒ composition constante, batch constant.
+À courir comme ablation sur le protocole 1ep (prédiction : dérive post-25 % réduite, pic
+plus tardif). Connexe : **moyenne de poids SWA** (`scripts/average_checkpoints.py`, livré
+2026-08-24) — si le modèle oscille autour d'un bassin en pistant les familles, la moyenne
+des checkpoints de la fenêtre 15-40 % est un point plus central que tout checkpoint
+individuel ; coût zéro GPU, verdict par éval GIFT du soup vs champion sélectionné.
 
 **Le défaut.** `TemperatureSampler` (datamodule.py:94-103) calcule `sizes ** T` **par FICHIER**.
 Une famille éclatée en 30 tranches annuelles obtient donc 30 tirages, et la température — qui

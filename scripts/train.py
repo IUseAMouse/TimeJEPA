@@ -73,6 +73,9 @@ def main(cfg: DictConfig):
         balanced_sampling=cfg.data.balanced_sampling,
         sampling_temperature=cfg.data.sampling_temperature,
         max_oversample_ratio=cfg.data.max_oversample_ratio,
+        # G10.2 : étalement uniforme du plafond sur l'époque (opt-in, absent de
+        # toutes les configs existantes => False => itération bit-identique).
+        ration_oversample=bool(cfg.data.get('ration_oversample', False)),
         batch_size=cfg.data.batch_size,
         stride=cfg.data.stride,
         normalize_mode=cfg.data.normalize_mode,

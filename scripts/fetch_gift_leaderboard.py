@@ -60,10 +60,66 @@ def geomean(vals):
     return math.exp(sum(math.log(v) for v in vals) / len(vals)) if vals else float("nan")
 
 
+def fetch_meta(models, out_dir: Path):
+    """
+    Enrichissement (2026-08-24) : les config.json de soumission portent l'ORG
+    officielle, le lien modèle, model_type, testdata_leakage,
+    replication_code_available — et l'API HF du modèle lié donne la taille
+    réelle (safetensors.total). Vendored dans models_meta.csv, à côté du
+    classement, pour gift_rank.py.
+    """
+    rows = []
+    for i, m in enumerate(models):
+        meta = {"model": m, "org": "", "params_m": "", "model_type": "",
+                "model_link": "", "testdata_leakage": "",
+                "replication_code_available": ""}
+        try:
+            cfg = json.loads(http(
+                f"{SPACE}/results/{urllib.parse.quote(m)}/config.json"))
+            for k in ("org", "model_type", "model_link",
+                      "testdata_leakage", "replication_code_available"):
+                meta[k] = str(cfg.get(k, "") or "")
+        except Exception:
+            pass
+        link = meta["model_link"]
+        if "huggingface.co/" in link:
+            repo = link.split("huggingface.co/")[-1].strip("/").removeprefix("models/")
+            repo = "/".join(repo.split("/")[:2])
+            try:
+                info = json.loads(http(f"https://huggingface.co/api/models/{urllib.parse.quote(repo, safe='/')}"))
+                total = (info.get("safetensors") or {}).get("total")
+                if total:
+                    meta["params_m"] = f"{total / 1e6:.1f}"
+            except Exception:
+                pass
+        rows.append(meta)
+        if (i + 1) % 25 == 0:
+            print(f"  meta {i + 1}/{len(models)}")
+
+    with open(out_dir / "models_meta.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    n_org = sum(1 for r in rows if r["org"])
+    n_par = sum(1 for r in rows if r["params_m"])
+    print(f"models_meta.csv : {n_org}/{len(rows)} orgs, {n_par}/{len(rows)} tailles")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--out", default=None, help="défaut : docs/assets/gift_leaderboard/<date>")
+    ap.add_argument("--enrich-only", default=None, metavar="SNAPSHOT_DIR",
+                    help="n'ajoute que models_meta.csv à un snapshot existant "
+                         "(sans re-télécharger les CSV de résultats)")
     args = ap.parse_args()
+
+    if args.enrich_only:
+        snap = Path(args.enrich_only)
+        with open(snap / "leaderboard.csv") as f:
+            models = [r["model"] for r in csv.DictReader(f)]
+        print(f"{len(models)} modèles du snapshot {snap.name}")
+        fetch_meta(models, snap)
+        return
 
     out_dir = Path(args.out or f"docs/assets/gift_leaderboard/{date.today().isoformat()}")
     raw_dir = out_dir / "raw"
@@ -118,6 +174,8 @@ def main():
         for r in rows:
             w.writerow({k: (f"{v:.4f}" if isinstance(v, float) else v)
                         for k, v in r.items()})
+
+    fetch_meta(sorted(results), out_dir)
 
     print(f"\n{len(rows)} modèles classés -> {out_dir / 'leaderboard.csv'}")
     print("Top 5 CRPS :")
