@@ -1403,6 +1403,153 @@ forwards, une ligne dans la table de fairness. Référence de soumission :
 est ARCHIVÉ (ne revient que si un futur checkpoint entraîné à contextes variables le
 réhabilite) ; ctx2048 attend le curriculum v3.
 
+### E20 — Verdict final du run ration : le rationnement entre au protocole, la doctrine G7.3c re-confirmée (2026-08-25)
+
+**Protocole.** Fin du finetune `timejepa_lotsa_tiny_mix_zs_1ep_ration` (1 ép. cosinus,
+`save_top_k=-1`). Courbe de loss : descente PROGRESSIVE sur toute l'époque, meilleure
+val_loss = DERNIER checkpoint — la stationnarité de composition supprime le sprint précoce
+et la stagnation tardive de l'ancien sampler (prédiction G10.2 réalisée sur la loss aussi).
+Les trois derniers checkpoints évalués nu + flip sur les 97 configs :
+
+| checkpoint (val_loss) | nu MASE/CRPS | ×flip MASE/CRPS |
+|---|---|---|
+| 0.5857 | 0.8957 / 0.6307 | 0.8693 / 0.6016 |
+| 0.5855 | 0.8954 / 0.6306 | 0.8685 / 0.6010 |
+| **0.5855-v1 (dernier, meilleure val)** | 0.8955 / 0.6310 | 0.8692 / 0.6016 |
+| *rappel : ration@45 % (champion)* | *0.8950 / 0.6239* | ***0.8702 / 0.5959*** |
+
+**1. Le champion du run reste le 45 %.** Trajectoire GIFT nu complète : 0.6345(25 %) →
+0.6305 → 0.6329 → 0.6303 → **0.6239(45 %)** → … → 0.6306-0.6310 (fin). Après 45 %, la
+queue du cosinus ÉRODE GIFT (+0.007 nu) pendant que la val_loss continue de DESCENDRE.
+
+**2. G7.3c re-confirmée une troisième fois, dans sa forme la plus pure.** Cette fois la
+val_loss est propre (composition stationnaire, descente monotone) et elle désigne QUAND MÊME
+le mauvais checkpoint : meilleure-val = dernier = 0.6310 nu, contre 0.6239 au 45 %. La
+sélection par éval GIFT intermédiaire n'est pas un palliatif d'une val bruitée — c'est que
+la val de finetune et le zero-shot GIFT ne mesurent pas la même chose. Doctrine intacte :
+éval tous les 5-10 %, `cp champions/` immédiat.
+
+**3. Fin de run = bassin plat.** Les trois derniers checkpoints sont quasi identiques
+(écart 0.0004 nu / 0.0006 flip sur des dizaines de milliers d'instances) — le cosinus
+terminal a convergé. Conséquence : une soupe des SEULS checkpoints tardifs est sans objet
+(moyenner des points confondus) ; la soupe intéressante est celle de la FENÊTRE DE GAINS
+(25-55 %), enfin possible avec save_top_k=-1. Prédiction avant mesure : la soupe atterrit
+ENTRE le 45 % et la fin (~0.625-0.628 nu), ne bat pas le 45 % seul — les checkpoints d'un
+walk-in-plateau sont des solutions différentes, pas des bruits autour d'une solution.
+
+**VERDICT RATION : ENTRE AU PROTOCOLE.** Critère (fixé avant le run) : best-of-run ≥
+champion sur la procédure officielle. Mesuré : ration@45 % × flip = **0.8702/0.5959**, bat
+champion×flip (0.8735/0.5984) sur LES DEUX métriques (nu : CRPS en retrait 0.6239 vs
+0.6134, MASE équivalente — le rationnement gagne là où on soumet). S'ajoutent le mécanisme
+compris (G10.2), la loss propre, et l'amélioration tardive prédite puis observée.
+`ration_oversample: true` devient DÉFAUT du protocole finetune (déjà inscrit dans les
+configs v3). Champion inchangé : `champions/ration45_mase0.8702_crps0.5959.ckpt`.
+
+**Addendum — soupe mesurée (2026-08-25 midi), prédiction confirmée et amplifiée.**
+Soupe uniforme des 7 checkpoints de la fenêtre 25-55 % (identifiés par mtime + md5 du
+champion — la loss n'était PAS monotone : remontée locale à 35 %, le tri par val_loss
+mentait) : **0.9044/0.6383 nu, 0.8777/0.6072 ×flip** — pire que le 45 % seul (0.6239/0.5959)
+et pire que la FIN de run (0.6310/0.6016). La prédiction disait « atterrit entre le 45 % et
+la fin » ; la réalité est encore en dessous : les checkpoints du plateau ne sont pas des
+bruits autour d'un bassin commun, la moyenne de leurs poids SORT du bassin (dégâts localisés
+et grands : m4_weekly 2.76→4.13, covid 33.1→35.9 — signature d'interpolation entre solutions
+non alignées). **VERDICT SWA : CLOS, négatif sur ce régime** — la soupe intra-finetune 1 ép.
+ne revient que si un futur run montre une fenêtre de gains LONGUE et lisse (ex. multi-époques
+v3). La sélection par éval intermédiaire reste l'unique mécanisme de récolte.
+
+### E20b — Statistique appariée du signal d'horizon : l'avantage JEPA vit aux frontières de rollout, pas dans la profondeur (2026-08-25)
+
+**Motivation.** Le « signal d'horizon » (E15 : 2 cellules ; E16 : +0.8/+3.1/+6.6 % monotone
+sur GIFT) restait sans quantification d'incertitude — et c'est le pari fondateur (§7).
+Zéro GPU : ré-analyse appariée des artefacts EXISTANTS des deux arms G6 (epoch04, JEPA
+1.3454 vs recon 1.3507), script `horizon_stats.py` (bootstrap n=20000, permutation
+intra-dataset).
+
+**A. Intra-fenêtre (MAE par pas 0→255, 8 datasets Monash locaux) : le signal s'INVERSE.**
+Pente du gap relatif recon-vs-JEPA : **−1.64 %/100 pas, IC95 % [−2.82, −0.56]**, 6/8
+datasets en pente négative (solar −4.4, saugeen −3.6, wikipedia −2.7). La reconstruction
+RATTRAPE avec la profondeur à l'intérieur d'une fenêtre. La lecture « la recon paie
+l'imprévisible, d'autant plus que l'horizon s'allonge » est RÉFUTÉE comme effet de
+profondeur de prédiction. (Contamination electricity/traffic sans objet ici : comparaison
+appariée, les deux arms ont vu le même corpus.)
+
+**B. À travers les rollouts (28 cellules Nixtla, h96/192/336/720 = 1 à 3 rollouts de 256) :
+tendance réelle mais fragile.** Gap moyen par horizon : −0.09 % (h96), **−2.08 %
+[−4.07, −0.48] (h192 : recon significativement MEILLEURE)**, +1.40 % (h336), +5.11 %
+[−0.20, +12.08] (h720). Spearman gap~horizon **+0.404, p=0.019** (permutation
+intra-dataset) — mais **p=0.069 sans etth1**, la même cellule dominante qu'E15.
+
+**Reformulation de la thèse (plus étroite, mécaniste, falsifiable).** L'avantage latent
+n'est PAS « prédire loin coûte moins cher en latent » (A le réfute) ; le candidat restant
+est : **le latent se dégrade moins sous ITÉRATION sur ses propres sorties** (le gap ne
+s'ouvre qu'au-delà d'un rollout). Corollaire testable en S3 : h512/h768 natif (moins de
+rollouts) devrait RÉDUIRE l'avantage JEPA-vs-recon — le duel d'objectifs et la piste
+horizon natif se testent mutuellement.
+
+**Protocole enregistré (G6.2, le test du pari fondateur) :**
+1. FAIT — la présente statistique.
+2. GPU (~1,5 j, après ESJEPA) : contrôle **recon-mix** — rebaser `lotsa_tiny_recon` sur la
+   recette moderne (mix, arcsinh, ration), pretrain 2 ép. + finetune protocole gelé. Le
+   duel E15/E16 date du corpus plafonné ; jamais rejoué depuis. Prédictions AVANT le run :
+   P-G6.2a gap h720 > gap h96 (le gradient de rollout se réplique) ; P-G6.2b pente
+   intra-fenêtre ≤ 0 (le mécanisme profondeur reste mort) ; P-G6.2c le champion GIFT
+   JEPA-mix bat recon-mix hors bruit (sinon l'objectif n'est pas un levier, point).
+3. Mécanisme : instrumenter l'éval h720 pour l'erreur PAR PAS à travers les 3 rollouts —
+   l'hypothèse frontière prédit des SAUTS du gap aux pas 256 et 512, pas une croissance
+   continue.
+4. 3 graines par arm : prix d'une conclusion de papier, S4+ seulement si (2) réplique.
+
+### E20c — G13-T1/T2 mesurés : le juge connaît la flèche du temps, pas la continuité ; T2 invalide PAR CONSTRUCTION, redessiné (2026-08-25)
+
+**T1 (checkpoint pré-spécifié mix/last, contextualisé, 8 instances × 16 candidats/famille) :**
+
+| famille de violation | AUC vs cohérents (mix/last) | AUC (esjepa15_bestjudge) |
+|---|---|---|
+| renversement temporel | **0.808** (P-T1 ✓) | 0.603 |
+| saut d'état initial ±2σ | **0.556 ≈ hasard (P-T1 ✗)** | 0.511 |
+| réponse d'action inversée | 0.935 (caveat morphologie hors-gamme) | 1.000 |
+
+Deux leçons : (1) **la continuité contexte→futur est quasi absente de l'énergie** — le
+juge accepte un futur téléporté ; à retenir pour G13 (une contrainte de continuité devra
+être explicite dans le coût, l'énergie ne la porte pas) ; (2) **le rang-probe ne prédit
+pas la discrimination dynamique** — le « meilleur juge » par bootstrap (esjepa15, 0.205)
+est PIRE sur renversement/saut que mix/last (0.291 en rang-probe). Troisième axe de
+sélection de checkpoint, distinct du forecast ET du rang-probe.
+
+**T2 v1 : P-T2 réfutée — mais procès reconnu truqué, deux vices de conception.**
+Mesuré : gap d'optimisme ×3 et violations 10 %→30 % (38 % esjepa) AVEC l'énergie.
+Autopsie : (a) déséquilibre d'échelle ~100:1 (coût ~0.005, λ_E·E ≈ 0.375 — l'objectif
+était à ~99 % de la plausibilité pure, et le plan est tiré vers les consignes
+HISTORIQUES 1.0/2.0 qui bordent la bande cible : le prior de politique comportementale
+de Crasson/ThermoForce, MESURÉ en direct) ; (b) plus fondamental, le planning traversait
+le simulateur VRAI — le régularisateur MPUR n'a de travail que contre l'erreur d'un
+modèle FAUX ; avec le modèle parfait il ne peut qu'ajouter du biais. Le négatif v1 est
+donc ininterprétable comme réfutation du mécanisme.
+
+**T2 v2 MESURÉ (plan_beta=0.8, vrai 0.5 — cadre MPUR équitable) : P-T2b RÉFUTÉE,
+proprement cette fois.** Deux runs qui ferment la question :
+- e_ref=0.80 (terme DORMANT — la trajectoire imaginée sous le mauvais beta est
+  morphologiquement plausible, E < seuil) : gap 0.1774 vs 0.1755, viol 78.7 % vs
+  80.0 % — indiscernable. L'erreur de modèle vit dans l'écart imagination/réalité,
+  un endroit que l'énergie DE l'imagination ne peut pas voir, par construction.
+- e_ref=0.70 (terme ACTIF) : gap 0.1774 → **0.1979**, viol 78.7 % → **82.4 %** —
+  forcée de s'exprimer, l'énergie injecte son prior « ressemble à l'historique »
+  (la politique comportementale) et DÉGRADE le plan.
+
+**VERDICT E20c (trois runs concordants) : E est un CLASSEUR, pas un RÉGULARISATEUR.**
+Ce que l'énergie sait faire : ordonner des futurs candidats (flèche du temps 0.808,
+morphologie hors-gamme 0.935) — la voie propose-juge-pondère d'`evaluate_energy`
+(E18b/f, G12) reste intacte et validée. Ce qu'elle ne sait PAS faire : imposer la
+continuité d'état (0.556), détecter l'erreur de modèle dans une imagination plausible
+(T2b-dormant), servir de coût de prudence sans importer le prior de politique
+(T2b-actif). Conséquences d'architecture G13, gravées : (1) la prudence du planning
+viendra du FAN + z (l'incertitude PRÉDITE — ESJEPA) et/ou d'un désaccord d'ensemble,
+pas de E — convergence mesurée avec le choix de conception de Henaff/MPUR (variance
+d'ensemble, pas énergie) ; (2) la continuité d'état sera une contrainte EXPLICITE du
+coût ; (3) la sélection du checkpoint-juge est un axe propre (ni val, ni GIFT, ni
+rang-probe : discrimination dynamique).
+
+
 ---
 
 ## 3. Ce qui est établi
@@ -1771,6 +1918,79 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-25 (nuit)** — **E20c TRANCHÉ (3 runs concordants) : E est un CLASSEUR, pas un
+  RÉGULARISATEUR.** T2b équitable (planner à beta faussé) : terme dormant = indiscernable
+  (l'énergie de l'imagination ne voit pas l'erreur de modèle, par construction) ; terme
+  forcé actif (e_ref 0.70) = PIRE (viol 78.7→82.4 % — il importe le prior de politique
+  comportementale). Conséquences G13 gravées en E20c : prudence par FAN+z, continuité
+  explicite dans le coût, sélection de juge = axe propre. Convergence mesurée avec le
+  choix MPUR (variance, pas énergie).
+- **2026-08-25 (nuit, suite)** — **G4.2 lancé en statut ABLATION PAPIER** (décision
+  utilisateur : légitime côté « éval à l'aveugle » — gamma calibré corpus de finetune,
+  jamais GIFT, un vecteur pour 97 configs — mais pas nécessairement le chiffre officiel
+  communiqué). Livré : `scripts/calibrate_quantiles.py` (split conformal CQR
+  multiplicatif, médiane inter-datasets, calibrer sous ×flip), flag
+  `+quantile_gamma=<json>` dans evaluate_gift (cache isolé `_gamma-<tag>`, MASE
+  invariante par construction), `tests/test_quantile_gamma.py`. Prédiction gravée :
+  MASE bit-identique ; CRPS −1 à −2,5 % (0.5959 → ~0.581-0.590 ×flip) ; si dégradé ⇒
+  miscalibrage non transférable, gamma archivé. Contexte budget consigné : fin des
+  vacances ~28/08, pod ~500 €/mois ⇒ triage — v3 = seul run obligatoire, recon-mix G6.2
+  DIFFÉRÉ (sert le papier, pas le leaderboard), pod stoppé entre les runs, couches
+  CPU-gratuites (G4.2, E18f-sur-GIFT, pondération) en soirées post-rentrée.
+- **2026-08-25 (soir)** — **G13-T1/T2 : premier test EBM-contrôle, protocole livré**
+  (`scripts/control_ebm_probe.py`, CPU, zéro GPU — plomberie vérifiée sur modèle jouet,
+  AUC ≈ 0.5 sur poids aléatoires comme attendu). Principe : simulateur thermostat POSSÉDÉ
+  (linéaire, action cachée, historique sous politique bang-bang = confounding LOTSA en
+  miniature) ⇒ chaque verdict du juge et chaque plan sont vérifiables contre la vraie
+  dynamique. T1 = le juge sépare-t-il les futurs dynamiquement cohérents des violations
+  (renversement temporel, saut d'état, réponse d'action inversée) ; T2 = planning par
+  backprop de la COMMANDE u à travers le simulateur différentiable, coût seul vs
+  coût+énergie (régularisateur MPUR), verdict par 200 rollouts bruités (gap d'optimisme +
+  taux de violation). Réutilise la machinerie E18f d'`evaluate_energy.py` (variable
+  optimisée : u, pas y). Checkpoint PRÉ-SPÉCIFIÉ : `timejepa_tiny_lotsa_mix/last.ckpt`
+  (lignée E18b, choisi avant toute mesure) ; `esjepa15_bestjudge` en colonne secondaire
+  déclarée « borne haute ». Prédictions AVANT run : P-T1 AUC > 0.7 sur renversement et
+  saut (caveat : beta_flip peut être séparé par simple morphologie hors-gamme, pas par
+  connaissance de l'action) ; P-T2 le terme d'énergie RÉDUIT le gap d'optimisme
+  (sinon : le juge n'est pas encore un régularisateur de planning utilisable, négatif
+  consigné).
+- **2026-08-25 (après-midi, suite)** — ajout de **E20b** : statistique appariée du signal
+  d'horizon sur les arms G6 existants (zéro GPU, `scripts/horizon_stats.py`). Résultat qui
+  REFORMULE le pari fondateur : intra-fenêtre l'avantage JEPA DÉCROÎT avec la profondeur
+  (pente −1.64 %/100 pas, IC95 % excluant 0) ; le gap ne s'ouvre qu'à travers les ROLLOUTS
+  (Spearman +0.404 p=0.019, fragile sans etth1 p=0.069). Nouvelle hypothèse : le latent se
+  dégrade moins sous itération — testable par sauts aux frontières 256/512, et corollaire
+  S3 : h512 natif devrait RÉDUIRE l'avantage. Protocole G6.2 enregistré (recon-mix ~1,5 j
+  GPU après ESJEPA, prédictions P-G6.2a-c gravées ; 3 graines seulement si réplication).
+- **2026-08-25 (après-midi)** — **Pretrain ESJEPA en cours, P1 VÉRIFIÉE à mi-run** :
+  `esjepa/z_corr = 0.63` (prédiction gravée : > 0.3 ; kill-switch ≈ 0 écarté) et
+  `z_pred_std_ratio = 0.7` (pas de collapse marginal — et ratio MEILLEUR que la voie
+  signal, pred_var/target_var ≈ 0.3-0.4 : la volatilité est plus prévisible que sa
+  réalisation). `train_loss/z` 0.65→0.2 ; courbes sans inflexions de mi-époque
+  (signature du rationnement, désormais aussi au pretrain — écart n°3 déclaré dans la
+  config, règle d'attribution témoins-z gravée). Le run continue vers le finetune.
+  **Suivi (soir, superposition wandb vs contrôle mix)** : le témoin de siphonnage λ_z
+  est INVERSÉ — `val_loss/invariance` ESJEPA ~4-5 % MEILLEURE que mix à étape égale
+  (repli λ_z=0.03 écarté ; la voie z régularise plutôt qu'elle ne vole).
+  `collapse/effective_rank` glisse en revanche SOUS le contrôle (25 vs 33 à ~270k ;
+  mix rebondit vers 400k et oscille 30-39 ensuite) sans se payer dans les objectifs —
+  point de contrôle posé : inflexion du rang attendue vers 400-450k, sinon divergence
+  à caractériser (action seulement si mse/mae décroche aussi). Série probe-juge
+  (rang agrégé, standalone) : 0.228@10 % → **0.205@15 % (pic, copié
+  champions/pretrain/esjepa15_bestjudge)** → 0.239 → 0.248 → 0.264 → 0.243@35 % —
+  le juge et le forecaster ont des optima temporels différents ; et le probe du
+  CHAMPION finetune (0.291 vs ~0.21 pretrain) réplique E18b : le finetune dégrade le
+  juge ⇒ G12 utilisera un checkpoint-juge dédié, sélectionné par probe.
+- **2026-08-25 (midi)** — ajout de **E20**, verdict final du run ration : fin de run évaluée
+  (3 derniers checkpoints ≈ 0.6306-0.6310 nu / 0.6010-0.6016 flip, bassin plat), le champion
+  du run RESTE le 45 % (0.8702/0.5959 ×flip). **`ration_oversample` ENTRE AU PROTOCOLE
+  finetune** (critère battu sur la procédure officielle, mécanisme G10.2 compris, loss
+  enfin propre). G7.3c re-confirmée dans sa forme la plus pure : val_loss quasi monotone
+  ET meilleure-val = dernier = mauvais checkpoint GIFT. Prédiction soupe gravée avant
+  mesure (~0.625-0.628 nu, ne bat pas le 45 %) puis MESURÉE : 0.6383 nu / 0.6072 flip —
+  confirmée et amplifiée, la moyenne SORT du bassin. **SWA clos, négatif** (addendum E20) ;
+  S1 intégralement vidée hors ESJEPA → prochain GPU : pretrain `lotsa_tiny_esjepa` sur le
+  corpus mix EXISTANT (une variable ; v3 vient après, en S2).
 - **2026-08-25** — **G13 posé au PLAN** : world model unifié forecast+contrôle (la promesse
   d'origine du nom TimeJEPA), conçu en discussion + note visuelle (artifact « Un arm, deux
   métiers »). Contenu : prédicteur conditionné par l'action via `a_film` (w_film

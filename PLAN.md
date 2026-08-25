@@ -29,7 +29,10 @@ ET garantir, avec ration_oversample, une composition stable et diverse sur toute
 mini GELÉ jusqu'au verdict v3 ; G12+calibration en semaine 3.
 
 - **S1 — mesurer + gratuit + arsenal** : décomposition per-config du champion (E19 — FAIT :
-  queue 16→6 configs, prédiction E18 vérifiée) · verdict ration_oversample · G9.1 ctx 2048
+  queue 16→6 configs, prédiction E18 vérifiée) · verdict ration_oversample (FAIT, E20 :
+  **ENTRE AU PROTOCOLE** — champion = ration@45 %×flip 0.8702/0.5959 ; fin de run 0.6310 nu
+  malgré la meilleure val_loss ⇒ G7.3c re-confirmée ; soupe 25-55 % MESURÉE 0.6383/0.6072 :
+  **SWA clos, négatif** — la moyenne sort du bassin, addendum E20) · G9.1 ctx 2048
   inférence seule (FAIT, E19b : échec instructif → curriculum v3) · harness TTA (FAIT,
   E19b : **flip seul = procédure officielle, 0.8735/0.5984, ~92e — jalon S1 ATTEINT J1**) ·
   ESJEPA v1 (2 j GPU, contrôle = pretrain mix existant). **h512 REPORTÉ en S3 sur le
@@ -50,12 +53,26 @@ mini GELÉ jusqu'au verdict v3 ; G12+calibration en semaine 3.
   batch synthétique), conversions courtes+solar, décimation, symlinks lotsa_v3, audit
   d'équilibre `audit_batch_schedule.py` consigné, puis pretrain+finetune protocole gelé.
   **Jalon : ~0.585-0.60 avant couches** (prédictions P-v3.1..4 gravées en E19).
+- **G6.2 (pari fondateur, protocole enregistré E20b 2026-08-25)** : la statistique appariée
+  des arms G6 a reformulé le signal d'horizon — intra-fenêtre l'avantage JEPA DÉCROÎT
+  (pente −1.64 %/100 pas, IC95 % < 0) ; il ne s'ouvre qu'à travers les rollouts (p=0.019,
+  fragile sans etth1). Hypothèse restante : robustesse à l'ITÉRATION. À courir : contrôle
+  **recon-mix** (~1,5 j GPU, après ESJEPA — rebaser lotsa_tiny_recon sur la recette mix),
+  prédictions P-G6.2a-c gravées en E20b ; instrumentation h720 par pas (sauts attendus aux
+  frontières 256/512) ; NOTE : h512 natif devrait RÉDUIRE l'avantage JEPA-vs-recon — le
+  duel d'objectifs et h512 (S3) se testent mutuellement. 3 graines : S4+ si réplication.
 - **S3** : xres vs contrôle v3 (une variable) · **h512 vs contrôle v3** (une variable —
   l'horizon ; gate du h768 natif du run-recette) · G12 sur GIFT (hybride vérificateur +
   raffinement par gradient, métrique UPLIFT, coût éval ×5-10 accepté en éval dédiée) ·
   pondération par source (dernière brique papier court) · G4.2 calibration conforme
-  doctrine-compatible (facteurs par niveau de quantile calibrés sur corpus de FINETUNE,
-  uniformes) · SWA. **Jalon : ~0.565-0.58 (« TTM déshabillé »).**
+  (CODE LIVRÉ 2026-08-25 : calibrate_quantiles.py + +quantile_gamma — statut ABLATION
+  PAPIER, décision utilisateur ; prédiction MASE bit-identique / CRPS −1 à −2,5 %) ·
+  ~~SWA~~ (CLOS négatif, E20). **Jalon : ~0.565-0.58 (« TTM déshabillé »).**
+- **TRIAGE BUDGET (2026-08-25 — fin des vacances ~28/08, pod ~500 €/mois)** : v3 = seul
+  run GPU obligatoire (assemblage S2.4 à deux avant la rentrée, pretrain tourne seul) ;
+  recon-mix G6.2, xres, h512 DIFFÉRÉS à la demande post-verdict v3 ; pod STOPPÉ entre
+  les runs ; couches CPU-gratuites (G4.2, E18f-sur-GIFT, pondération, calibration) en
+  soirées. ESJEPA : verdict au fil de l'eau (déjà payé).
 - **S4** : run-recette final (2e bundle : meilleur pretrain + h768 si h512 valide +
   curriculum long-contexte si G9.1 positif + densité de supervision multi-offsets) ·
   G7.7 dimension intrinsèque · papiers (§10 à remettre à niveau). Mini/G7.4 seulement si

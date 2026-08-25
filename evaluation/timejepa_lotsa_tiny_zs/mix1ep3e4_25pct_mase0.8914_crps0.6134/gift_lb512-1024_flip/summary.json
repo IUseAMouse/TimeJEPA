@@ -1,0 +1,16 @@
+{
+  "checkpoint": "checkpoints/timejepa_lotsa_tiny_mix_zs/mix1ep3e4_25pct_mase0.8914_crps0.6134.ckpt",
+  "n_configs": 1,
+  "vs_official_seasonal_naive": {
+    "geomean_MASE_ratio": 0.3232122995145157,
+    "n_configs_MASE": 1,
+    "geomean_CRPS_ratio": 0.2665131785664091,
+    "n_configs_CRPS": 1
+  },
+  "vs_local_seasonal_naive": {
+    "geomean_MASE_ratio": 0.3232122997386538,
+    "n_configs_MASE": 1,
+    "geomean_CRPS_ratio": 0.2682347593719413,
+    "n_configs_CRPS": 1
+  }
+}

@@ -208,10 +208,38 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
 # Per-config evaluation
 # ---------------------------------------------------------------------------
 
+def apply_quantile_gamma(out: dict, gamma) -> dict:
+    """
+    G4.2 — calibration conforme uniforme : q'_k = med + gamma_k · (q_k − med).
+
+    gamma [Q] vient de scripts/calibrate_quantiles.py (corpus de FINETUNE,
+    jamais GIFT — un seul vecteur pour les 97 configs, doctrine mono-checkpoint).
+    La médiane est intouchable par construction (gamma_0.5 = 1 et le point
+    forecast n'est pas modifié) : MASE bit-identique, tout delta est du CRPS.
+    gamma > 0 préserve la monotonie des quantiles. Appliqué APRÈS la moyenne
+    TTA (la calibration est faite sous la même procédure) ; l'enveloppe G8.4b
+    a déjà borné les quantiles en amont — l'élargissement peut la dépasser
+    marginalement (gamma ≲ 2 contre une enveloppe à ±10·range : accepté).
+    """
+    q = out.get("quantiles_denorm")
+    if q is None or gamma is None:
+        return out
+    med = out["forecast_denorm"]                       # [B, h, 1]
+    g = gamma.to(q.device, q.dtype)
+    if q.dim() == 4:                                   # [B, h, Q, 1]
+        q = med.unsqueeze(-2) + g.view(1, 1, -1, 1) * (q - med.unsqueeze(-2))
+    else:                                              # [B, h, Q]
+        q = med + g.view(1, 1, -1) * (q - med)
+    res = dict(out)
+    res["quantiles_denorm"] = q
+    return res
+
+
 def evaluate_config(model, config: str, gift_root: Path, device,
                     batch_size: int, max_series: int = 0,
                     max_context: int = 0, tta_lookbacks=None,
-                    tta_flip: bool = False, tta_shifts=None) -> dict:
+                    tta_flip: bool = False, tta_shifts=None,
+                    quantile_gamma=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -255,6 +283,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 out = tta_forecast(model, batch, h,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
                                    shifts=tta_shifts)
+            out = apply_quantile_gamma(out, quantile_gamma)
 
             median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h]
             quants = out.get("quantiles_denorm")
@@ -326,6 +355,17 @@ def main(cfg: DictConfig):
     #                         recommandé — moins d'un patch de péremption)
     tta_shifts = ([int(x) for x in str(cfg.tta_shifts).split(",")]
                   if cfg.get("tta_shifts") else None)
+    #   +quantile_gamma='evaluation/calibration/gamma_<ckpt>.json'
+    #   (G4.2 : facteurs d'élargissement par niveau, calibrés sur le corpus de
+    #    FINETUNE par scripts/calibrate_quantiles.py — statut : ablation papier,
+    #    décision utilisateur 2026-08-25, pas nécessairement le chiffre officiel)
+    quantile_gamma, gamma_tag = None, ""
+    if cfg.get("quantile_gamma"):
+        gpath = Path(str(cfg.quantile_gamma))
+        gdata = json.loads(gpath.read_text())
+        quantile_gamma = torch.tensor(gdata["gamma"], dtype=torch.float32)
+        gamma_tag = "_gamma-" + gpath.stem
+        logger.info(f"quantile_gamma: {gdata['gamma']} ({gpath})")
 
     configs = [c for c in gift.GIFT_CONFIGS
                if (not only or c in only)
@@ -348,6 +388,7 @@ def main(cfg: DictConfig):
         tag += "_flip"
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
+    tag += gamma_tag
     out_dir = (Path("evaluation") / cfg.model.name
                / Path(checkpoint_path).stem / f"gift{tag}")
     per_config = out_dir / "per_config"
@@ -386,7 +427,8 @@ def main(cfg: DictConfig):
                                   max_context=max_context,
                                   tta_lookbacks=tta_lookbacks,
                                   tta_flip=tta_flip,
-                                  tta_shifts=tta_shifts)
+                                  tta_shifts=tta_shifts,
+                                  quantile_gamma=quantile_gamma)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return

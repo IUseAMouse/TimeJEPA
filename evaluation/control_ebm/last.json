@@ -1,0 +1,108 @@
+{
+  "checkpoint": "checkpoints/timejepa_tiny_lotsa_mix/last.ckpt",
+  "standalone": false,
+  "sim": {
+    "alpha": 0.1,
+    "beta": 0.5,
+    "sigma": 0.05
+  },
+  "t1": {
+    "reversal": {
+      "mean_energy": 0.847298264503479,
+      "auc_vs_coherent": 0.80804443359375
+    },
+    "state_jump": {
+      "mean_energy": 0.7659319043159485,
+      "auc_vs_coherent": 0.55560302734375
+    },
+    "beta_flip": {
+      "mean_energy": 0.8856188654899597,
+      "auc_vs_coherent": 0.93536376953125
+    },
+    "coherent_mean_energy": 0.7535167932510376
+  },
+  "t2": {
+    "instances": [
+      {
+        "cost_only": {
+          "cost_plan": 0.0,
+          "cost_real": 0.17869417622685432,
+          "optimism_gap": 0.17869417622685432,
+          "violation_rate": 0.78931640625,
+          "u_mean": 0.2108350247144699
+        },
+        "cost+energy": {
+          "cost_plan": 0.0,
+          "cost_real": 0.1958011434227228,
+          "optimism_gap": 0.1958011434227228,
+          "violation_rate": 0.83755859375,
+          "u_mean": 0.20656177401542664
+        }
+      },
+      {
+        "cost_only": {
+          "cost_plan": 0.0,
+          "cost_real": 0.17895557172596455,
+          "optimism_gap": 0.17895557172596455,
+          "violation_rate": 0.78591796875,
+          "u_mean": 0.2111673355102539
+        },
+        "cost+energy": {
+          "cost_plan": 0.0,
+          "cost_real": 0.20693437136709691,
+          "optimism_gap": 0.20693437136709691,
+          "violation_rate": 0.81890625,
+          "u_mean": 0.20507203042507172
+        }
+      },
+      {
+        "cost_only": {
+          "cost_plan": 0.0,
+          "cost_real": 0.1756701213121414,
+          "optimism_gap": 0.1756701213121414,
+          "violation_rate": 0.78615234375,
+          "u_mean": 0.2113344669342041
+        },
+        "cost+energy": {
+          "cost_plan": 0.0,
+          "cost_real": 0.18444687850773334,
+          "optimism_gap": 0.18444687850773334,
+          "violation_rate": 0.81935546875,
+          "u_mean": 0.20976431667804718
+        }
+      },
+      {
+        "cost_only": {
+          "cost_plan": 0.0,
+          "cost_real": 0.17643579870462417,
+          "optimism_gap": 0.17643579870462417,
+          "violation_rate": 0.78494140625,
+          "u_mean": 0.21102085709571838
+        },
+        "cost+energy": {
+          "cost_plan": 0.0,
+          "cost_real": 0.20458815291523932,
+          "optimism_gap": 0.20458815291523932,
+          "violation_rate": 0.8193359375,
+          "u_mean": 0.20530180633068085
+        }
+      }
+    ],
+    "aggregate": {
+      "cost_only": {
+        "cost_plan": 0.0,
+        "cost_real": 0.1774389169923961,
+        "optimism_gap": 0.1774389169923961,
+        "violation_rate": 0.78658203125,
+        "u_mean": 0.21108942106366158
+      },
+      "cost+energy": {
+        "cost_plan": 0.0,
+        "cost_real": 0.1979426365531981,
+        "optimism_gap": 0.1979426365531981,
+        "violation_rate": 0.8237890625,
+        "u_mean": 0.2066749818623066
+      }
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "args": {
+    "checkpoint": "checkpoints/timejepa_lotsa_tiny_full/last.ckpt",
+    "decoder_checkpoint": null,
+    "datasets": "etth1,etth2,weather,exchange",
+    "horizon": 96,
+    "candidates": 32,
+    "refine_steps": 10,
+    "refine_lr": 0.5,
+    "decoder_samples": 0,
+    "proposer_ttm": "ibm-granite/granite-timeseries-ttm-r3",
+    "ttm_revision": "1024-96-r3",
+    "calibrate_T": true,
+    "cal_windows": 2,
+    "ttm_jitter": 4,
+    "max_windows": 20,
+    "max_series": 8,
+    "model_config": "lotsa_tiny_eval",
+    "seed": 0
+  },
+  "results": {
+    "etth1": {
+      "energy": {
+        "mase": 1.1299465894699097,
+        "wql": 0.10180897265672684,
+        "n_windows": 19
+      },
+      "snaive": {
+        "mase": 1.206040382385254,
+        "wql": 0.13232479989528656,
+        "n_windows": 19
+      },
+      "ttm": {
+        "mase": 1.0298917293548584,
+        "wql": 0.11299806833267212,
+        "n_windows": 19
+      },
+      "hybrid_ttm": {
+        "mase": 1.026383876800537,
+        "wql": 0.09520330280065536,
+        "n_windows": 19
+      }
+    },
+    "etth2": {
+      "energy": {
+        "mase": 1.5077697038650513,
+        "wql": 0.21869705617427826,
+        "n_windows": 19
+      },
+      "snaive": {
+        "mase": 1.3531901836395264,
+        "wql": 0.2276146411895752,
+        "n_windows": 19
+      },
+      "ttm": {
+        "mase": 1.2877286672592163,
+        "wql": 0.21660363674163818,
+        "n_windows": 19
+      },
+      "hybrid_ttm": {
+        "mase": 1.4015108346939087,
+        "wql": 0.19782501459121704,
+        "n_windows": 19
+      }
+    },
+    "weather": {
+      "energy": {
+        "mase": 1.142533540725708,
+        "wql": 0.29388269782066345,
+        "n_windows": 160
+      },
+      "snaive": {
+        "mase": 0.9076419472694397,
+        "wql": 0.2878803312778473,
+        "n_windows": 160
+      },
+      "ttm": {
+        "mase": 0.626211941242218,
+        "wql": 0.198618084192276,
+        "n_windows": 160
+      },
+      "hybrid_ttm": {
+        "mase": 1.022139310836792,
+        "wql": 0.2541815936565399,
+        "n_windows": 160
+      }
+    },
+    "exchange": {
+      "energy": {
+        "mase": 2.780930757522583,
+        "wql": 0.21199509501457214,
+        "n_windows": 40
+      },
+      "snaive": {
+        "mase": 2.654982089996338,
+        "wql": 0.20097529888153076,
+        "n_windows": 40
+      },
+      "ttm": {
+        "mase": 2.3442585468292236,
+        "wql": 0.17745433747768402,
+        "n_windows": 40
+      },
+      "hybrid_ttm": {
+        "mase": 2.4212071895599365,
+        "wql": 0.1728155016899109,
+        "n_windows": 40
+      }
+    }
+  }
+}

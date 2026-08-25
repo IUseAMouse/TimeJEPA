@@ -1,5 +1,5 @@
 {
-  "checkpoint": "checkpoints/timejepa_tiny_lotsa_mix/last.ckpt",
+  "checkpoint": "checkpoints/timejepa_tiny_lotsa_mix/epoch01_valloss0.5550.ckpt",
   "candidates": 32,
   "per_config": {
     "solar/10T/short": {

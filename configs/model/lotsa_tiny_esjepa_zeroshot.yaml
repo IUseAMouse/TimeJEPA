@@ -26,6 +26,13 @@ training:
   finetune_mode: "full_finetune"
   max_epochs: 1
 
+checkpoint:
+  # Doctrine G7.3c : sélection par éval GIFT intermédiaire, jamais par
+  # val_loss (E20 : même une val propre et monotone désigne le mauvais
+  # checkpoint) — on garde tout. Le rationnement est hérité de
+  # lotsa_tiny_esjepa (protocole depuis E20).
+  save_top_k: -1
+
 data:
   datasets_finetune: null
 

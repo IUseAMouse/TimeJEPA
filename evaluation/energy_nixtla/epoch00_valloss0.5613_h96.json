@@ -1,0 +1,66 @@
+{
+  "args": {
+    "checkpoint": "checkpoints/timejepa_tiny_lotsa_mix/epoch00_valloss0.5613.ckpt",
+    "decoder_checkpoint": null,
+    "datasets": "ettm2,etth1,weather,exchange",
+    "horizon": 96,
+    "candidates": 32,
+    "refine_steps": 0,
+    "refine_lr": 0.05,
+    "decoder_samples": 0,
+    "max_windows": 20,
+    "max_series": 8,
+    "model_config": "lotsa_tiny_mix_eval",
+    "seed": 0
+  },
+  "results": {
+    "ettm2": {
+      "energy": {
+        "mase": 1.127907156944275,
+        "wql": 0.17953716218471527,
+        "n_windows": 140
+      },
+      "snaive": {
+        "mase": 1.0660548210144043,
+        "wql": 0.22498314082622528,
+        "n_windows": 140
+      }
+    },
+    "etth1": {
+      "energy": {
+        "mase": 1.1747113466262817,
+        "wql": 0.1049669086933136,
+        "n_windows": 19
+      },
+      "snaive": {
+        "mase": 1.206040382385254,
+        "wql": 0.13232479989528656,
+        "n_windows": 19
+      }
+    },
+    "weather": {
+      "energy": {
+        "mase": 0.8412712216377258,
+        "wql": 0.21768450736999512,
+        "n_windows": 160
+      },
+      "snaive": {
+        "mase": 0.9076419472694397,
+        "wql": 0.2878803312778473,
+        "n_windows": 160
+      }
+    },
+    "exchange": {
+      "energy": {
+        "mase": 3.1973326206207275,
+        "wql": 0.2333277016878128,
+        "n_windows": 40
+      },
+      "snaive": {
+        "mase": 2.654982089996338,
+        "wql": 0.20097529888153076,
+        "n_windows": 40
+      }
+    }
+  }
+}

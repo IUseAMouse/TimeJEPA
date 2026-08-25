@@ -1,0 +1,60 @@
+{
+  "checkpoint": "checkpoints/timejepa_tiny_lotsa_mix/epoch01_valloss0.5525.ckpt",
+  "candidates": 32,
+  "per_config": {
+    "solar/10T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.14,
+      "mean_rank_cos": 0.14424242424242423,
+      "median_rank_cos": 0.12121212121212122,
+      "frac_truth_top20pct_cos": 0.68,
+      "spearman_energy_vs_mae": 0.5282404692082112
+    },
+    "bizitobs_l2c/5T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.2906060606060606,
+      "mean_rank_cos": 0.26212121212121214,
+      "median_rank_cos": 0.18181818181818182,
+      "frac_truth_top20pct_cos": 0.52,
+      "spearman_energy_vs_mae": 0.42214076246334314
+    },
+    "electricity/15T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.1475757575757576,
+      "mean_rank_cos": 0.1484848484848485,
+      "median_rank_cos": 0.030303030303030304,
+      "frac_truth_top20pct_cos": 0.75,
+      "spearman_energy_vs_mae": 0.7479655425219941
+    },
+    "electricity/H/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.023030303030303026,
+      "mean_rank_cos": 0.022121212121212118,
+      "median_rank_cos": 0.015151515151515152,
+      "frac_truth_top20pct_cos": 0.99,
+      "spearman_energy_vs_mae": 0.5378445747800586
+    },
+    "jena_weather/H/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.11545454545454546,
+      "mean_rank_cos": 0.10515151515151519,
+      "median_rank_cos": 0.030303030303030304,
+      "frac_truth_top20pct_cos": 0.85,
+      "spearman_energy_vs_mae": 0.23240102639296187
+    },
+    "sz_taxi/15T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.22969696969696968,
+      "mean_rank_cos": 0.24575757575757579,
+      "median_rank_cos": 0.15151515151515152,
+      "frac_truth_top20pct_cos": 0.53,
+      "spearman_energy_vs_mae": 0.5016019061583578
+    }
+  },
+  "aggregate": {
+    "mean_rank_cos": 0.15464646464646467,
+    "mean_rank_mse": 0.15772727272727274,
+    "frac_truth_top20pct_cos": 0.7200000000000001,
+    "spearman_energy_vs_mae": 0.49503238025415447
+  }
+}

@@ -47,5 +47,14 @@ training:
   loss:
     lambda_z: 0.1
 
+data:
+  #   3. ration_oversample au PRETRAIN (décision utilisateur 2026-08-25, E20 :
+  #      les fluctuations de loss du pretrain suivent le même drift de
+  #      composition G10.2 ; v3 l'aura aussi). Le contrôle mix ne l'avait pas ⇒
+  #      règle d'attribution si le duel GIFT est gagné : témoins z vivants
+  #      (z_corr > 0.3, gate_absmean décollé) = l'arm ; témoins morts = le
+  #      rationnement, et l'arm est neutre.
+  ration_oversample: true
+
 wandb:
   tags: ["tiny", "jepa_tst", "experiment", "lotsa", "pretrain", "error-signal", "robust-scale"]

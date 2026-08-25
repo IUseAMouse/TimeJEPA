@@ -79,12 +79,12 @@ DEFAULT_DATASETS = ["ettm1", "ettm2", "etth1", "etth2", "weather", "exchange"]
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
-                   m: int, K: int, rng, device,
-                   extra_cands: np.ndarray = None,
-                   refine_steps: int = 0, refine_lr: float = 0.05) -> np.ndarray:
+def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
+                       m: int, K: int, rng, device,
+                       extra_cands: np.ndarray = None,
+                       refine_steps: int = 0, refine_lr: float = 0.05):
     """
-    Retourne le fan [h, 9] : quantiles pondérés par énergie.
+    Construit le pool de candidats et calcule leurs énergies -> (cands, e).
 
     extra_cands [N, h] : candidats supplémentaires soumis au MÊME juge — le
     mode « hybride » (protocole utilisateur 2026-08-21) y met les trajectoires
@@ -154,13 +154,22 @@ def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
     z_cand = model.online_encoder(model.patching(full))[:, -n_tgt:, :]
     e = 1.0 - torch.nn.functional.cosine_similarity(
         z_cand.flatten(1), z_pred.expand_as(z_cand).flatten(1), dim=1)
-    e = e.cpu().numpy()
+    return cands, e.cpu().numpy()
 
-    # Softmax sur énergies standardisées : invariant d'échelle, zéro réglage.
+
+def fan_from_energies(cands: np.ndarray, e: np.ndarray,
+                      temperature: float = 1.0) -> np.ndarray:
+    """
+    Énergies -> poids de Gibbs -> quantiles pondérés [h, 9]. T s'applique aux
+    énergies STANDARDISÉES (l'invariance d'échelle de la v0 est conservée) :
+    T=1 = comportement v0 ; T PETIT = juge contrasté, la masse se concentre sur
+    les meilleurs candidats — le remède à la dilution mesurée trois fois
+    (E18e / e-v2 / g, toujours weather+exchange) ; T grand = pool ~uniforme.
+    """
     z = (e - e.mean()) / max(e.std(), 1e-8)
-    w = np.exp(-z); w /= w.sum()
+    w = np.exp(-z / max(temperature, 1e-3)); w /= w.sum()
 
-    # Quantiles pondérés par pas de temps.
+    h = cands.shape[1]
     fan = np.empty((h, len(QUANTILE_LEVELS)), dtype=np.float32)
     order = np.argsort(cands, axis=0)                       # [Nc, h]
     for t in range(h):
@@ -170,6 +179,58 @@ def energy_readout(model, ctx: np.ndarray, history: np.ndarray, h: int,
         for qi, q in enumerate(QUANTILE_LEVELS):
             fan[t, qi] = vals[np.searchsorted(cum, q, side='left').clip(0, len(vals) - 1)]
     return fan
+
+
+@torch.no_grad()
+def energy_readout(model, ctx, history, h, m, K, rng, device,
+                   extra_cands=None, refine_steps=0, refine_lr=0.05,
+                   temperature: float = 1.0) -> np.ndarray:
+    """Le pipeline complet : pool + énergies + lecture pondérée à T donné."""
+    cands, e = candidate_energies(model, ctx, history, h, m, K, rng, device,
+                                  extra_cands=extra_cands,
+                                  refine_steps=refine_steps, refine_lr=refine_lr)
+    return fan_from_energies(cands, e, temperature)
+
+
+T_GRID = (0.125, 0.25, 0.5, 1.0, 2.0, 4.0)
+
+
+def pinball_np(fan: np.ndarray, target: np.ndarray) -> float:
+    diff = target[:, None] - fan                            # [h, 9]
+    q = np.asarray(QUANTILE_LEVELS)
+    return float(np.maximum(q * diff, (q - 1.0) * diff).mean())
+
+
+@torch.no_grad()
+def calibrate_temperature(model, ctx: np.ndarray, h: int, m: int, K: int,
+                          device, n_cal: int = 2, proposer_fn=None,
+                          seed: int = 1000) -> float:
+    """
+    Calibration de T EN CONTEXTE — le prérequis G12(a), et le levier désigné
+    par trois réplications de la signature de dilution. On rejoue le pipeline
+    COMPLET (pool réel, proposeur compris) sur n_cal sous-fenêtres passées du
+    contexte dont la suite est connue ; le T retenu minimise la pinball
+    moyenne. Les énergies se calculent UNE fois par sous-fenêtre, balayer la
+    grille ne coûte que des softmax. Zéro entraînement, zéro regard sur le
+    test ; rng dédié (seed décalée) pour que les tirages du chemin principal
+    restent appariés au bit près avec les runs non calibrés.
+    """
+    rng = np.random.default_rng(seed)
+    scores = {T: [] for T in T_GRID}
+    for j in range(n_cal):
+        cut = len(ctx) - (j + 1) * h
+        if cut < 512:
+            break
+        sub_ctx, known = ctx[:cut].copy(), ctx[cut:cut + h]
+        if not (np.isfinite(sub_ctx).all() and np.isfinite(known).all()):
+            continue
+        extra = proposer_fn(sub_ctx) if proposer_fn is not None else None
+        cands, e = candidate_energies(model, sub_ctx, sub_ctx, h, m, K, rng,
+                                      device, extra_cands=extra)
+        for T in T_GRID:
+            scores[T].append(pinball_np(fan_from_energies(cands, e, T), known))
+    valid = {T: sum(v) / len(v) for T, v in scores.items() if v}
+    return min(valid, key=valid.get) if valid else 1.0
 
 
 @torch.no_grad()
@@ -264,6 +325,9 @@ def main():
                     nargs="?", help="active le proposeur externe TTM (id HF optionnel)")
     ap.add_argument("--ttm-revision", default="1024-96-r3",
                     help="révision HF (contexte-horizon) — main = tête réinitialisée !")
+    ap.add_argument("--calibrate-T", action="store_true",
+                    help="calibre T par série sur des sous-fenêtres du contexte (G12a)")
+    ap.add_argument("--cal-windows", type=int, default=2)
     ap.add_argument("--ttm-jitter", type=int, default=4,
                     help="contextes jitterés par fenêtre pour diversifier TTM")
     ap.add_argument("--max-windows", type=int, default=40, help="par série")
@@ -306,13 +370,35 @@ def main():
                for r in (("energy", "snaive")
                          + (("decoder", "hybrid") if dec_model else ())
                          + (("ttm", "hybrid_ttm") if ttm else ()))}
+        T_used = {"energy": [], "hybrid": [], "hybrid_ttm": []}
         for series in data:
+            T = {"energy": 1.0, "hybrid": 1.0, "hybrid_ttm": 1.0}
+            if args.calibrate_T:
+                # une calibration PAR SÉRIE et PAR COMPOSITION DE POOL (les
+                # pools energy / hybrid_ttm n'ont pas le même contraste), sur
+                # le contexte de la première fenêtre — amorti sur ~max_windows.
+                first = next(iter_windows(series, ctx_len, h, args.max_windows), None)
+                if first is not None:
+                    c0 = first[0]
+                    T["energy"] = calibrate_temperature(
+                        model, c0, h, m, args.candidates, device,
+                        n_cal=args.cal_windows, seed=args.seed + 1000)
+                    if ttm is not None:
+                        T["hybrid_ttm"] = calibrate_temperature(
+                            model, c0, h, m, args.candidates, device,
+                            n_cal=args.cal_windows, seed=args.seed + 1000,
+                            proposer_fn=lambda sc: ttm.paths(sc, h, args.ttm_jitter,
+                                                             np.random.default_rng(args.seed + 2000)))
+                    T["hybrid"] = T["energy"]
+                    for k in T_used:
+                        T_used[k].append(T[k])
             for ctx, tgt, _ in iter_windows(series, ctx_len, h, args.max_windows):
                 if not (np.isfinite(ctx).all() and np.isfinite(tgt).all()):
                     continue
                 fan = energy_readout(model, ctx, ctx, h, m, args.candidates, rng, device,
                                      refine_steps=args.refine_steps,
-                                     refine_lr=args.refine_lr)
+                                     refine_lr=args.refine_lr,
+                                     temperature=T["energy"])
                 acc["energy"]["fan"].append(fan)
                 sn = np.tile(ctx[-m:], (h + m - 1) // m + 1)[:h]
                 acc["snaive"]["fan"].append(np.repeat(sn[:, None], 9, axis=1))
@@ -335,7 +421,8 @@ def main():
                         model, ctx, ctx, h, m, args.candidates, rng, device,
                         extra_cands=dec_paths,
                         refine_steps=args.refine_steps,
-                        refine_lr=args.refine_lr))
+                        refine_lr=args.refine_lr,
+                        temperature=T["hybrid"]))
                 if ttm is not None:
                     tp = ttm.paths(ctx, h, args.ttm_jitter, rng)          # [N, h]
                     # `ttm` seul = son chemin propre (point -> fan répété, WQL=ND)
@@ -343,7 +430,8 @@ def main():
                     acc["hybrid_ttm"]["fan"].append(energy_readout(
                         model, ctx, ctx, h, m, args.candidates, rng, device,
                         extra_cands=tp,
-                        refine_steps=args.refine_steps, refine_lr=args.refine_lr))
+                        refine_steps=args.refine_steps, refine_lr=args.refine_lr,
+                        temperature=T["hybrid_ttm"]))
                 for r in acc:
                     acc[r]["tgt"].append(tgt); acc[r]["ctx"].append(ctx)
 
@@ -360,6 +448,13 @@ def main():
                 "n_windows": int(fans.shape[0]),
             }
             results[name][r] = res
+        if args.calibrate_T and T_used["energy"]:
+            import collections
+            for k in ("energy", "hybrid_ttm"):
+                if T_used[k]:
+                    cnt = collections.Counter(T_used[k])
+                    logger.info(f"  T calibrés [{k}] {name}: "
+                                + ", ".join(f"{t}x{n}" for t, n in sorted(cnt.items())))
         sn_ref = results[name]["snaive"]
         line = f"{name:12s} (n={results[name]['energy']['n_windows']:4d}, m={m:3d})"
         for r in acc:

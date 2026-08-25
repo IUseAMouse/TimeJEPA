@@ -1,0 +1,60 @@
+{
+  "checkpoint": "checkpoints/timejepa_tiny_lotsa_mix/epoch00_valloss0.5613.ckpt",
+  "candidates": 32,
+  "per_config": {
+    "solar/10T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.14727272727272728,
+      "mean_rank_cos": 0.14484848484848487,
+      "median_rank_cos": 0.10606060606060606,
+      "frac_truth_top20pct_cos": 0.67,
+      "spearman_energy_vs_mae": 0.5472470674486802
+    },
+    "bizitobs_l2c/5T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.3012121212121212,
+      "mean_rank_cos": 0.28575757575757577,
+      "median_rank_cos": 0.2272727272727273,
+      "frac_truth_top20pct_cos": 0.48,
+      "spearman_energy_vs_mae": 0.3266275659824047
+    },
+    "electricity/15T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.1490909090909091,
+      "mean_rank_cos": 0.14606060606060609,
+      "median_rank_cos": 0.030303030303030304,
+      "frac_truth_top20pct_cos": 0.77,
+      "spearman_energy_vs_mae": 0.7168658357771261
+    },
+    "electricity/H/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.031212121212121205,
+      "mean_rank_cos": 0.029696969696969697,
+      "median_rank_cos": 0.0,
+      "frac_truth_top20pct_cos": 0.97,
+      "spearman_energy_vs_mae": 0.5635300586510266
+    },
+    "jena_weather/H/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.11212121212121212,
+      "mean_rank_cos": 0.10151515151515152,
+      "median_rank_cos": 0.030303030303030304,
+      "frac_truth_top20pct_cos": 0.85,
+      "spearman_energy_vs_mae": 0.33705278592375365
+    },
+    "sz_taxi/15T/short": {
+      "n_instances": 100,
+      "mean_rank_mse": 0.24515151515151512,
+      "mean_rank_cos": 0.26060606060606056,
+      "median_rank_cos": 0.21212121212121213,
+      "frac_truth_top20pct_cos": 0.49,
+      "spearman_energy_vs_mae": 0.5063892961876831
+    }
+  },
+  "aggregate": {
+    "mean_rank_cos": 0.16141414141414143,
+    "mean_rank_mse": 0.16434343434343435,
+    "frac_truth_top20pct_cos": 0.705,
+    "spearman_energy_vs_mae": 0.4996187683284457
+  }
+}
