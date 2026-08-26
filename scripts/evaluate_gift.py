@@ -466,6 +466,16 @@ def main(cfg: DictConfig):
         a = summary[key]
         logger.info(f"  {key}: MASE ratio {a['geomean_MASE_ratio']:.4f} | "
                     f"CRPS ratio {a['geomean_CRPS_ratio']:.4f}")
+    # Couverture empirique moyenne (instrument E21 : nominal q10=0.10, q90=0.90
+    # => intervalle 80 % ; la sous-couverture zero-shot mesurée est du shift,
+    # G4.2 — le levier légitime est le gate z d'ESJEPA).
+    covs = [r["model"].get("coverage") for r in results.values()
+            if r["model"].get("coverage")]
+    if covs:
+        c10 = float(np.mean([c["0.1"] for c in covs]))
+        c90 = float(np.mean([c["0.9"] for c in covs]))
+        logger.info(f"  coverage (moyenne 97 configs): q10 {c10:.3f} (nominal 0.100) | "
+                    f"q90 {c90:.3f} (nominal 0.900) | intervalle 80% -> {c90 - c10:.3f}")
     logger.info(f"Results: {out_dir}")
 
 

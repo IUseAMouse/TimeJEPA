@@ -1664,6 +1664,7 @@ certaines dates ne sont pas comparables. Chaque entrée a son commit sur `sota-r
 | **B21** | `auto_insert_metric_name` présent dans la config mais jamais transmis à `ModelCheckpoint` → noms de fichiers doublés contenant `=`, incompatibles avec la grammaire d'override Hydra | ergonomie ; a causé au moins un échec de commande |
 | — | **Incident de configuration** : un finetune du round géométrie a tourné avec un décodeur ponctuel (défaut hérité `mlp`) sans qu'aucun signal ne l'indique. Détecté par le nombre de clés chargées (110 au lieu de 118) et l'absence du suffixe de couverture | une évaluation dont les colonnes « WQL » étaient en fait des ND ponctuels |
 | — | **Incident de configuration** : un finetune a tourné sur la liste curatée de 8 datasets au lieu des 24, contredisant E3 | conservé comme arm d'ablation ft8 |
+| — | **Piège de checkpointing n°2 (2026-08-26)** : sur le pod (Lightning 2.6.5), `last.ckpt` n'était PAS l'état courant mais une copie de la dernière sauvegarde top-k — avec une val plate, il pointait sur le checkpoint de ~35 % (0.5841). Détecté par la série probe : 18 valeurs bit-identiques entre « last » et 0.5841, confirmé par md5 (3 hashes égaux). L'utilisateur avait MESURÉ ce comportement ; démenti à tort sur la foi du code d'une AUTRE version (2.5.6 locale) — la mesure bat la lecture de code. Coupure du pretrain ESJEPA à 1,5 ép. ⇒ les poids tardifs sont PERDUS | le finetune ESJEPA part du best-val 0.5841 (~35 % du schedule, LR ~70 % du pic — sélection défendable sur une val plate, consignée comme 4e écart du duel). Parade mécanique : `save_top_k: -1` au pretrain (commité la veille pour v3/esjepa) — chaque val sauvegarde, le piège disparaît quelle que soit la version |
 
 **⚠️ CONTAMINATION DU CORPUS PAR LES BENCHMARKS — la réserve la plus lourde du projet
 (trouvée le 2026-08-13 en construisant la liste d'exclusion de LOTSA).**
@@ -1918,6 +1919,72 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-26 (nuit)** — **E21 : RÈGLE DE DÉCISION GRAVÉE AVANT LES RÉSULTATS** (validée
+  par l'utilisateur, fenêtre 25-55 % du finetune ESJEPA, procédure officielle ×flip) :
+  (a) **CRPS < 0.5959** ⇒ z GAGNE, entre dans le pretrain v3 ; (b) **CRPS ∈ [0.5959,
+  0.601] ET couverture ≥ +2 pts vs champion** ⇒ « neutre-plus » : PAS dans le bundle v3
+  (une variable de moins), reste ablation papier avec la couverture comme résultat,
+  re-candidat sur v3 si besoin du chiffre calibration ; (c) **CRPS > 0.601** ⇒ v3 sans z,
+  verdict attribué au bundle départ-35 % + λ_z, sans appel. Trajectoire au moment du gel :
+  5 % 0.9208/0.6257 cov 0.800 → 10 % 0.8975/0.6121 cov 0.792 → 15 % 0.8983/0.6075 cov
+  0.789 — la MASE CALE à ~0.898 (coût persistant du départ 35 %, z ne peut pas la
+  toucher), le CRPS avance en décélérant, les acquis z tiennent. Gate en croissance
+  (produit gate×z_head +13 % entre 5 et 10 %).
+- **2026-08-26 (soir, suite)** — **Première lecture de l'instrument de couverture (×flip)** :
+  champion intervalle 80 % = **0.769** (std 0.101, 62/97 dans [0.75, 0.85]) ; **ESJEPA
+  @ 5 % = 0.800, le NOMINAL EXACT** (std 0.095, 55/97 dans la bande). Le critère de win
+  « couverture qui généralise » est atteint EN MOYENNE dès le premier checkpoint — mais la
+  version forte (par config) ne tient pas : le décalage fait sortir par le HAUT des
+  configs déjà calibrées ⇒ l'élargissement est en partie UNIFORME (il vit dans le biais
+  du gate, b_g = 0.039 — le gate a appris son propre γ global interne) et en partie
+  conditionnel (solar −30 %, inexplicable par une constante). Décision utilisateur :
+  PAS de run de contrôle sans-z (ablation excessive, budget) — l'attribution E21
+  s'appuiera sur l'inspection du gate + les signatures étalement-vs-médiane ; ablation
+  GRATUITE proposée en remplacement : annuler b_g dans une copie du checkpoint (éval CPU)
+  pour séparer constant vs conditionnel. **MESURÉE dans la foulée (b_g → 0)** : la
+  CONDITIONNALITÉ est réelle et dominante — solar garde intégralement ses −30 %
+  (0.468/0.460/0.639 vs 0.469/0.459/0.641), CRPS quasi inchangé (0.6264 vs 0.6257) ;
+  le biais est un correcteur de MOYENNE (sans lui, intervalle 0.813 = légère
+  sur-couverture ; avec, 0.800 exact — les poids sur-élargissent un peu en moyenne, le
+  biais retire la constante). Bonus : MASE 0.9208 au chiffre près entre les deux évals —
+  l'invariance de médiane vérifiée en production par chirurgie de paramètre. Le duel
+  sans-z devient inutile : l'attribution est faite, gratuitement.
+- **2026-08-26 (soir)** — **Finetune ESJEPA @ 5 % : le GATE EST VIVANT** (témoin
+  pré-enregistré vérifié par inspection du checkpoint — `z_gate.weight` absmean 0.072 /
+  absmax 0.122, bias 0.039, depuis un zéro-init exact ⇒ modulation e^g de ±7-13 % réclamée
+  par le gradient ; NB : gate_absmean n'était pas loggé au finetune, l'inspection de
+  checkpoint fait témoin — à câbler dans finetune_module pour v3). Chiffres @5 % :
+  0.9545/0.6526 nu, 0.9208/0.6257 ×flip — déficit concentré sur la MASE (m4_yearly 5.34,
+  us_births/D 1.22, m_dense/D 1.21), que z ne PEUT PAS toucher ⇒ signature de l'état de
+  départ 35 % peu recuit, pas de l'arm. Indice pro-z fort : solar/10T ×flip CRPS
+  0.469/0.459/0.641 vs 0.651/0.730/0.743 champion (−30 % sur les configs
+  hétéroscédastiques, étalement amélioré avec médiane dégradée = signature du gate).
+  Question E21 reformulée : la médiane recolle-t-elle dans la fenêtre 25-45 % ? (⚠️ éval
+  @5 % faite AVANT le pull : la couverture n'y est pas — pull fait pour la suite.)
+- **2026-08-26 (midi)** — **Piège n°2 CONFIRMÉ RÉTROACTIVEMENT sur la lignée du champion**
+  (md5 : `mix/last.ckpt` == `epoch01_valloss0.5550`, qui n'est même pas le best-val
+  0.5520 mais la DERNIÈRE entrée du top-3). Le protocole de fait du projet a toujours
+  été « finetune depuis la sauvegarde top-k la plus récente », jamais depuis l'état
+  final — champion 0.5959 inclus. Cohérence interne préservée (toutes les lignées ont
+  subi le même mécanisme) ; l'écart n°4 du duel esjepa-vs-mix devient un écart de DEGRÉ
+  (état d'époque 1 vs 35 % d'époque 0). Les vrais poids finaux de mix sont perdus comme
+  ceux d'esjepa. v3 (save_top_k=-1) permettra pour la première fois l'ablation
+  « finetune depuis l'état final vs best-val ». Indice manqué la veille : les probes
+  `epoch01_valloss0.5550.json` et `last.json` étaient déjà identiques.
+- **2026-08-26 (matin)** — **Pretrain ESJEPA COUPÉ à 1,5 ép.** (décision utilisateur,
+  plateau sur toutes les observables : val, target/pred_var, z_corr 0.71, rang recollé à
+  mix — précédent E13b, LR déjà à ~15 % du pic, budget). Au passage, **piège de
+  checkpointing n°2 découvert** (§5) : `last.ckpt` du pod = copie du dernier top-k, pas
+  l'état courant ⇒ poids tardifs perdus, le finetune part du best-val
+  `esjepa_pretrain_bestval0.5841_35pct.ckpt` (~35 % du schedule). Le duel esjepa-vs-mix
+  porte désormais QUATRE écarts déclarés : voie z, ration au pretrain, durée 1,5 ép.,
+  état de départ peu recuit — l'attribution reste par les témoins (z_corr/gate), et le
+  finetune 1 ép. cosinus recuit lui-même. Écart val expliqué et consigné : ~1/3 = taxe
+  λ_z (composante loggée brute, contribution 0.009), ~2/3 = pénalité de variance (la
+  voie z compacte un peu la géométrie — le témoin invariance est passé de « meilleur »
+  en début de run à « égal/limite 2 % pire » ; à re-vérifier chiffres en main si le
+  finetune déçoit ⇒ ablation λ_z=0.03 au budget près). Série probe-juge close :
+  0.228 → 0.205(15 %, champion juge) → 0.239 → 0.248 → 0.264 → 0.243(35 % = best-val).
 - **2026-08-25 (nuit)** — **E20c TRANCHÉ (3 runs concordants) : E est un CLASSEUR, pas un
   RÉGULARISATEUR.** T2b équitable (planner à beta faussé) : terme dormant = indiscernable
   (l'énergie de l'imagination ne voit pas l'erreur de modèle, par construction) ; terme
@@ -1925,6 +1992,21 @@ constitue le test le plus direct de la thèse du §7.
   comportementale). Conséquences G13 gravées en E20c : prudence par FAN+z, continuité
   explicite dans le coût, sélection de juge = axe propre. Convergence mesurée avec le
   choix MPUR (variance, pas énergie).
+- **2026-08-25 (nuit, verdict)** — **G4.2 MESURÉ : NEUTRE, et la raison est le résultat.**
+  MASE 0.8702 au bit près (invariance vérifiée) ; CRPS 0.5961 vs 0.5959 (+0,03 %, bruit) —
+  prédiction (−1 à −2,5 %) RÉFUTÉE. Cause lisible dans γ ≈ [1.01…1.12…1.03] : le fan est
+  DÉJÀ conformement calibré sur le corpus d'entraînement (LOS_LOOP couv 0.11/0.91) — la
+  sous-couverture 42-72 % de GIFT n'est pas un biais de tête, c'est du DISTRIBUTION SHIFT
+  (sur-confiance hors distribution), invisible par construction pour un facteur uniforme
+  appris in-distribution. La version par domaine/fréquence frôle la ligne rouge
+  multi-config : NON PRISE. Conséquences : (1) G4.2 ARCHIVÉ comme ablation papier propre
+  (« tête calibrée in-distribution ; la sous-couverture zero-shot est du shift ») ;
+  (2) le mécanisme légitime d'étalement adaptatif est ESJEPA (gate z conditionnel à la
+  fenêtre, un checkpoint, zéro adaptation par config) — G4.2-nul RENFORCE sa motivation.
+  Trois bugs de plomberie attrapés sur le pod en route (prepare_data hors Lightning,
+  batchs [B,L,1], état d'accumulateurs) — la boucle de collecte est désormais une
+  fonction pure testée en intégration (remarque utilisateur légitime : tester les maths
+  sans tester la boucle, c'est tester la moitié qui ne casse jamais).
 - **2026-08-25 (nuit, suite)** — **G4.2 lancé en statut ABLATION PAPIER** (décision
   utilisateur : légitime côté « éval à l'aveugle » — gamma calibré corpus de finetune,
   jamais GIFT, un vecteur pour 97 configs — mais pas nécessairement le chiffre officiel

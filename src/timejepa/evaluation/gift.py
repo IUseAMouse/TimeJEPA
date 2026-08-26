@@ -276,6 +276,13 @@ class MetricAccumulator:
     mape_sum: float = 0.0
     n_obs: int = 0
     n_obs_nonzero: int = 0
+    # Couverture empirique par niveau : count(y <= q_k) poolé sur la config.
+    # Instrument du critère ESJEPA/E21 (« la couverture généralise-t-elle vers
+    # le nominal ? ») — une MESURE, jamais une adaptation. n_obs_q sépare le
+    # dénominateur : les instances sans fan (point forecast) n'y votent pas.
+    cov_counts: np.ndarray = field(
+        default_factory=lambda: np.zeros(len(QUANTILE_LEVELS), dtype=np.float64))
+    n_obs_q: int = 0
 
     def add(self, target: np.ndarray, median: np.ndarray,
             quantiles: Optional[np.ndarray], scale: float) -> None:
@@ -308,6 +315,8 @@ class MetricAccumulator:
             q = np.asarray(QUANTILE_LEVELS)[None, :]        # [1, Q]
             ql = 2.0 * np.abs((q_pred - y) * ((y <= q_pred) - q))
             self.ql_sums += ql.sum(axis=0)
+            self.cov_counts += (y <= q_pred).sum(axis=0)
+            self.n_obs_q += q_pred.shape[0]
         else:
             # Point forecast: every quantile collapses onto the median.
             y = target[mask]
@@ -333,7 +342,10 @@ class MetricAccumulator:
                          if self.n_obs_nonzero else np.nan),
                 "sMAPE": self.smape_sum / n,
                 "n_instances": self.n_instances,
-                "n_skipped_scale": self.n_skipped_scale}
+                "n_skipped_scale": self.n_skipped_scale,
+                "coverage": ({f"{lv:.1f}": float(self.cov_counts[j] / self.n_obs_q)
+                              for j, lv in enumerate(QUANTILE_LEVELS)}
+                             if self.n_obs_q else None)}
 
 
 def seasonal_naive_forecast(context: np.ndarray, h: int, m: int) -> np.ndarray:

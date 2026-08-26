@@ -64,9 +64,10 @@ mini GELÉ jusqu'au verdict v3 ; G12+calibration en semaine 3.
 - **S3** : xres vs contrôle v3 (une variable) · **h512 vs contrôle v3** (une variable —
   l'horizon ; gate du h768 natif du run-recette) · G12 sur GIFT (hybride vérificateur +
   raffinement par gradient, métrique UPLIFT, coût éval ×5-10 accepté en éval dédiée) ·
-  pondération par source (dernière brique papier court) · G4.2 calibration conforme
-  (CODE LIVRÉ 2026-08-25 : calibrate_quantiles.py + +quantile_gamma — statut ABLATION
-  PAPIER, décision utilisateur ; prédiction MASE bit-identique / CRPS −1 à −2,5 %) ·
+  pondération par source (dernière brique papier court) · ~~G4.2 calibration conforme~~
+  (MESURÉ 2026-08-25 : NEUTRE — γ≈1, le fan est déjà calibré in-distribution ; la
+  sous-couverture GIFT est du distribution shift ⇒ archivé comme ablation papier ;
+  l'étalement adaptatif légitime = gate z ESJEPA) ·
   ~~SWA~~ (CLOS négatif, E20). **Jalon : ~0.565-0.58 (« TTM déshabillé »).**
 - **TRIAGE BUDGET (2026-08-25 — fin des vacances ~28/08, pod ~500 €/mois)** : v3 = seul
   run GPU obligatoire (assemblage S2.4 à deux avant la rentrée, pretrain tourne seul) ;

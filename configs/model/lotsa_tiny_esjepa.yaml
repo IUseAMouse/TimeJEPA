@@ -47,6 +47,12 @@ training:
   loss:
     lambda_z: 0.1
 
+checkpoint:
+  # Ajouté APRÈS le lancement du run du 2026-08-25 (sans effet sur lui —
+  # snapshots manuels de last.ckpt en palliatif) : val plateau => top-3 gelé
+  # à mi-run, les checkpoints tardifs manquaient à la série probe-juge.
+  save_top_k: -1
+
 data:
   #   3. ration_oversample au PRETRAIN (décision utilisateur 2026-08-25, E20 :
   #      les fluctuations de loss du pretrain suivent le même drift de

@@ -45,6 +45,13 @@ defaults:
 model:
   name: "timejepa_lotsa_tiny_v3"
 
+checkpoint:
+  # Tout garder AU PRETRAIN aussi (2026-08-26) : une val plateau gèle le
+  # top-3 à mi-run et prive la série probe-juge des checkpoints tardifs —
+  # or la sélection du checkpoint-juge est un axe propre (E20c), distinct de
+  # la val et de GIFT. ~40 ckpts × 16 Mo, coût nul.
+  save_top_k: -1
+
 data:
   data_dir: "data/processed/lotsa_v3"
   ration_oversample: true
