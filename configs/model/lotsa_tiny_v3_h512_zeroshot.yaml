@@ -1,0 +1,31 @@
+# @package _global_
+# H512 sur la lignée v3 — l'ablation horizon de S3, prise SANS pretrain neuf
+# (décision 2026-08-27, question utilisateur à la 2e minute du pretrain v3 :
+# « h512 direct dans le pretrain ? » — non : le design h512 est un levier de
+# FINETUNE via grow_future_query_table, un seul pretrain v3 nourrit les DEUX
+# finetunes h256/h512 et l'écart mesure le levier avec son contrôle gratuit).
+#
+#   python scripts/train.py --config-name lotsa_tiny_v3_h512_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<dernier ckpt nommé>"'
+#
+# Mécanique et prédictions : voir lotsa_tiny_h512_zeroshot.yaml (l'original,
+# lignée mix) — mêmes deltas, seule la base change. Critère per-config (E19 +
+# E20b) : medium/long ↓, short inchangé ; si le gain vit surtout aux configs
+# multi-rollouts, l'hypothèse « frontières de rollout » (E20b) est confirmée.
+# ⚠️ Fenêtre finetune 1024+512 = 1536 : les morceaux 1280 (lotsa_short)
+# sortent du finetune — coût mesuré de l'arm, lire la ligne « skipped » au setup.
+defaults:
+  - lotsa_tiny_v3_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_v3_h512_zs"
+  prediction_length: 512
+
+training:
+  extend_horizon_queries: true
+  horizon_lengths: [64, 96, 128, 192, 256, 384, 512]
+  p_random_horizon: 0.5
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "h512", "robust-scale"]

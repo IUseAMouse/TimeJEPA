@@ -42,7 +42,7 @@ part intermittente/courte.
 
 ## Étape 2 ⚖️ — DIMENSIONNEMENT du synthétique (décision à deux)
 
-Cible (PLAN §0bis + E19) : **40-50 % de part de BATCH synthétique** après
+Cible (révisée par l'utilisateur 2026-08-27) : **50-55 % de part de BATCH synthétique** après
 rationnement, réparti pour combler les trous per-config :
 
 | famille | cible indicative | justification (E19) |
@@ -51,30 +51,36 @@ rationnement, réparti pour combler les trous per-config :
 | synthetic_intermittent | modéré | car_parts 0.98, M/short épars |
 | 3 familles v1 (subhourly/broadband/…) | maintien | la queue 10T/15T déjà comprimée (E18 vérifié E19) |
 
-Point de départ raisonnable — À AJUSTER SUR LES CHIFFRES DU GATE 1.
-⚠️ Générer SEULEMENT les 2 familles nouvelles : `lotsa_xres` contient déjà les
-3 familles v1 (régénérer --set v3 complet = collision de nom au symlink, et
-doublon de contenu à seed égal — question utilisateur 2026-08-26) :
+DIMENSIONNEMENT DÉCIDÉ (audit du 2026-08-27, cible utilisateur 50-55 %) :
+le sampler T=0.5 pèse en √ PAR FICHIER ⇒ la part se pilote par le NOMBRE de
+shards (précédent corpus : era5_*/cmip6_*/largest_*). Base mesurée : 3 familles
+v1 = 11.2 % (3.74 % chacune, libres). 26 shards ≈ 51 % prédit.
 
 ```bash
-python scripts/generate_synthetic.py --set v3 --out data/processed/synthetic_v3 \
-  --families synthetic_ops_bursty synthetic_intermittent \
-  --chunks-per-family 25000 --seed 0
+OUT=data/processed/synthetic_v3
+for s in $(seq 1 10);  do python scripts/generate_synthetic.py --set v3 --out $OUT \
+  --families synthetic_ops_bursty   --suffix _s$s --seed $s; done
+for s in $(seq 11 15); do python scripts/generate_synthetic.py --set v3 --out $OUT \
+  --families synthetic_intermittent --suffix _s$s --seed $s; done
+for s in 16 17 18; do python scripts/generate_synthetic.py --set v3 --out $OUT \
+  --families synthetic_subhourly    --suffix _s$s --seed $s; done
+for s in 19 20 21; do python scripts/generate_synthetic.py --set v3 --out $OUT \
+  --families synthetic_broadband    --suffix _s$s --seed $s; done
+for s in 22 23;    do python scripts/generate_synthetic.py --set v3 --out $OUT \
+  --families synthetic_lowfreq      --suffix _s$s --seed $s; done
 ```
 
-(Si l'audit demande d'AUGMENTER le volume des familles v1 : les régénérer avec
-un seed DIFFÉRENT et un nom de fichier distinct, ex. `synthetic_subhourly_b` —
-jamais le même seed que v2, jamais le même nom.)
+Allocation (priorités E19) : ops_bursty ×10 (~20 % de batch — bizitobs, trou
+sans substitut) · intermittent ×5 · subhourly +3 · broadband +3 · lowfreq +2.
+Seeds 1-23, dérivation interne seed×1000+i ⇒ aucune collision avec v2 (seed 0).
+~19 Go, ~1h15. COÛT ASSUMÉ de la dilution : la queue plafonnée réelle passe de
+42 % à ~24 % (era5/cmip6 halvés — sur-représentés, sain ; alibaba 1.3→0.65 %,
+compensé par ops_bursty sur le même domaine). Composition prédite à vérifier
+au GATE 6 : synth ~51 % / libres réelles ~25 % / queue ~24 %.
 
-Volume : chunks × 8192 × 4 octets — 25k/famille ≈ 0.8 Go/famille.
-
-Rappel d'échelle : ~10 min pour 75 k morceaux (mesuré). Avec le rationnement,
-la part de batch se pilote par le VOLUME relatif des familles : générer, puis
-vérifier au GATE 6, et regénérer plus/moins si besoin (regénérer est bon
-marché ; sous-dimensionner un pretrain de 2 jours ne l'est pas).
-
-**GATE 2** : `ls data/processed/synthetic_v3/*.npy` — 5 familles présentes ;
-spot-check visuel d'un morceau ops_bursty (rafales, zéros exacts, saturation).
+**GATE 2** : `ls data/processed/synthetic_v3 | wc -l` = 23 shards (5 familles
+suffixées _s1.._s23) ; spot-check visuel d'un morceau ops_bursty (rafales,
+zéros exacts, saturation).
 
 ## Étape 3 — Séries courtes réelles (pad-to) + solar_power (20 min)
 
@@ -133,8 +139,8 @@ python scripts/audit_batch_schedule.py --config-name lotsa_tiny_v3 --mode pretra
 ```
 
 **GATE 6 (le gate du bundle)** :
-- part de batch synthétique dans [40 %, 50 %] — sinon retour étape 2
-  (ajuster `--chunks-per-family` ou par `--families`) ;
+- part de batch synthétique dans [50 %, 55 %] (cible utilisateur 2026-08-27) —
+  sinon AJOUTER/RETIRER des shards (le bouton à cran) et re-auditer ;
 - ops_bursty visible à hauteur de son rôle (plusieurs % du batch) ;
 - aucune famille < 1 % qui s'éteint (le rationnement doit la maintenir) ;
 - composition stable à travers les déciles de l'époque.

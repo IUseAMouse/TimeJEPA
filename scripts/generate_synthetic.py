@@ -57,6 +57,13 @@ def main():
     ap.add_argument("--set", choices=["default", "v3"], default="default",
                     help="v3 = les 3 familles v1 + ops_bursty (bizitobs/E19) "
                          "+ intermittent (car_parts). Roadmap S2 2026-08-24.")
+    ap.add_argument("--suffix", default="",
+                    help="Suffixe du nom de fichier (sharding v3, 2026-08-27) : "
+                         "le sampler T=0.5 pèse en sqrt PAR FICHIER, donc la part "
+                         "de batch synthétique se dimensionne par le NOMBRE de "
+                         "shards (précédent corpus : era5_*/cmip6_*/largest_*). "
+                         "Ex. --suffix _s1 -> synthetic_ops_bursty_s1.npy. "
+                         "Toujours coupler à un --seed distinct par shard.")
     args = ap.parse_args()
 
     bank = V3_FAMILIES if args.set == "v3" else DEFAULT_FAMILIES
@@ -68,7 +75,7 @@ def main():
 
     total_obs = 0
     for i, spec in enumerate(fams):
-        out_path = args.out / f"{spec.name}.npy"
+        out_path = args.out / f"{spec.name}{args.suffix}.npy"
         if out_path.exists():
             logger.info(f"{out_path.name}: déjà présent, sauté (supprimer pour régénérer)")
             continue

@@ -1919,6 +1919,47 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-27 (soir, prédictions complétées AVANT le premier checkpoint v3)** — en sus
+  de P-v3.1..4 (E19), bandes chiffrées sur le CHAMPION v3 (finetune gelé, fenêtre
+  25-55 %) : CRPS nu succès ≤ 0.590 (=P-v3.4), central **0.580 ± 0.008**, étirement
+  < 0.570 ; CRPS ×flip succès ≤ 0.566, central **0.556 ± 0.010**, étirement < 0.545
+  (passe la marche FLAIR/PatchTST 0.587 → zone ~75-80e) ; MASE nu ~0.868 / flip ~0.843 ;
+  couverture ~0.77 (mesure). ÉCHEC DIAGNOSTIQUANT : nu > 0.605 (le bundle n'a pas rendu
+  plus que la queue — autopsie per-config via P-v3.1/P-v3.3). **Probe energy** (série
+  pretrain standalone) : succès rang ≤ 0.21, étirement ≤ 0.195 (nouveau meilleur juge) ;
+  pattern attendu : pic du juge TÔT puis érosion (3e observation ⇒ loi du projet).
+- **2026-08-27 (soir) — CORPUS v3 ASSEMBLÉ, GATE 6 VALIDÉ, PRETRAIN LANCÉ.** Pièce
+  d'identité (audits avant/après dans evaluation/audit_v3_*.txt) : **106 familles**,
+  **54.0 % de batch synthétique** (cible 50-55 ✓) dont ops_bursty 19.7 % (10 shards),
+  intermittent ~9.9 %, subhourly 7.4 % (+dec), broadband 7.7 %, lowfreq 5.7 % ;
+  stationnarité PARFAITE sur les 10 déciles (rationnement) ; queue réelle plafonnée
+  24.6 % (era5/cmip6 ~1.2-1.3 % chacun, alibaba 0.65 %, solar_power 0.05 % = son
+  plafond 3x en absolu ~1M fenêtres/époque) ; top réels : buildings 4.39 %,
+  largest_* ~3 %, borg/azure ~2.5 %. Ajustement chirurgical post-audit-1 (55.2 %) :
+  retrait des symlinks lowfreq_dec3 + broadband_dec3 (subhourly_dec3 GARDÉE — le trou
+  10T/15T). Un checkpoint par 5 %, tous conservés (save_top_k=-1), sans z (E21-b),
+  augmentations TiRex ON. Verdict attendu ~2 j : P-v3.1 (bizitobs<1.0), P-v3.2
+  (affaiblie), P-v3.3, P-v3.4 (agrégat ≤0.59 avant couches).
+- **2026-08-27 (assemblage, deux recalibrages consignés)** : (1) **séries courtes** —
+  min-length 384 rejette en bloc m1/m3-partiel/tourism (médiane < 384 : une série
+  annuelle de ~30 pts ne peut pas fournir une CIBLE réelle de 256 pas ; le pad-to est
+  correct, la géométrie est la contrainte). 111 morceaux réels seulement ⇒ **P-v3.2
+  AFFAIBLIE** (repose sur lowfreq + 111 morceaux) ; le vrai mécanisme A/Q/M/W =
+  augmentation crop-court+pad à l'entraînement, NON construit (itération suivante si le
+  bloc reste rouge). (2) **décimation** — familles réelles xres en morceaux 2048 ⇒
+  seuls 8192/4096 décimables : 6 fichiers synthetic_*_dec + 6 chronos_*_dec. Effet de
+  bord : les dec synthétiques comptent dans la part ⇒ prédiction gate 6 relevée à
+  ~53-56 % ; si > 55 %, ajustement par RETRAIT DE SYMLINKS (jamais de fichiers).
+  P-v3.3 s'appuie désormais surtout sur subhourly(+dec) + chronos_dec + solar_power.
+- **2026-08-27 (après-midi) — DIMENSIONNEMENT v3 DÉCIDÉ (étape 2 du runbook, cible
+  utilisateur 50-55 %)** : l'audit avant (rationnement actif, stationnarité parfaite sur
+  les 10 déciles) mesure synthétique v1 = **11.2 %** (3×3.74 %, libres). Le poids T=0.5
+  étant en √ PAR FICHIER, la cible se prend par SHARDING (26 fichiers de 25k morceaux —
+  précédent dans le corpus : era5/cmip6/largest) et non par volume (×76 de fenêtres
+  sinon). Allocation E19 : ops_bursty ×10, intermittent ×5, subhourly +3, broadband +3,
+  lowfreq +2 ; seeds 1-23 sans collision v2. Prédiction gate 6 : synth ~51 %, libres
+  réelles ~25 %, queue plafonnée ~24 % (dilution 42→24 % ASSUMÉE : era5/cmip6 halvés,
+  alibaba compensé par ops_bursty). Table par famille ajoutée à l'audit (b33eae7).
 - **2026-08-27 (midi) — E21 CLOS : issue (b) DÉFINITIVE.** Le finetune ESJEPA est allé au
   bout ; série ×flip complète 50→100 % : 0.6048/0.6015/0.6047/0.6070/0.6086/0.6030/
   0.6034/0.6044/0.6038/0.6045 — le 45 % (0.5981, cov 0.790) reste le meilleur point de la

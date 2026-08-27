@@ -1,0 +1,17 @@
+# @package _global_
+# Éval des checkpoints v3-h512 (GIFT / Nixtla).
+#
+#   python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_h512_eval \
+#       '+checkpoint_path="checkpoints/timejepa_lotsa_tiny_v3_h512_zs/pretrain_False/<ckpt>"' +tta_flip=true
+#
+# prediction_length 512 : la table de requêtes du checkpoint fait 63 patches —
+# sans cette surcharge, le chargement refuserait (géométrie != checkpoint).
+# Lecture du verdict : comparer les TERMES medium/long au finetune h256 jumeau
+# (même pretrain) — c'est l'écart entre les deux qui mesure le levier horizon.
+defaults:
+  - lotsa_tiny_v3_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_v3_h512_zs"
+  prediction_length: 512

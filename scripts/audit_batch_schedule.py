@@ -169,6 +169,26 @@ def main():
         print(f"  {names[i]:<42s} {first[i]:6.2%} -> {last[i]:6.2%}"
               f"  ({'plafonnée' if capped[i] else 'libre'})")
 
+    # Table complète — L'instrument du dimensionnement v3 (« le batch cible
+    # d'abord ») : part de batch moyenne sur l'époque, par famille, triée.
+    # Ajoutée 2026-08-27 : l'audit ne montrait ni les parts synthétiques ni
+    # la longue traîne, exactement ce que l'étape 2 du runbook doit lire.
+    total_counts = dec_counts.sum(axis=0)
+    tot = max(total_counts.sum(), 1)
+    order = np.argsort(total_counts)[::-1]
+    print(f"\nPART DE BATCH PAR FAMILLE (moyenne époque, {len(names)} familles) :")
+    print(f"  {'famille':<42s}{'fenêtres':>12s}{'part':>8s}  statut")
+    synth_total = 0.0
+    for i in order:
+        share = total_counts[i] / tot
+        if names[i].startswith("synthetic"):
+            synth_total += share
+        print(f"  {names[i]:<42s}{sampler.samples_per_dataset[i]:>12,d}"
+              f"{share:>8.2%}  {'plafonnée' if capped[i] else 'libre'}"
+              f"{'   ← SYNTH' if names[i].startswith('synthetic') else ''}")
+    print(f"\n  TOTAL SYNTHÉTIQUE : {synth_total:.1%} du batch"
+          f"  (cible v3 : 40-50 %)")
+
 
 if __name__ == "__main__":
     main()
