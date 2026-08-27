@@ -1919,6 +1919,58 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-27 (midi) — E21 CLOS : issue (b) DÉFINITIVE.** Le finetune ESJEPA est allé au
+  bout ; série ×flip complète 50→100 % : 0.6048/0.6015/0.6047/0.6070/0.6086/0.6030/
+  0.6034/0.6044/0.6038/0.6045 — le 45 % (0.5981, cov 0.790) reste le meilleur point de la
+  fenêtre ET du run, jamais réapproché. Verdict par la règle pré-enregistrée : z HORS du
+  bundle v3, ablation papier (gate conditionnel load-bearing, +18.7 pts gate-off,
+  couverture nominale au pic), re-testable sur v3 en ablation avec départ propre — la
+  question « z avec un pretrain sain » reste OUVERTE, pas réfutée. Champion esjepa archivé
+  `champions/esjepa45_mase0.8739_crps0.5981.ckpt` (2e meilleur résultat du projet).
+  GPU libéré → assemblage corpus v3 (runbook).
+- **2026-08-27 (1h, ablation de clôture E21 : gate ÉTEINT sur le checkpoint 45 %)** —
+  CRPS ×flip 0.5981 → **0.7853** (+18.7 pts !), couverture 0.790 → 0.968 (sur-couverture
+  massive q10 0.014/q90 0.982), MASE ~identique (0.8734 vs 0.8739 ; écart 0.06 % attribué
+  à l'enveloppe sur fans extrêmes, non creusé). **Le gate ne MODULE pas le fan : il le
+  PILOTE.** Co-adaptation apprise au finetune : la base softplus = enveloppe quasi
+  worst-case, le gate = resserrement CONDITIONNEL (g négatifs sur fenêtres calmes —
+  l'inverse de l'élargisseur attendu). z est load-bearing et conditionnel — la ligne
+  centrale de l'ablation papier. Nuance gravée : 18.7 pts valent À L'INTÉRIEUR de ce
+  modèle ; le contrefactuel « entraîné sans z » = champion 0.5959 (la base se calibre
+  seule quand le gate n'existe pas). Question utilisateur d'origine (« z ≈ 0 sur la
+  couverture ? ») : RÉFUTÉE — à checkpoint égal, z fabrique la calibration entière.
+- **2026-08-27 (1h, 45 % — LA RÈGLE TRANCHE : issue (b), « neutre-plus »)** — ×flip
+  **0.8739/0.5981**, couverture **0.790 (+2.1 pts)**. CRPS ∈ [0.5959, 0.601] ✓ et
+  couverture ≥ +2 pts ✓ ⇒ (b) : **z N'ENTRE PAS dans le bundle v3**, reste ablation
+  papier (couverture comme résultat), re-candidat plus tard. À noter pour l'honnêteté du
+  récit : parti du best-val 35 % handicapé, l'arm finit à 0.22 pt du champion, DEVANT
+  l'ancien champion mix×flip (0.5984), avec une meilleure couverture — deuxième meilleur
+  résultat du projet. Fenêtre 25-55 % encore ouverte ~2-3 h : le run continue pendant
+  l'assemblage v3 (CPU) demain matin ; éval 55 % → verdict final (a)/(b) → kill →
+  lancement v3.
+- **2026-08-27 (0h, 40 %)** — nu **0.9075/0.6321** cov 0.755 ; ×flip **0.8791/0.6076**
+  cov **0.794 (+2.5 pts vs champion — condition couverture de l'issue (b) REMPLIE)**.
+  Quasi-parité avec ration à % égal (nu 0.6321 vs 0.6303 : 0.18 pt) — le handicap du
+  départ 35 % est presque résorbé ; l'écart flip d'ESJEPA se resserre (−2.45 pt). Si le
+  45 % reproduit le saut ration (−0.64 pt nu), atterrissage ~0.601 flip = PILE sur la
+  frontière (b)/(c). Le 45 % tranche au dixième près.
+- **2026-08-26 (nuit, 30 % + plan de coupe)** — ×flip 0.8921/0.6116 cov 0.761 : RÉGRESSION
+  sur tout vs le 25 % (0.8820/0.6052/0.782), qui ressemble au pic local. Décision : couper
+  APRÈS l'éval du 45 % (précédent ration : −1.06 pt de CRPS entre 25 et 45 % — la fenêtre
+  a historiquement payé là ; il faut −0.93 pt pour l'issue (a), improbable pas exclu).
+  Plan : assemblage v3 (CPU, runbook 0-6) en parallèle demain matin → éval 45 % → règle
+  E21 tranche → kill finetune → lancement pretrain v3. Zéro idle GPU, fenêtre respectée.
+- **2026-08-26 (nuit, 25 %)** — ×flip **0.8820/0.6052**, couverture **0.782** : meilleur
+  saut MASE du run (−1.1 pt), la couverture REBONDIT (le 0.766 du 20 % était du bruit
+  inter-checkpoints, pas une érosion linéaire), mais le CRPS cale à ~0.605. Cap sur (b)
+  ou (c) — pour (b) il faut couverture ≥ +2 pts (actuel : +1.3). Prochains points : 35 et
+  45 %.
+- **2026-08-26 (nuit, 20 %)** — ×flip 0.8928/0.6056 (MASE et CRPS avancent encore, en
+  décélération : deltas CRPS −1.36 → −0.46 → −0.19 → −0.19 pt) mais **l'avantage z FOND** :
+  couverture 0.800 → 0.792 → 0.789 → **0.766** = niveau champion (0.769). Le finetune
+  érode le gate (« z se fait démolir », lecture utilisateur exacte). Trajectoire pointe
+  vers l'issue (c) de la règle E21 — v3 sans z, défaut déjà en place au runbook.
+  Prochaines évals : 30 % et 45 % seulement.
 - **2026-08-26 (nuit)** — **E21 : RÈGLE DE DÉCISION GRAVÉE AVANT LES RÉSULTATS** (validée
   par l'utilisateur, fenêtre 25-55 % du finetune ESJEPA, procédure officielle ×flip) :
   (a) **CRPS < 0.5959** ⇒ z GAGNE, entre dans le pretrain v3 ; (b) **CRPS ∈ [0.5959,
