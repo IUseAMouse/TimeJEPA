@@ -1919,6 +1919,62 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-30 (finetune v3 @30-50 %, et LA TRIPLE CONVERGENCE)** — 30 % :
+  0.8791/0.6137 ; **50 % : 0.8633/0.5983** cov 0.746 — MEILLEURE MASE DU PROJET toutes
+  lignées (champion 0.8702), CRPS à 0.24 pt du champion. Val ENCORE descendante à
+  60-70 % (0.5936→0.5926) : lignée à pic tardif façon ration, verdict ouvert jusqu'aux
+  évals 70-100 %. FAIT CENTRAL à nommer : mix 0.5959 / esjepa 0.5981 / v3 0.5983 —
+  trois corpus/objectifs convergent vers **0.597 ± 0.002 ×flip** ⇒ la meilleure preuve
+  à date que la CAPACITÉ (1.1M) est devenue la contrainte liante, pas les données.
+  Décision (validée conversation) : (1) finir le verdict h256 (évals tardives + autopsie
+  gift_gap vs P-v3.1..4 ; P-v3.4 nu ≤ 0.59 semble hors de portée, m4_yearly confirme la
+  faiblesse P-v3.2) ; (2) h512 depuis le même pretrain (levier orthogonal — si medium/
+  long cède, une part du « plafond » était du rollout, test E20b) ; (3) si rien ne casse
+  ~0.59 : le gate de MINI est rempli par la triple convergence — « corpus résolu,
+  capacité contrainte », dit par trois runs.
+- **2026-08-29 (nuit, finetune v3 @10-15 %)** — ×flip 10 % : **0.8731/0.6042** cov 0.776 ;
+  15 % : 0.8843/0.6079 cov 0.733 (wobble habituel). À 10 %, la MASE du champion final est
+  DÉJÀ atteinte (0.8731 vs 0.8702) et le CRPS vaut celui de ration@~40 %. Projection
+  honnête au rythme des lignées (−1 à −1.5 pt vers le pic 25-45 %) : best-of-run
+  ~0.590-0.596 flip = NOUVEAU CHAMPION probable mais SOUS les bandes gravées (≤0.566) —
+  sauf dynamique inédite, verdict pressenti « v3 bat le champion, rend moins que
+  prédit », autopsie per-config au pic. Indices précoces : PRO-bundle solar/10T
+  (short 1.10 MASE vs 1.4-1.8) ; CONTRE-bundle car_parts CRPS 1.07 (intermittent
+  n'aide pas encore sa cible) et m4_yearly 0.146 (faiblesse P-v3.2 matérialisée où
+  consignée).
+- **2026-08-29 — PRETRAIN v3 COUPÉ à 1.4 époque (46h), COUPE RÉVERSIBLE, finetunes
+  h256+h512 lancés** depuis `epoch01_valloss0.6420.ckpt` (état le plus récent, nommé,
+  complet — optimiseur/scheduler inclus : reprise possible si le verdict suggère un
+  sous-entraînement, l'asymétrie du piège esjepa a disparu grâce à save_top_k=-1).
+  Justification : tout plat depuis ~500k ; 1.4 ép. v3 ≈ 2.9 époques-équivalent mix en
+  volume (corpus ~2×) ; LR à ~40 % du pic (le finetune 1 ép. cosinus recuit).
+  ⚠️ Lecture inter-runs : la val v3 (0.64) n'est PAS comparable à mix (0.575) — split
+  de val à 54 % synthétique dont ops_bursty au plancher de mse structurellement haut.
+  Santé de représentation : v3 = LA MEILLEURE des trois lignées (rang effectif 36-42
+  sans plongeon, context_std ~0.84, variance VICReg la plus haute). Duel h256 vs h512 :
+  même pretrain, l'écart medium/long mesure le levier horizon (gate du h768 natif S4)
+  et croise l'hypothèse frontières-de-rollout (E20b).
+- **2026-08-28 — G12-sur-GIFT : harnais hybride TTM×juge LIVRÉ**
+  (`scripts/evaluate_gift_hybrid.py`, smoke-testé : rollout TTM continu sur 8 segments
+  h=720, pool bootstrap+SN+drift+chemins TTM jitterés → fan monotone). Statut :
+  EXPÉRIENCE PAPIER, jamais un chiffre officiel (bi-modèle > ligne G11). Trois lectures :
+  ttm brut (MASE absolue vs CSV TTM-R3-PT vendoré = validation croisée du harnais ; CRPS
+  point effondré, non citable), hybrid_ttm (LA mesure : un point forecaster externe
+  devient probabiliste par juge latent — fan + couverture), champion cité des évals
+  complètes. Appariement : mêmes instances plafonnées (~150/config) pour les deux
+  readers ; agrégats vs SN local. Juge : primaire = checkpoint final v3 (zéro
+  sélection), secondaire = juge probe-sélectionné (déclaré — le probe lit du GIFT).
+  Prédictions AVANT run : (i) MASE ttm-brut à ±3 % du CSV officiel par config ;
+  (ii) couverture hybride 0.70-0.80 sans calibration ; (iii) comparaison informative =
+  hybrid vs champion (l'uplift vs ttm-point est trivial). À courir sur CPU quand v3
+  libère du temps de cerveau — rien d'urgent.
+- **2026-08-28 (nuit, série probe-juge v3 démarrée)** : 5 % **0.233** (ρ(E,MAE) **0.507**,
+  record standalone) → 10 % 0.266 → 15 % 0.238. Le pattern PIC-TÔT se reproduit une
+  TROISIÈME fois (mix : mi-run ; esjepa : 15 % ; v3 : ≤5-10 %) ⇒ promu LOI DU PROJET :
+  le juge et le forecaster ont des optima temporels disjoints, le juge naît tôt — la
+  sélection du checkpoint-juge (G12) se fait par probe précoce, jamais par val/GIFT.
+  Records par config : electricity/H 0.032 (top20 0.99). Meilleur juge v3 à date :
+  5 % (0.7461) — candidat champions/pretrain/ si rien ne le bat d'ici 30 %.
 - **2026-08-27 (soir, prédictions complétées AVANT le premier checkpoint v3)** — en sus
   de P-v3.1..4 (E19), bandes chiffrées sur le CHAMPION v3 (finetune gelé, fenêtre
   25-55 %) : CRPS nu succès ≤ 0.590 (=P-v3.4), central **0.580 ± 0.008**, étirement
