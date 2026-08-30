@@ -1,0 +1,194 @@
+\section{The latent as judge}
+\label{sec:judge}
+
+The objective is not where forecasting accuracy comes from. Here is where
+the latent earns its keep. A pretrained JEPA is implicitly an energy
+function \citep{lecun2006ebm}
+\begin{equation}
+E(x, y) = 1 - \cos\!\big(\hat{z}(x),\ \mathrm{enc}([x \,\|\, y])\big),
+\end{equation}
+lowered on true pairs by the invariance term. Everything below reads this
+energy off \emph{frozen} checkpoints: no training on downstream data,
+anywhere.
+
+\subsection{The energy probe}
+\label{sec:probe}
+
+Six GIFT configurations $\times$ 100 instances $\times$ 34 candidates (32
+block-bootstraps, seasonal naive, the truth); the metric is the normalized
+rank of the true future (chance 0.50). Table~\ref{tab:probe} and
+Figure~\ref{fig:probe}: pretrained checkpoints are competent judges, and
+fine-tuning \emph{destroys} the judge.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccl}
+\toprule
+Checkpoint & Rank of truth $\downarrow$ & Truth in top 20\% & $\rho(E, \mathrm{MAE})$ \\
+\midrule
+chance & 0.500 & 0.20 & 0.00 \\
+pretrain, capped corpus & 0.245 & 0.57 & 0.50--0.74 \\
+pretrain, full corpus & 0.235 & 0.60 & 0.62--0.77 \\
+pretrain, mix, mid-run & \textbf{0.153} & & (electricity/H median rank 0.000) \\
+pretrain, v3, 5\% & 0.233 & & 0.507 (standalone record) \\
+\emph{full fine-tune} & \emph{0.409} & \emph{0.33} & \emph{erratic, $-0.32$ to $+0.53$} \\
+\bottomrule
+\end{tabular}
+\caption{Energy probe. On strongly seasonal data the pretrained judge is
+near-perfect (electricity hourly: median rank of the truth 0.030 for the
+full-corpus checkpoint, 0.000 for mix). The fine-tuned forecaster is a
+broken judge, below chance on one configuration.}
+\label{tab:probe}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.7\textwidth, height=4.6cm, ybar,
+  ymin=0, ymax=0.55,
+  ylabel={rank of true future $\downarrow$},
+  symbolic x coords={chance, pretrain capped, pretrain full, mix mid-run, v3 5\%, fine-tuned},
+  xtick=data, x tick label style={rotate=20, anchor=east, font=\footnotesize},
+  bar width=9mm, ymajorgrids, grid style={gray!25},
+  nodes near coords, every node near coord/.append style={font=\footnotesize}]
+\addplot coordinates {(chance,0.50) (pretrain capped,0.245)
+  (pretrain full,0.235) (mix mid-run,0.153) (v3 5\%,0.233)
+  (fine-tuned,0.409)};
+\end{axis}
+\end{tikzpicture}
+\caption{The judge lives in the pretrain and dies in the fine-tune. Lower
+is better; 0.50 is chance.}
+\label{fig:probe}
+\end{figure}
+
+A second regularity, replicated on three lineages and promoted to a working
+law: \emph{the judge peaks early}. Best-judge checkpoints sat at mid-run,
+at 15\% and at 5\% of their schedules, then eroded while validation kept
+improving. Forecaster and judge have disjoint temporal optima on the same
+trajectory; judge selection uses an early cheap probe, never validation and
+never GIFT.
+
+\subsection{Propose, judge, reweight}
+\label{sec:pjr}
+
+The judge becomes useful through a zero-training pipeline: propose
+candidate futures (block-bootstraps at two block scales, anchors,
+optionally an external model's paths), score with $E$, softmax the
+\emph{standardized} energies (scale-free, so v0 has no tunable
+temperature), read weighted quantiles. Table~\ref{tab:hybrid} gives the
+numbers on six Nixtla datasets.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+WQL vs seasonal naive $\downarrow$ & ettm1 & ettm2 & etth1 & etth2 & weather & exchange \\
+\midrule
+energy only (bootstraps + judge) & 1.00 & 0.80 & 0.76 & 0.92 & 0.96 & 1.15 \\
+our decoder (fine-tuned) & 0.92 & 0.74 & 0.70 & 0.92 & \textbf{0.76} & \textbf{0.77} \\
+decoder proposes, judge weighs & 0.95 & 0.75 & \textbf{0.68} & \textbf{0.91} & 0.82 & 0.90 \\
+\midrule
+TTM-R3 alone \citep{ekambaram2024ttm} & 0.86 & 0.79 & 0.85 & 0.95 & \textbf{0.70} & \textbf{0.88} \\
+TTM proposes, our judge weighs & \textbf{0.84} & \textbf{0.74} & \textbf{0.72} & \textbf{0.88} & 0.85 & 0.97 $\to$ 0.94 \\
+\bottomrule
+\end{tabular}
+\caption{Propose-judge-reweight, WQL ratios vs seasonal naive (lower is
+better; bold marks the winner within each block). A frozen 1M-parameter
+pretrain improves TTM-R3, the strongest sub-10M model on GIFT-Eval, on 4/6
+datasets; gradient refinement of candidates recovers part of a fifth
+(exchange, 0.97 to 0.94; TTM 0.88). The failure mode is
+\emph{dilution}, replicated three times on the same two datasets with three
+different proposers: when the proposer is already excellent, bootstrap
+candidates can only dilute it. Next lever: per-source priors, not a global
+temperature.}
+\label{tab:hybrid}
+\end{table}
+
+Three mechanisms behind the table. The bootstrap's failure is its envelope
+(it recombines the past; exchange trends out of it), which the decoder
+repairs as proposer. Candidate refinement by a few gradient steps on $E$
+(planning by backprop, small step count as a Goodhart guard) adds 1--2\%
+where the envelope binds and never degraded anything. And the deliverable
+is \emph{uplift over the proposer}: a verifier for forecasts, not a
+competing forecaster. Generation is hard, verification is easy; a frozen
+judge that improves a state-of-the-art proposer with zero dedicated
+training is, to our knowledge, a novel use of a JEPA latent in time
+series. A GIFT-Eval version of this harness is built and smoke-tested
+(TTM proposes on the official windows, coverage instrumented; a paper
+experiment, outside our official single-model numbers).
+\pending{hybrid-ttm: paired GIFT results; TTM-alone validation vs the
+official CSV; coverage prediction 0.70--0.80.}
+
+\subsection{ESJEPA: predict the statistics of what cannot be predicted}
+\label{sec:esjepa}
+
+The predictor converges to a conditional mean and carries no dispersion
+(Section~\ref{sec:quantile-head}). The fix is not predicting the residual
+(irrecoverable) but its \emph{statistics}: a 4-dimensional deterministic
+target per patch (log-RMS and log-MAD of the residual around a causal EWMA,
+bounded skewness, lag-1 autocorrelation), predicted by an 8.5k-parameter
+head on the predictor trunk and injected only through the zero-initialized
+width gate. Nothing can collapse: the target is a fixed function of the
+data. Pre-registered witnesses held: predicted-vs-realized log-RMS
+correlation 0.63 (kill threshold 0.3); prediction-to-target std ratio 0.7
+against 0.3--0.4 for the signal path, a finding in itself
+(\emph{volatility is more predictable than its realization}); the twin
+run's invariance loss 4--5\% \emph{better} with z, the feared siphoning
+inverted.
+
+The decision rule was registered before results: (a) beat the champion,
+z enters the bundle; (b) within 0.5 CRPS points with materially better
+coverage, z stays out, becomes the paper ablation; (c) worse, attributed
+without appeal. Outcome: (b). Table~\ref{tab:esjepa} carries the section's
+main result.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Configuration (flip TTA) & CRPS & 80\% coverage & MASE \\
+\midrule
+champion, no z (rationed 45\%) & \textbf{0.596} & 0.769 & 0.870 \\
+ESJEPA 45\% & 0.598 & 0.790 & 0.874 \\
+ESJEPA 5\% (early) & 0.626 & \textbf{0.800} (nominal) & 0.921 \\
+ESJEPA 5\%, gate bias $\to 0$ & 0.626 & 0.813 & 0.921 \\
+ESJEPA 45\%, \emph{gate off} & 0.785 & 0.968 & 0.873 \\
+\bottomrule
+\end{tabular}
+\caption{ESJEPA ablations, all by evaluation-time weight surgery (no
+retraining). The gate-off row is the headline: $+18.7$ CRPS points and
+coverage exploding to 0.968 (q10 at 0.014, q90 at 0.982) while MASE moves
+by $<10^{-3}$, the median invariance verified in production. The bias-only
+surgery shows the effect is conditional, not a constant: solar 10T keeps
+its full $-30\%$ CRPS either way.}
+\label{tab:esjepa}
+\end{table}
+
+Read the table bottom-up. The gate does not modulate the fan; it
+\emph{drives} it: fine-tuning co-adapted the organs, base softplus widths
+converging to a near-worst-case envelope and the gate to conditional
+sharpening (negative gains on calm windows, the opposite of the widener we
+designed). Within this model, four latent dimensions carry the entire
+calibration. Two honesty notes: the counterfactual trained without z is the
+champion at 0.596, so z is not worth 18.7 leaderboard points, it is worth
+nominal coverage at equal CRPS; and ``z on a healthy pretrain'' is open,
+not refuted, an ablation the v3 lineage can host.
+
+\subsection{What the judge knows}
+\label{sec:t1t2}
+
+On a fully owned testbed (linear thermostat, hidden action, history under a
+bang-bang policy: observational confounding in miniature), discrimination
+AUCs: time-reversed futures \textbf{0.808}, morphology violations
+\textbf{0.935}, state-jump discontinuities \textbf{0.556}, chance. The
+judge knows the arrow of time and the shape of trajectories; it accepts a
+teleported future. Consistently, $E$ as a planning \emph{regularizer}
+fails a fair test: the dormant term changes nothing (violations 78.7\% vs
+80.0\%), the active term hurts (78.7\% $\to$ 82.4\%). Three concordant
+runs: \emph{the energy is a classifier, not a regularizer}. Planning
+prudence must come from predicted uncertainty (fan + z), converging with
+\citet{henaff2019mpur}.

@@ -1,0 +1,84 @@
+% TimeJEPA technical report.
+% Build: make  (tectonic, or pdflatex+bibtex chain)
+%
+% House rules (do not violate when editing):
+%   * no em-dashes anywhere
+%   * every GIFT-Eval aggregate appears both plain and with flip TTA
+%   * every claim points to its experiment; negative results stay in
+%   * tell less, show more: prefer a table or figure over a paragraph
+%   * grep PENDING to find spots awaiting running results
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,calc}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\pending}[1]{\textcolor{gray}{[pending: #1]}}
+% GIFT-Eval aggregate pair: MASE ratio / CRPS ratio vs seasonal naive
+\newcommand{\gpair}[2]{#1\,/\,#2}
+
+\title{TimeJEPA: What 1.1M Parameters\\and Joint Embeddings Can Do}
+\author{Yvann Vincent\\
+EFREI Paris\\
+\texttt{yvann.vincent@gmail.com}}
+\date{August 2026 \\ \small Working draft, updated as experiments complete.}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TimeJEPA is a 1.14M-parameter univariate forecaster pretrained with a
+joint-embedding predictive architecture (JEPA) and evaluated zero-shot on
+all 97 GIFT-Eval configurations with one checkpoint, one configuration, and
+no adaptation of any kind. It reaches \gpair{0.863}{0.596} (MASE/CRPS
+geometric-mean ratios vs seasonal naive, with sign-flip test-time
+augmentation; \gpair{0.895}{0.624} without), between Moirai-large (311M) and
+Moirai-base (91M) on the CRPS ranking, trained on three RTX~3090s. The
+project's founding bet was that latent extrapolation is the right
+pretraining objective for long-horizon forecasting. We pre-registered
+predictions, ran the paired ablations, and the bet lost: the latent
+objective is indistinguishable from reconstruction at equal budget, and its
+apparent long-horizon advantage lives at rollout boundaries, not within the
+window. Two things won instead. The corpus: every accuracy jump traces to
+data composition, not to the objective. And the latent as a \emph{judge}:
+the frozen pretrained energy ranks true futures far above chance, improves
+TTM-R3 on five of six datasets as a zero-training reranker, and a
+4-dimensional residual-statistics latent, gated into the quantile head,
+carries the entire calibration of the forecast distribution (switching it
+off costs 18.7 CRPS points; the median is invariant by construction). The
+corpus makes the forecast; the latent makes the judge. All numbers trace to
+a dated, pre-registered experimental log.
+\end{abstract}
+
+\input{sections/01_introduction}
+\input{sections/02_related}
+\input{sections/03_architecture}
+\input{sections/04_objective}
+\input{sections/05_corpus}
+\input{sections/06_protocol}
+\input{sections/07_results}
+\input{sections/08_judge}
+\input{sections/09_negative}
+\input{sections/10_worldmodel}
+\input{sections/11_limitations}
+\input{sections/12_reproducibility}
+
+\bibliographystyle{abbrvnat}
+\bibliography{refs}
+
+\appendix
+\input{sections/appendix_pitfalls}
+
+\end{document}

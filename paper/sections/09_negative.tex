@@ -1,0 +1,32 @@
+\section{Clean negative results}
+\label{sec:negative}
+
+Each row of Table~\ref{tab:negative} was a hypothesis we considered
+plausible enough to build and measure, with a registered expectation where
+the log records one. Several contradict folk practice; that is why they are
+a section, not a footnote.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{p{4.4cm}p{5.6cm}p{4.2cm}}
+\toprule
+Hypothesis & Measurement & Verdict \\
+\midrule
+Latent objective beats reconstruction & 1.4\% average, recon wins 17/28 cells; within-window slope $-1.64\%/100$ steps, CI excl.\ 0 & refuted as stated; rollout-boundary candidate open (\S\ref{sec:hypothesis}) \\
+Weight soup of the selection window \citep{wortsman2022soups} & \gpair{0.878}{0.607} flip vs 0.596 single; m4\_weekly 2.76 $\to$ 4.13 & negative; the average leaves the basin; closed \\
+Uniform conformal calibration \citep{romano2019cqr} (registered: $-1$ to $-2.5\%$) & $\gamma \approx [1.01..1.12..1.03]$; CRPS 0.5961 vs 0.5959; MASE bit-identical & no-op; the fan is already calibrated in-distribution, GIFT under-coverage is \emph{shift}, exactly what the ESJEPA gate addresses \\
+Scale TTA & bit-identical inputs & provable no-op, pinned by test \\
+Translation TTA & \gpair{0.898}{0.627} vs \gpair{0.895}{0.624} & negative; staleness wins \\
+Context 2048 at inference & \gpair{1.190}{0.876}; yet bizitobs 5T CRPS halves & fails globally; long context must be trained (seeded the v3 curriculum) \\
+Energy as planning regularizer & dormant: no effect; active: violations 78.7 $\to$ 82.4\% & refuted, 3 concordant runs (\S\ref{sec:t1t2}) \\
+Corpus volume alone & $\times 6$ data $\to$ $-1.6\%$ CRPS & weakest lever measured \\
+Validation loss selects checkpoints & wrong 3/3, once with a clean curve & doctrine: select by evaluation \\
+Stricter-than-required decontamination & 0.9\% of observations & empty lever, quantified \\
+\bottomrule
+\end{tabular}
+\caption{Negative results with their numbers. Two learning-rate lessons
+belong here too: a cosine calibrated for 40 epochs never decays in 3, and a
+full corpus is exhausted in one epoch (validation rises afterward).}
+\label{tab:negative}
+\end{table}

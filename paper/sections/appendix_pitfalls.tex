@@ -1,0 +1,38 @@
+\section{Silent failures, and how they were actually caught}
+\label{app:pitfalls}
+
+Most defects that invalidated results were silent: valid shapes, decreasing
+losses, no warnings. Three of the worst were caught by reading log lines,
+not by tests. Table~\ref{tab:pitfalls} is the catalogue; we consider it as
+reusable as any architecture choice.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{p{4.6cm}p{5.4cm}p{4.0cm}}
+\toprule
+Defect & Consequence & Caught by \\
+\midrule
+Eval-side global normalization vs per-instance training & MSE overstated 42\% avg over 40 pairs; nothing pre-repair usable & protocol audit \\
+RevIN affine inverted at decode, never applied forward & 6--10\% scale error + offset on every forecast & code reading \\
+Query table sliced past its size & missing queries silently replaced by context embeddings, trained as predictions; every horizon $>136$ corrupted & code reading; now refused \\
+VICReg pooled over positions; half on a detached tensor & positional diversity masked true collapse; zero-gradient regularizer & measurement (0.9990 vs 0.0000) \\
+Optimizer built before gradual unfreeze & unfrozen weights never stepped; every gradual run was a frozen-encoder probe & log line: parameter counts \\
+Augmentations parsed, never wired & first-phase runs trained without their declared augmentations & log line \\
+\texttt{last.ckpt} = last top-$k$ copy, not last state (Lightning version difference) & mid-run checkpoint served as ``final''; the operator had measured it, review dismissed it from another version's source & 18 bit-identical probe values; md5. Measurement beats reading code. Parade: save every checkpoint \\
+Corpus contained the benchmark & electricity/traffic-hourly extend the Nixtla series over their eval period; early transfer claim downgraded & found while writing exclusion rules for another corpus \\
+Cached eval resumed across an overwritten checkpoint & old model's numbers reported as new, ``already done'' $\times$97 & fingerprint now in cache key \\
+\bottomrule
+\end{tabular}
+\caption{Ten defects, none caught by the test suite that now pins them.}
+\label{tab:pitfalls}
+\end{table}
+
+The pattern: correctness of mechanism and coherence of protocol are
+different properties. Tests grew to pin each mechanism after the fact; what
+remained was protocol-level and was caught by two near-free habits.
+Pre-registered numeric expectations: a result that contradicts its
+prediction triggers a search that a merely good-looking result never
+would. And reading the run's own log lines (loaded-key counts,
+skipped-file lists, per-family batch shares) instead of trusting
+dashboards.

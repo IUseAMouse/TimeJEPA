@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-30 (soir, finetune v3 @75 %)** — ×flip : **0.8636/0.5988**, couverture 0.751
+  (q10 0.123 / q90 0.874). Deuxième meilleur checkpoint du run, à l'épaisseur du bruit du
+  50 % (0.8633/0.5983) : ΔMASE 0.0003, ΔCRPS 0.0005. Lecture : (1) PAS de dérive tardive
+  façon mix/ration — la séquence 50→70→75 % fait 0.5983→0.6005→0.5988, un plateau qui
+  respire, cohérent avec val encore descendante (0.5936 à 75 %) ; le pic-25-45 % des
+  lignées précédentes ne se reproduit pas sur v3 (rationnement au pretrain ET au finetune,
+  composition stationnaire — mécanisme G10.2 cohérent). (2) QUATRIÈME point sur le plancher
+  0.597 ± 0.002 ×flip : la triple convergence devient un plateau de run entier, la lecture
+  « capacité liante » se renforce. (3) Couverture 0.751 < champion 0.769 < esjepa 0.790 :
+  v3 est la lignée la plus sous-couvrante — argument supplémentaire pour l'ablation
+  « z sur pretrain sain » (E21 question ouverte). (4) Indices per-config bruts (ratios à
+  confirmer par gift_gap) : m4_yearly MASE 4.14 et m4_quarterly 1.32 re-confirment
+  P-v3.2 affaiblie ; car_parts CRPS 1.015 brut, la famille intermittent n'a pas encore
+  visiblement payé ; us_births/M 0.534 MASE semble réparé (était dans la queue E19).
+  Verdict P-v3.1/3.3/3.4 : attendre l'autopsie gift_gap sur le champion du run, pas
+  config par config à l'œil. Reste : évals 80-100 %, puis autopsie, puis h512.
 - **2026-08-30 (finetune v3 @30-50 %, et LA TRIPLE CONVERGENCE)** — 30 % :
   0.8791/0.6137 ; **50 % : 0.8633/0.5983** cov 0.746 — MEILLEURE MASE DU PROJET toutes
   lignées (champion 0.8702), CRPS à 0.24 pt du champion. Val ENCORE descendante à

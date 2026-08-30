@@ -1,0 +1,16 @@
+\section{Limitations}
+\label{sec:limitations}
+
+One seed per arm, everywhere, including the objective duel; the registered
+three-seed protocol is unfunded. We mitigate with paired designs, bootstrap
+intervals and pre-registered directional predictions; we do not solve it.
+The body gap is real: 0.54 vs 0.47 on the 81 non-tail configurations, and
+the $0.597 \pm 0.002$ triple convergence reads as a capacity bound at
+1.14M, an interpretation until a larger model tests it. The harness is a
+restatement of the official protocol with measured convention drift (zero
+MASE, $\sim$2.7\% CRPS), and all ranks are against one frozen snapshot
+(2026-08-22). The pre-v3 corpus observation count was never instrumented
+(1.7--4B). The short-series block remains geometry-bound; the registered
+fix (crop-and-pad augmentation) is designed, not built. Scope: univariate
+by choice; no covariates; judge results are measured on this architecture's
+checkpoints only.

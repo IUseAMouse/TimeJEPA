@@ -1,0 +1,50 @@
+\section{Introduction}
+\label{sec:intro}
+
+This paper reports a model and the fate of the idea behind it. Both matter.
+
+The idea: in I-JEPA \citep{assran2023ijepa} the predictor is scaffolding,
+discarded after pretraining. TimeJEPA inverts that. The predictor
+extrapolates the future in latent space and is kept as the inference organ;
+the decoder is a reading head. The bet, registered before any measurement:
+latent extrapolation is the right pretraining task for a forecaster.
+Forecasting is generation, not infilling, the causal/masked split of
+language modeling \citep{radford2018gpt,devlin2019bert}; the irreducibly
+unpredictable share of a series' future is enormous, and a latent loss lets
+the EMA target encoder absorb it \citep{lecun2022path}; transfer should be
+clean.
+
+We tested the bet the way we tested everything: paired runs, one variable
+each, numeric predictions written into a dated log before results. The bet
+lost. At equal corpus and budget, latent extrapolation and reconstruction
+differ by 1.4\%, and reconstruction wins most paired cells
+(Section~\ref{sec:objective}). A monotone long-horizon advantage did appear
+on GIFT-Eval (+0.8/+3.1/+6.6\% over short/medium/long), then a per-step
+analysis killed the obvious reading: within a window the advantage
+\emph{shrinks} with depth (slope $-1.64\%$ per 100 steps, CI excluding
+zero). What survives is narrower and unconfirmed: the latent objective may
+degrade less under iteration on its own outputs.
+
+What moved the numbers instead was data. The full trajectory from
+\gpair{0.979}{0.677} to \gpair{0.863}{0.596} (Figure~\ref{fig:progression})
+decomposes into protocol, geometry, corpus, normalization, synthetic data,
+batch rationing, checkpoint selection, and one test-time symmetry. The
+pretraining objective contributed nothing measurable. The field is currently
+excited about JEPA for time series; our evidence says that as a way to make
+a small model forecast better, it is not where the leverage is.
+
+The latent earns its keep elsewhere. A pretrained JEPA is implicitly an
+energy over (context, future) pairs, and that energy is a competent
+\emph{judge}: it ranks true futures far above chance, improves TTM-R3 on
+five of six datasets as a frozen zero-training reranker, and a
+4-dimensional latent trained to predict residual statistics carries the
+entire calibration of the quantile fan, an 18.7-point CRPS ablation with
+the median invariant by construction (Section~\ref{sec:judge}). One
+sentence summarizes twenty experiments: \emph{the corpus makes the
+forecast; the latent makes the judge.}
+
+Three evaluation properties frame every number. One checkpoint and one
+configuration serve all 97 GIFT-Eval configurations; no per-regime variants
+(the TTM family publishes several). Nothing is tuned, calibrated or
+selected on GIFT-Eval data. The compute budget is three RTX~3090s; every
+experiment here is re-runnable by one person on one machine.

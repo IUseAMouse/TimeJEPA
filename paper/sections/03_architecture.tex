@@ -1,0 +1,174 @@
+\section{Architecture}
+\label{sec:architecture}
+
+Figure~\ref{fig:arch} shows the full model; Table~\ref{tab:params} its
+parameter budget. No choice below came from taste; each traces to a logged
+measurement, cited inline.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners=1pt, minimum height=7mm, inner sep=2.5pt, align=center},
+  frozen/.style={box, fill=gray!12},
+  loss/.style={draw=none, text=red!60!black, align=center},
+  arr/.style={-{Stealth[length=2mm]}},
+  node distance=4mm and 6mm]
+
+% forward path
+\node[box] (norm) {arcsinh\\+ RevIN};
+\node[box, right=of norm] (patch) {Patching\\16/8};
+\node[box, right=of patch] (enc) {Encoder\\3 blocks, RoPE};
+\node[box, right=of enc] (pred) {Predictor\\2 blocks};
+\node[box, right=11mm of pred] (qh) {Quantile head\\monotone fan};
+\node[left=5mm of norm] (x) {$x_{1:1024}$};
+\node[right=5mm of qh] (out) {$\hat q_{0.1..0.9}$};
+\node[box, below=7mm of enc] (fq) {31 future queries\\(learned table)};
+% training branch
+\node[frozen, above=9mm of enc] (tgt) {EMA target encoder\\(frozen)};
+\node[left=5mm of tgt] (xy) {$[x \,\|\, y]$};
+\node[loss, right=8mm of tgt] (jl) {MSE $+$ SIGReg};
+% z branch
+\node[box, below=7mm of qh] (zbox) {z head $128{\to}64{\to}4$\\gate $e^{g}$ (zero-init)};
+\node[loss, below=2.5mm of zbox] (zl) {SmoothL1 vs EWMA residual stats};
+
+\draw[arr] (x) -- (norm);
+\draw[arr] (norm) -- (patch);
+\draw[arr] (patch) -- (enc);
+\draw[arr] (enc) -- node[above]{\scriptsize 127} (pred);
+\draw[arr] (pred) -- node[above]{\scriptsize $\hat z$ (31)} (qh);
+\draw[arr] (qh) -- (out);
+\draw[arr] (fq.east) -- (pred.south west);
+\draw[arr] (xy) -- (tgt);
+\draw[arr] (tgt) -- node[above]{\scriptsize $z_{\mathrm{tgt}}$} (jl);
+\draw[arr] (pred.north) |- ($(jl.east)+(2mm,-2.5mm)$) -- ($(jl.east)+(0,-2.5mm)$);
+\draw[arr, dashed] (enc.north west) to[bend left=12] node[left]{\scriptsize EMA} (tgt.west);
+% cross attention back edge (dips below the free zone under the predictor)
+\draw[arr, dashed] (enc.south east) to[bend right=22]
+  node[below, pos=0.5]{\scriptsize cross-attention to context} (qh.south west);
+\draw[arr] (pred.south east) -- (zbox.north west);
+\draw[arr] (zbox.north) -- (qh.south);
+\end{tikzpicture}
+\caption{TimeJEPA. Solid path: inference (context 1024 $\to$ 127 patches
+$\to$ predictor with 31 learned future queries $\to$ nine monotone
+quantiles for 256 steps). Gray: pretraining target branch (EMA copy,
+frozen). Red: losses. The z head and its zero-initialized gate are the
+ESJEPA arm (Section~\ref{sec:esjepa}).}
+\label{fig:arch}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Component & Params & Share \\
+\midrule
+Patch embedding & 2{,}432 & 0.2\% \\
+Online encoder (3 blocks, $d{=}128$, 4 heads, ff 512) & 595{,}072 & 52.4\% \\
+Predictor (2 blocks, heads, 50-row query table) & 419{,}968 & 37.0\% \\
+Quantile head (cross-attn, MLP, unpatching, gate) & 118{,}162 & 10.4\% \\
+RevIN affine & 2 & \\
+\midrule
+Trainable total & \textbf{1{,}135{,}636} & \\
+EMA target encoder (frozen copy) & 595{,}072 & \\
+\bottomrule
+\end{tabular}
+\caption{Measured parameter decomposition. The h512 variant adds 6{,}144
+query-table parameters and nothing else.}
+\label{tab:params}
+\end{table}
+
+\paragraph{Geometry, set by measurement.}
+Context 1024, native horizon 256, patch 16 stride 8. A dedicated round took
+the seven-dataset average MASE from 1.365 to 1.159 and located a flat
+context optimum (512 to 1280 within 5\%, against 33\% before). The prior
+brittleness had a mechanism: skill peaked exactly at the training context
+length (electricity: $+28.5\%$ at 384, $-103.8\%$ at 768); the model
+memorizes a patch count. The cure is per-batch geometry randomization
+(context left-truncated to $\{128..1024\}$, horizon to $\{64..256\}$,
+$p{=}0.5$ each); per-batch keeps tensors rectangular, and RoPE makes the
+encoder length-agnostic. A scratch control showed the robustness comes from
+randomization at fine-tuning time, not from pretraining.
+
+\paragraph{Normalization.}
+\label{sec:normalization}
+Two composed stages, fitted on the context only:
+\begin{equation}
+x' = \operatorname{arcsinh}\!\left(\tfrac{x - \mathrm{med}(c)}{s(c)}\right),
+\quad
+s(c) = \begin{cases}
+1.4826\,\mathrm{MAD}(c) & \text{if } > 0.01\,\sigma(c),\\
+\max(0.1\,\sigma(c), 10^{-3}) & \text{otherwise,}
+\end{cases}
+\label{eq:robustscale}
+\end{equation}
+then RevIN in compressed space. Each term answers a pathology: MAD/arcsinh
+for spikes ($\times$100 spikes in VM traces crush $\sigma$-scaled signals;
+precedent \citep{cohen2024toto}); the floor for near-constant contexts
+(RevIN scale $\sim$0.003 projects targets to thousands of sigmas; arcsinh
+makes them ordinary numbers); the conditional fallback because an
+unconditional $\max$ would let a spike re-inflate the scale, the exact
+pathology MAD exists to ignore. The floor value matters: 29\% of bitbrains
+contexts have MAD exactly zero, and an earlier $10^{-8}$ floor overflowed
+float32 through $\sinh$ (CRPS $\sim 10^{10}$). Arcsinh is strictly
+monotone, so quantiles are equivariant and the median commutes with the
+inverse. The inverse additionally clamps to
+$[\min(c)-10w,\ \max(c)+10w]$: a half-trained head once emitted
+$|z|\approx15$ in compressed space, and $\sinh$ turned it into a CRPS of
+$1.8\times10^{7}$ on one configuration, $\times$1.19 on the whole
+aggregate; Chronos bounds its vocabulary at $\pm15\sigma$ for the same
+reason \citep{ansari2024chronos}.
+
+One theorem, used twice: median and MAD are 1-homogeneous, so the composed
+normalization quotients the entire positive affine group. Scale
+augmentation is provably inert (pinned by test), and the only surviving
+group element is the sign, which is why flip is the one test-time symmetry
+worth having (Section~\ref{sec:protocol}).
+
+\paragraph{Encoder and EMA target.}
+Three pre-norm blocks \citep{xiong2020preln}, RoPE \citep{su2024rope}, 4
+heads, ff 512, non-causal. The target encoder is an EMA copy on the
+BYOL/MoCo~v3 cosine schedule, $\tau: 0.996 \to 1$
+\citep{grill2020byol,chen2021mocov3}.
+
+\paragraph{Predictor.}
+\label{sec:predictor}
+Two blocks (lighter than the encoder, the I-JEPA convention). Input: 127
+context embeddings concatenated with 31 learned future queries; the last 31
+outputs are the predicted latents $\hat z$. The query table is oversized
+(50 rows) because slicing past a table's size silently returns fewer rows:
+in an early version, missing queries were replaced by context embeddings
+and trained as predictions, corrupting every horizon above 136 steps with
+valid shapes throughout (Appendix~\ref{app:pitfalls}). Horizon extension at
+fine-tuning time grows the table by merging trained rows into a longer one.
+An optional zero-initialized FiLM conditions the queries on a scalar (built
+for cross-resolution, reused for actions in
+Section~\ref{sec:worldmodel}); zero-init makes the unconditioned model
+exactly the baseline.
+
+\paragraph{Quantile head.}
+\label{sec:quantile-head}
+Nine quantiles per step, three commitments. (1) Direct quantiles because
+GIFT ranks on CRPS $\approx$ mean pinball over a grid: optimize the metric,
+no proxy; and MASE is minimized by the median, which pinball at
+$\tau{=}0.5$ estimates exactly. (2) Cross-attention back to the context
+embeddings, because the MSE-trained predictor converges to
+$\mathbb{E}[z\mid \mathrm{ctx}]$, a conditional mean (measured: predicted
+variance 0.6 vs target 0.95); dispersion lives in the context, not in
+$\hat z$. (3) Monotone fan by construction: the median is regressed
+directly, other levels are median $\pm$ cumulative softplus widths;
+crossing is impossible rather than penalized. The ESJEPA gate multiplies
+the widths by $e^{g}$ from a zero-initialized linear map of the predicted
+residual statistics: exact identity at init, median untouchable, so MASE is
+structurally invariant and any CRPS delta is attributable to spread alone.
+
+\paragraph{Rollout beyond 256 steps: propagate the fan, not the median.}
+Median feedback has a measured bias: the median path is smoother than any
+trajectory, so intervals shrink with horizon (exchange h720 band width
+0.267 vs a truth growing like $\sqrt{h}$). We propagate all nine levels,
+copy $k$ continuing from its own level $k$ (comonotone coupling), marginal
+fan = per-step sort. The assumption, stated honestly: perfect rank
+dependence across rolls. Deterministic, no RNG, and it moved the average
+fan gain at h720 from $-4\%$ to $-16\%$ WQL with band widths finally
+increasing in depth.

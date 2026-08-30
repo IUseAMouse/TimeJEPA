@@ -1,0 +1,52 @@
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Time series foundation models.}
+No paradigm has swept the field: decoder-only (TimesFM
+\citep{das2024timesfm}, Toto \citep{cohen2024toto}), masked encoder (Moirai
+\citep{woo2024moirai}, whose LOTSA corpus we pretrain on), tokenized
+seq-to-seq (Chronos \citep{ansari2024chronos}), xLSTM (TiRex
+\citep{auer2025tirex}), state space (FlowState \citep{flowstate2025}), MLP
+mixers (TTM \citep{ekambaram2024ttm}) all compete on GIFT-Eval
+\citep{aksu2024gifteval}. Size is not the lever: Toto spans 4M to 1B
+parameters, a factor of 250, for 4.6 CRPS points, and sub-10M models
+(TTM-R3, FlowState, TinyCast) beat much larger ones. That is TimeJEPA's
+class, and why testing \emph{which pretraining objective} serves
+forecasting at fixed small capacity has a place. Other reference points:
+Lag-Llama \citep{rasul2023lagllama}, Timer \citep{liu2024timer}, Sundial
+\citep{liu2025sundial}, VisionTS \citep{chen2024visionts}, YingLong
+\citep{yinglong2025}, DeepAR \citep{salinas2020deepar}, TiDE
+\citep{das2023tide}.
+
+\paragraph{JEPA and self-supervised learning.}
+JEPA was proposed as a path to predictive world models \citep{lecun2022path}
+and instantiated for images and video
+\citep{assran2023ijepa,bardes2024vjepa,assran2025vjepa2}, always with a
+disposable predictor. Anti-collapse machinery: BYOL's EMA target
+\citep{grill2020byol} with the MoCo~v3 momentum schedule
+\citep{chen2021mocov3}, VICReg \citep{bardes2022vicreg}, and LeJEPA's SIGReg
+\citep{balestriero2025lejepa}, our default. Our energy reading of the
+latent follows \citet{lecun2006ebm}. To our knowledge TimeJEPA is the first
+systematic attempt to keep the JEPA predictor as the forecasting organ for
+time series and measure whether that helps.
+
+\paragraph{Components, data, inference.}
+Patching and channel independence follow PatchTST \citep{nie2023patchtst};
+instance normalization follows RevIN \citep{kim2022revin}, composed with a
+robust arcsinh transform whose precedent is Toto's scaler
+\citep{cohen2024toto}; pre-norm blocks \citep{xiong2020preln} with rotary
+embeddings \citep{su2024rope}. Quantile decoding optimizes pinball loss
+\citep{koenker1978quantile,gneiting2007scoring}; metrics follow
+\citet{hyndman2006mase} and GluonTS \citep{alexandrov2020gluonts}.
+Synthetic pretraining data follows KernelSynth \citep{ansari2024chronos}
+via random Fourier features \citep{rahimi2007rff}; CauKer adds causal
+structure \citep{cauker2025}; Toto-2 reports a majority-synthetic recipe
+\citep{khwaja2026toto2}; our shape augmentations follow the TiRex ablation
+\citep{auer2025tirex}. Sign-flip test-time augmentation has precedents in
+TimesFM and YingLong \citep{das2024timesfm,yinglong2025}; conformal
+calibration follows \citet{romano2019cqr,vovk2005conformal}; weight
+averaging \citep{izmailov2018swa,wortsman2022soups} failed cleanly for us.
+The world-model perspective connects to
+\citep{ha2018worldmodels,hansen2024tdmpc2,zhou2024dinowm,williams2017mppi};
+our measured constraint, prudence from predicted uncertainty rather than
+from the energy, converges with \citet{henaff2019mpur}.

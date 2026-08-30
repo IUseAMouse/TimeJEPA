@@ -1,0 +1,43 @@
+\section{Perspective: one arm, two trades}
+\label{sec:worldmodel}
+
+The judge results reframe the predictor: it is already a world model of an
+\emph{autonomous} system. The completion, and the original promise of the
+name, is an action input, unifying forecasting and predictive control in
+one arm. The design is fixed by measurements already reported.
+
+\textbf{Mechanism.} An action embedding conditions the predictor through
+zero-initialized FiLM, exactly the pattern of
+Section~\ref{sec:predictor}: $a = \varnothing$ is the identity, so the
+actioned model \emph{is} the current forecaster, GIFT behavior unchanged. A
+spectator has no action: marginal dynamics, already learned. An actor knows
+its candidate action by definition. The controller is not a network; it is
+inference-time optimization, planning by backprop (the refinement machinery
+of Section~\ref{sec:pjr} with the action as the variable) or
+propose-and-judge over plans \citep{williams2017mppi,hansen2024tdmpc2}. The
+predictor never decides; it simulates, the loop decides.
+
+\textbf{Three measured constraints.} Prudence comes from fan + z, not from
+$E$ (the judge accepts teleported futures and hurts plans as a cost term,
+Section~\ref{sec:t1t2}; convergent with \citet{henaff2019mpur}). State
+continuity must be an explicit cost term, since the energy will not supply
+it. The judging checkpoint is not the forecasting checkpoint and is
+selected by an early probe (Section~\ref{sec:probe}).
+
+\textbf{The wall is data.} Observational corpora carry no labeled actions
+and are confounded: a model trained on thermostat logs learns that heating
+turns on when temperature drops, and a naive planner cuts the heating to
+warm the room. We measured this in miniature on the owned simulator (plans
+pulled toward historical setpoints). The exit is what the synthetic
+pipeline makes cheap: causal generators with labeled interventions
+\citep{cauker2025} grafted onto the v3 machinery. The through-line: an
+unobserved action \emph{is} a latent variable explaining the future, the
+$z$ of \citet{lecun2022path}; ESJEPA is its deterministic shadow, the
+action input its declared form.
+
+\textbf{The claim this aims at.} A quantile-fan TSFM whose native output
+supports chance-constrained MPC, zero-shot, on unseen systems, with
+$a=\varnothing$ leaving its benchmarks untouched. No current TSFM occupies
+that position; every component (fan, gate, judge, refinement, generator
+pipeline) exists in this codebase. Sequence: action FiLM, causal corpus,
+then the planner that is already written.

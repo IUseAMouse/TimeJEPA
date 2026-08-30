@@ -1,0 +1,68 @@
+\section{Evaluation protocol and fairness}
+\label{sec:protocol}
+
+\paragraph{One checkpoint, one configuration.}
+Every GIFT-Eval number comes from a single checkpoint and a single model
+configuration serving all 97 configurations: same weights, same context,
+same decoding, horizons beyond 256 by the model's own rollout. No
+per-regime variants (the TTM family publishes several). Nothing is tuned,
+calibrated or selected on GIFT-Eval data; the only instrument that reads
+GIFT outputs is a read-only coverage diagnostic.
+
+\paragraph{Harness.}
+The official protocol is restated next to its upstream sources, not
+imported: prediction lengths per frequency and term, up to 20
+non-overlapping windows over the last 10\% of each series, channels split,
+the 97 configurations pinned as a literal so upstream drift fails loudly.
+MASE uses each series' entire past \citep{hyndman2006mase}; CRPS is
+weighted quantile loss over nine levels, pooled per configuration
+\citep{gneiting2007scoring,alexandrov2020gluonts}; missing targets masked,
+never imputed; aggregates are geometric means of ratios vs seasonal naive.
+We print two normalizations side by side, against the official
+seasonal-naive numbers and against seasonal naive through our own code
+path; the gap measures our convention drift (zero on MASE, $\sim$2.7\% on
+CRPS). Context preparation truncates on the left: right-padding would
+repeat the last value, fabricating observations exactly where they hurt. A
+full 97-configuration pass takes about four minutes on one 3090 (measured
+3\,min\,30), which is what makes evaluation-based checkpoint selection
+affordable.
+
+\paragraph{Test-time augmentation: the sign flip, and nothing else.}
+For a distributional forecast the correct mirror average is
+\begin{equation}
+\hat{q}_\tau(x) = \tfrac{1}{2}\left[\, q_\tau(x) - q_{1-\tau}(-x) \right],
+\label{eq:flip}
+\end{equation}
+since $q_\tau(-X) = -q_{1-\tau}(X)$: the fan negates and reverses across
+levels, ordering preserved. Precedents: TimesFM's
+\texttt{force\_flip\_invariance}, YingLong
+\citep{das2024timesfm,yinglong2025}. Table~\ref{tab:tta} shows why flip is
+alone: the affine group is exhausted by theorem and by measurement.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+Variant & MASE & CRPS & Verdict \\
+\midrule
+none (champion, plain) & 0.895 & 0.624 & reference \\
+sign flip (Eq.~\ref{eq:flip}) & \textbf{0.870} & \textbf{0.596} & official ($-2.0/-2.4\%$, $2\times$ cost) \\
+scale $f(kx)/k$ & = & = & provable no-op (pinned by test) \\
+translation (shifts 1--7) & 0.898 & 0.627 & negative: staleness beats phase \\
+multi-lookback \{512,1024\} & 0.896 & 0.623 & mixed alone, worse with flip (0.606) \\
+context 2048 at inference & 1.190 & 0.876 & collapse; long context must be trained \\
+\bottomrule
+\end{tabular}
+\caption{Test-time variants on the rationed champion (plain baselines where
+measured). Under a normalization that quotients the affine group
+(Section~\ref{sec:normalization}), the sign is the only symmetry left.}
+\label{tab:tta}
+\end{table}
+
+\paragraph{Fairness rules.}
+Every aggregate appears plain and with flip, so the reader prices the
+augmentation separately; single-checkpoint TTA is within the leaderboard's
+declared norms and we refuse multi-checkpoint ensembling. No number without
+its protocol; in-domain lineage labeled as such. Budget: three RTX~3090s,
+stated wherever a comparison invokes scale.

@@ -1,0 +1,23 @@
+\section{Reproducibility statement}
+\label{sec:repro}
+
+The project runs against a dated experimental log: hypotheses,
+configurations and numeric success/failure bands are written before each
+run, results appended after, negative ones included. This paper renders
+that log; every number traces to an entry and a commit. Configurations are
+declarative one-variable overlays; the evaluation harness caches
+per-configuration JSON keyed by a checkpoint fingerprint, so a stale
+checkpoint cannot silently reuse old results
+(Appendix~\ref{app:pitfalls}). The corpus assembles by symlink from
+immutable sources with an audited batch composition; the generator's seed
+scheme makes cross-corpus collisions impossible.
+
+Compute, in full: three RTX~3090s. A pretraining epoch is one to two days;
+fine-tuning a fraction of one epoch; a 97-configuration GIFT pass under
+four minutes on one GPU; probes and the planning testbed run on CPU. Total,
+including every failed run: a few GPU-weeks of consumer hardware. This is
+part of the claim, not an apology: every experiment here is re-runnable by
+one person. The test suite (295 tests) pins the mechanisms that carried
+silent failures; as Appendix~\ref{app:pitfalls} shows, tests guarantee
+mechanisms, not protocol coherence, and the log is the second, equally
+necessary instrument.

@@ -1,0 +1,446 @@
+% ============================================================
+% refs.bib — TimeJEPA paper bibliography
+% Entries sorted alphabetically by key.
+% ============================================================
+
+% GIFT-Eval : le benchmark principal sur lequel TimeJEPA est evalue.
+% TODO-verify: venue publiee incertaine (peut-etre acceptee en conference depuis) — arXiv verifie.
+@article{aksu2024gifteval,
+  author  = {Aksu, Taha and Woo, Gerald and Liu, Juncheng and Liu, Xu and Liu, Chenghao and Savarese, Silvio and Xiong, Caiming and Sahoo, Doyen},
+  title   = {{GIFT-Eval}: A Benchmark for General Time Series Forecasting Model Evaluation},
+  journal = {arXiv preprint arXiv:2410.10393},
+  year    = {2024}
+}
+
+% GluonTS : bibliotheque utilisee pour les baselines et l'evaluation probabiliste.
+@article{alexandrov2020gluonts,
+  author  = {Alexandrov, Alexander and Benidis, Konstantinos and Bohlke-Schneider, Michael and Flunkert, Valentin and Gasthaus, Jan and Januschowski, Tim and Maddix, Danielle C. and Rangapuram, Syama and Salinas, David and Schulz, Jasper and Stella, Lorenzo and T{\"u}rkmen, Ali Caner and Wang, Yuyang},
+  title   = {{GluonTS}: Probabilistic and Neural Time Series Modeling in {Python}},
+  journal = {Journal of Machine Learning Research},
+  volume  = {21},
+  number  = {116},
+  pages   = {1--6},
+  year    = {2020}
+}
+
+% Chronos : TSFM par tokenisation ; source de KernelSynth et TSMixup pour les donnees synthetiques.
+@article{ansari2024chronos,
+  author  = {Ansari, Abdul Fatir and Stella, Lorenzo and Turkmen, Caner and Zhang, Xiyuan and Mercado, Pedro and Shen, Huibin and Shchur, Oleksandr and Rangapuram, Syama Sundar and Pineda Arango, Sebastian and Kapoor, Shubham and Zschiegner, Jasper and Maddix, Danielle C. and Wang, Hao and Mahoney, Michael W. and Torkkola, Kari and Gordon Wilson, Andrew and Bohlke-Schneider, Michael and Wang, Yuyang},
+  title   = {Chronos: Learning the Language of Time Series},
+  journal = {Transactions on Machine Learning Research},
+  year    = {2024}
+}
+
+% I-JEPA : l'architecture JEPA image dont TimeJEPA transpose le schema masque/predicteur.
+@inproceedings{assran2023ijepa,
+  author    = {Assran, Mahmoud and Duval, Quentin and Misra, Ishan and Bojanowski, Piotr and Vincent, Pascal and Rabbat, Michael and LeCun, Yann and Ballas, Nicolas},
+  title     = {Self-Supervised Learning from Images with a Joint-Embedding Predictive Architecture},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2023}
+}
+
+% V-JEPA 2 : passage a l'echelle des JEPA video, comprehension + prediction + planification.
+@article{assran2025vjepa2,
+  author  = {Assran, Mido and Bardes, Adrien and Fan, David and Garrido, Quentin and Howes, Russell and Komeili, Mojtaba and Muckley, Matthew and Rizvi, Ammar and Roberts, Claire and Sinha, Koustuv and Zholus, Artem and Arnaud, Sergio and Gejji, Abha and Martin, Ada and Hogan, Francois Robert and Dugas, Daniel and Bojanowski, Piotr and Khalidov, Vasil and Labatut, Patrick and Massa, Francisco and Szafraniec, Marc and Krishnakumar, Kapil and Li, Yong and Ma, Xiaodong and Chandar, Sarath and Meier, Franziska and LeCun, Yann and Rabbat, Michael and Ballas, Nicolas},
+  title   = {{V-JEPA} 2: Self-Supervised Video Models Enable Understanding, Prediction and Planning},
+  journal = {arXiv preprint arXiv:2506.09985},
+  year    = {2025}
+}
+
+% TiRex : forecaster zero-shot xLSTM, etat de l'art GIFT-Eval parmi les petits modeles.
+@inproceedings{auer2025tirex,
+  author    = {Auer, Andreas and Podest, Patrick and Klotz, Daniel and B{\"o}ck, Sebastian and Klambauer, G{\"u}nter and Hochreiter, Sepp},
+  title     = {{TiRex}: Zero-Shot Forecasting Across Long and Short Horizons with Enhanced In-Context Learning},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {38},
+  year      = {2025}
+}
+
+% LeJEPA / SIGReg : recette JEPA sans heuristiques, base theorique de l'objectif de TimeJEPA.
+@article{balestriero2025lejepa,
+  author  = {Balestriero, Randall and LeCun, Yann},
+  title   = {{LeJEPA}: Provable and Scalable Self-Supervised Learning Without the Heuristics},
+  journal = {arXiv preprint arXiv:2511.08544},
+  year    = {2025}
+}
+
+% VICReg : regularisation variance-invariance-covariance, ancetre des anti-collapse JEPA.
+@inproceedings{bardes2022vicreg,
+  author    = {Bardes, Adrien and Ponce, Jean and LeCun, Yann},
+  title     = {{VICReg}: Variance-Invariance-Covariance Regularization for Self-Supervised Learning},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2022}
+}
+
+% V-JEPA : la prediction de features video comme objectif SSL autonome.
+@article{bardes2024vjepa,
+  author  = {Bardes, Adrien and Garrido, Quentin and Ponce, Jean and Chen, Xinlei and Rabbat, Michael and LeCun, Yann and Assran, Mahmoud and Ballas, Nicolas},
+  title   = {Revisiting Feature Prediction for Learning Visual Representations from Video},
+  journal = {arXiv preprint arXiv:2404.08471},
+  year    = {2024}
+}
+
+% CauKer : donnees synthetiques causalement coherentes (GP kernels + SCM) pour pretrainer des TSFM.
+@article{cauker2025,
+  author  = {Xie, Shifeng and Feofanov, Vasilii and Odonnat, Ambroise and Zan, Lei and Alonso, Marius and Zhang, Jianfeng and Palpanas, Themis and Pan, Lujia and Zhang, Keli and Redko, Ievgen},
+  title   = {{CauKer}: Classification Time Series Foundation Models Can Be Pretrained on Synthetic Data},
+  journal = {arXiv preprint arXiv:2508.02879},
+  year    = {2025}
+}
+
+% MoCo v3 : etude empirique du SSL sur ViT, reference pour les recettes d'entrainement stables.
+@inproceedings{chen2021mocov3,
+  author    = {Chen, Xinlei and Xie, Saining and He, Kaiming},
+  title     = {An Empirical Study of Training Self-Supervised Vision Transformers},
+  booktitle = {Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV)},
+  year      = {2021}
+}
+
+% VisionTS : un MAE visuel pretraine sur ImageNet est un forecaster zero-shot — transfert cross-modal.
+@article{chen2024visionts,
+  author  = {Chen, Mouxiang and Shen, Lefei and Li, Zhuo and Wang, Xiaoyun Joy and Sun, Jianling and Liu, Chenghao},
+  title   = {{VisionTS}: Visual Masked Autoencoders Are Free-Lunch Zero-Shot Time Series Forecasters},
+  journal = {arXiv preprint arXiv:2408.17253},
+  year    = {2024}
+}
+
+% Toto : TSFM decoder-only de Datadog optimise pour l'observabilite.
+@article{cohen2024toto,
+  author  = {Cohen, Ben and Khwaja, Emaad and Wang, Kan and Masson, Charles and Ram{\'e}, Elise and Doubli, Youssef and Abou-Amal, Othmane},
+  title   = {Toto: Time Series Optimized Transformer for Observability},
+  journal = {arXiv preprint arXiv:2407.07874},
+  year    = {2024}
+}
+
+% Toto 2.0 : famille u-muP 4M-2.5B, SOTA GIFT-Eval — point de comparaison recent.
+% TODO-verify: papier de 2026 (arXiv 2605.20119), premier auteur Khwaja et non Cohen ; cle conservee car citee par le .tex.
+@article{khwaja2026toto2,
+  author  = {Khwaja, Emaad and Lettieri, Chris and Woo, Gerald and Belouadah, Eden and Cenac, Marc and Jarry, Guillaume and Paquin, Enguerrand and Zhao, Xunyi and Zhukov, Viktoriya and Abou-Amal, Othmane and Liu, Chenghao and Talwalkar, Ameet and Asker, David},
+  title   = {Toto 2.0: Time Series Forecasting Enters the Scaling Era},
+  journal = {arXiv preprint arXiv:2605.20119},
+  year    = {2026}
+}
+
+% TiDE : encoder-decoder MLP long horizon, baseline supervisee forte.
+@article{das2023tide,
+  author  = {Das, Abhimanyu and Kong, Weihao and Leach, Andrew and Mathur, Shaan and Sen, Rajat and Yu, Rose},
+  title   = {Long-term Forecasting with {TiDE}: Time-series Dense Encoder},
+  journal = {Transactions on Machine Learning Research},
+  year    = {2023}
+}
+
+% TimesFM : TSFM decoder-only de Google, reference zero-shot majeure.
+@inproceedings{das2024timesfm,
+  author    = {Das, Abhimanyu and Kong, Weihao and Sen, Rajat and Zhou, Yichen},
+  title     = {A Decoder-Only Foundation Model for Time-Series Forecasting},
+  booktitle = {Proceedings of the 41st International Conference on Machine Learning (ICML)},
+  year      = {2024}
+}
+
+% BERT : l'analogie encodeur bidirectionnel masque, versant "comprehension" du pretraining.
+@inproceedings{devlin2019bert,
+  author    = {Devlin, Jacob and Chang, Ming-Wei and Lee, Kenton and Toutanova, Kristina},
+  title     = {{BERT}: Pre-training of Deep Bidirectional Transformers for Language Understanding},
+  booktitle = {Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT)},
+  year      = {2019}
+}
+
+% TTM : forecaster pre-entraine minuscule (IBM), comparaison efficacite/taille et juge du harnais hybride.
+@inproceedings{ekambaram2024ttm,
+  author    = {Ekambaram, Vijay and Jati, Arindam and Dayama, Pankaj and Mukherjee, Sumanta and Nguyen, Nam H. and Gifford, Wesley M. and Reddy, Chandra and Kalagnanam, Jayant},
+  title     = {Tiny Time Mixers ({TTMs}): Fast Pre-trained Models for Enhanced Zero/Few-Shot Forecasting of Multivariate Time Series},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {37},
+  year      = {2024}
+}
+
+% FlowState : TSFM SSM minuscule invariant a la frequence d'echantillonnage (IBM), concurrent compact.
+@inproceedings{flowstate2025,
+  author    = {Graf, Lars and Ortner, Thomas and Wozniak, Stanislaw and Pantazi, Angeliki},
+  title     = {{FlowState}: Sampling-Rate Invariant Time Series Foundation Model with Dynamic Forecasting Horizons},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {38},
+  year      = {2025},
+  note      = {arXiv:2508.05287}
+}
+
+% Scoring rules propres : fondement theorique du CRPS et de l'evaluation probabiliste.
+@article{gneiting2007scoring,
+  author  = {Gneiting, Tilmann and Raftery, Adrian E.},
+  title   = {Strictly Proper Scoring Rules, Prediction, and Estimation},
+  journal = {Journal of the American Statistical Association},
+  volume  = {102},
+  number  = {477},
+  pages   = {359--378},
+  year    = {2007}
+}
+
+% Monash Archive : corpus historique de series, source de donnees de pretraining/eval.
+@inproceedings{godahewa2021monash,
+  author    = {Godahewa, Rakshitha and Bergmeir, Christoph and Webb, Geoffrey I. and Hyndman, Rob J. and Montero-Manso, Pablo},
+  title     = {Monash Time Series Forecasting Archive},
+  booktitle = {Advances in Neural Information Processing Systems, Datasets and Benchmarks Track},
+  year      = {2021}
+}
+
+% BYOL : SSL sans paires negatives via reseau cible EMA, precedent des EMA targets JEPA.
+@inproceedings{grill2020byol,
+  author    = {Grill, Jean-Bastien and Strub, Florian and Altch{\'e}, Florent and Tallec, Corentin and Richemond, Pierre H. and Buchatskaya, Elena and Doersch, Carl and Avila Pires, Bernardo and Guo, Zhaohan Daniel and Gheshlaghi Azar, Mohammad and Piot, Bilal and Kavukcuoglu, Koray and Munos, R{\'e}mi and Valko, Michal},
+  title     = {Bootstrap Your Own Latent: A New Approach to Self-Supervised Learning},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {33},
+  year      = {2020}
+}
+
+% World Models : apprendre un modele latent du monde puis y planifier — cadrage historique.
+@article{ha2018worldmodels,
+  author  = {Ha, David and Schmidhuber, J{\"u}rgen},
+  title   = {World Models},
+  journal = {arXiv preprint arXiv:1803.10122},
+  year    = {2018}
+}
+
+% TD-MPC2 : world model latent + planification MPC a l'echelle, versant controle.
+@inproceedings{hansen2024tdmpc2,
+  author    = {Hansen, Nicklas and Su, Hao and Wang, Xiaolong},
+  title     = {{TD-MPC2}: Scalable, Robust World Models for Continuous Control},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024}
+}
+
+% MPUR : policy learning sous incertitude dans un modele predictif appris (conduite dense).
+@inproceedings{henaff2019mpur,
+  author    = {Henaff, Mikael and Canziani, Alfredo and LeCun, Yann},
+  title     = {Model-Predictive Policy Learning with Uncertainty Regularization for Driving in Dense Traffic},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2019}
+}
+
+% MASE : la metrique d'erreur scale-free utilisee par GIFT-Eval et dans nos evaluations.
+@article{hyndman2006mase,
+  author  = {Hyndman, Rob J. and Koehler, Anne B.},
+  title   = {Another Look at Measures of Forecast Accuracy},
+  journal = {International Journal of Forecasting},
+  volume  = {22},
+  number  = {4},
+  pages   = {679--688},
+  year    = {2006}
+}
+
+% SWA : moyennage de poids le long de la trajectoire, justifie nos checkpoints moyennes.
+@inproceedings{izmailov2018swa,
+  author    = {Izmailov, Pavel and Podoprikhin, Dmitrii and Garipov, Timur and Vetrov, Dmitry and Wilson, Andrew Gordon},
+  title     = {Averaging Weights Leads to Wider Optima and Better Generalization},
+  booktitle = {Proceedings of the 34th Conference on Uncertainty in Artificial Intelligence (UAI)},
+  year      = {2018}
+}
+
+% RevIN : normalisation d'instance reversible contre le distribution shift, composant de TimeJEPA.
+@inproceedings{kim2022revin,
+  author    = {Kim, Taesung and Kim, Jinhee and Tae, Yunwon and Park, Cheonbok and Choi, Jang-Ho and Choo, Jaegul},
+  title     = {Reversible Instance Normalization for Accurate Time-Series Forecasting against Distribution Shift},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2022}
+}
+
+% Adam : l'optimiseur de base.
+@inproceedings{kingma2015adam,
+  author    = {Kingma, Diederik P. and Ba, Jimmy},
+  title     = {Adam: A Method for Stochastic Optimization},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2015}
+}
+
+% Regression quantile : fondement de la pinball loss utilisee pour les tetes quantiles.
+@article{koenker1978quantile,
+  author  = {Koenker, Roger and Bassett, Gilbert},
+  title   = {Regression Quantiles},
+  journal = {Econometrica},
+  volume  = {46},
+  number  = {1},
+  pages   = {33--50},
+  year    = {1978}
+}
+
+% Tutoriel EBM : le cadre energie-compatibilite dont les JEPA sont issus.
+@incollection{lecun2006ebm,
+  author    = {LeCun, Yann and Chopra, Sumit and Hadsell, Raia and Ranzato, Marc'Aurelio and Huang, Fu Jie},
+  title     = {A Tutorial on Energy-Based Learning},
+  booktitle = {Predicting Structured Data},
+  publisher = {MIT Press},
+  year      = {2006}
+}
+
+% Position paper JEPA : la vision d'architecture predictive en espace latent qui motive TimeJEPA.
+@article{lecun2022path,
+  author  = {LeCun, Yann},
+  title   = {A Path Towards Autonomous Machine Intelligence},
+  journal = {OpenReview preprint},
+  note    = {Version 0.9.2, 2022-06-27},
+  year    = {2022}
+}
+
+% Timer : pretraining GPT-style sur series unifiees (Tsinghua), TSFM generatif de reference.
+@inproceedings{liu2024timer,
+  author    = {Liu, Yong and Zhang, Haoran and Li, Chenyu and Huang, Xiangdong and Wang, Jianmin and Long, Mingsheng},
+  title     = {Timer: Generative Pre-trained Transformers Are Large Time Series Models},
+  booktitle = {Proceedings of the 41st International Conference on Machine Learning (ICML)},
+  year      = {2024}
+}
+
+% Sundial : TSFM natif continu via TimeFlow loss (flow matching), SOTA probabiliste recent.
+@inproceedings{liu2025sundial,
+  author    = {Liu, Yong and Qin, Guo and Shi, Zhiyuan and Chen, Zhi and Yang, Caiyin and Huang, Xiangdong and Wang, Jianmin and Long, Mingsheng},
+  title     = {Sundial: A Family of Highly Capable Time Series Foundation Models},
+  booktitle = {Proceedings of the 42nd International Conference on Machine Learning (ICML)},
+  year      = {2025}
+}
+
+% AdamW : le decouplage du weight decay effectivement utilise a l'entrainement.
+@inproceedings{loshchilov2019adamw,
+  author    = {Loshchilov, Ilya and Hutter, Frank},
+  title     = {Decoupled Weight Decay Regularization},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2019}
+}
+
+% PatchTST : le patching + channel independence repris par le tokenizer de TimeJEPA.
+@inproceedings{nie2023patchtst,
+  author    = {Nie, Yuqi and Nguyen, Nam H. and Sinthong, Phanwadee and Kalagnanam, Jayant},
+  title     = {A Time Series is Worth 64 Words: Long-term Forecasting with Transformers},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2023}
+}
+
+% GPT : l'analogie pretraining generatif autoregressif, versant "generation".
+@article{radford2018gpt,
+  author  = {Radford, Alec and Narasimhan, Karthik and Salimans, Tim and Sutskever, Ilya},
+  title   = {Improving Language Understanding by Generative Pre-Training},
+  journal = {OpenAI Technical Report},
+  year    = {2018}
+}
+
+% Random Fourier Features : base des features aleatoires utilisees (probe / synthetique kernel).
+@inproceedings{rahimi2007rff,
+  author    = {Rahimi, Ali and Recht, Benjamin},
+  title     = {Random Features for Large-Scale Kernel Machines},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {20},
+  year      = {2007}
+}
+
+% Lag-Llama : premier TSFM probabiliste open-source decoder-only a base de lags.
+@article{rasul2023lagllama,
+  author  = {Rasul, Kashif and Ashok, Arjun and Williams, Andrew Robert and Ghonia, Hena and Bhagwatkar, Rishika and Khorasani, Arian and Darvishi Bayazi, Mohammad Javad and Adamopoulos, George and Riachi, Roland and Hassen, Nadhir and Bilo{\v{s}}, Marin and Garg, Sahil and Schneider, Anderson and Chapados, Nicolas and Drouin, Alexandre and Zantedeschi, Valentina and Nevmyvaka, Yuriy and Rish, Irina},
+  title   = {Lag-Llama: Towards Foundation Models for Probabilistic Time Series Forecasting},
+  journal = {arXiv preprint arXiv:2310.08278},
+  year    = {2023}
+}
+
+% CQR : calibration conformale des intervalles quantiles, base de notre post-calibration.
+@inproceedings{romano2019cqr,
+  author    = {Romano, Yaniv and Patterson, Evan and Cand{\`e}s, Emmanuel},
+  title     = {Conformalized Quantile Regression},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {32},
+  year      = {2019}
+}
+
+% DeepAR : reference historique du forecasting probabiliste neuronal.
+@article{salinas2020deepar,
+  author  = {Salinas, David and Flunkert, Valentin and Gasthaus, Jan and Januschowski, Tim},
+  title   = {{DeepAR}: Probabilistic Forecasting with Autoregressive Recurrent Networks},
+  journal = {International Journal of Forecasting},
+  volume  = {36},
+  number  = {3},
+  pages   = {1181--1191},
+  year    = {2020}
+}
+
+% RoPE : l'encodage positionnel rotatif utilise dans l'encodeur de TimeJEPA.
+@article{su2024rope,
+  author  = {Su, Jianlin and Ahmed, Murtadha and Lu, Yu and Pan, Shengfeng and Bo, Wen and Liu, Yunfeng},
+  title   = {{RoFormer}: Enhanced Transformer with Rotary Position Embedding},
+  journal = {Neurocomputing},
+  volume  = {568},
+  pages   = {127063},
+  year    = {2024}
+}
+
+% Transformer : l'architecture de base.
+@inproceedings{vaswani2017attention,
+  author    = {Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N. and Kaiser, {\L}ukasz and Polosukhin, Illia},
+  title     = {Attention is All You Need},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {30},
+  year      = {2017}
+}
+
+% Prediction conformale : garanties de couverture distribution-free, cadre theorique de la calibration.
+@book{vovk2005conformal,
+  author    = {Vovk, Vladimir and Gammerman, Alexander and Shafer, Glenn},
+  title     = {Algorithmic Learning in a Random World},
+  publisher = {Springer},
+  year      = {2005}
+}
+
+% MPPI : controle predictif par echantillonnage, l'algorithme de planification dans le latent.
+@inproceedings{williams2017mppi,
+  author    = {Williams, Grady and Wagener, Nolan and Goldfain, Brian and Drews, Paul and Rehg, James M. and Boots, Byron and Theodorou, Evangelos A.},
+  title     = {Information Theoretic {MPC} for Model-Based Reinforcement Learning},
+  booktitle = {IEEE International Conference on Robotics and Automation (ICRA)},
+  year      = {2017}
+}
+
+% Moirai : entrainement unifie multi-frequences et corpus LOTSA utilise au pretraining.
+@inproceedings{woo2024moirai,
+  author    = {Woo, Gerald and Liu, Chenghao and Kumar, Akshat and Xiong, Caiming and Savarese, Silvio and Sahoo, Doyen},
+  title     = {Unified Training of Universal Time Series Forecasting Transformers},
+  booktitle = {Proceedings of the 41st International Conference on Machine Learning (ICML)},
+  year      = {2024}
+}
+
+% Model soups : moyenner plusieurs modeles finetunes ameliore sans cout d'inference.
+@inproceedings{wortsman2022soups,
+  author    = {Wortsman, Mitchell and Ilharco, Gabriel and Gadre, Samir Ya and Roelofs, Rebecca and Gontijo-Lopes, Raphael and Morcos, Ari S. and Namkoong, Hongseok and Farhadi, Ali and Carmon, Yair and Kornblith, Simon and Schmidt, Ludwig},
+  title     = {Model Soups: Averaging Weights of Multiple Fine-tuned Models Improves Accuracy without Increasing Inference Time},
+  booktitle = {Proceedings of the 39th International Conference on Machine Learning (ICML)},
+  year      = {2022}
+}
+
+% Pre-LN : justification de la normalisation pre-couche pour la stabilite d'entrainement.
+@inproceedings{xiong2020preln,
+  author    = {Xiong, Ruibin and Yang, Yunchang and He, Di and Zheng, Kai and Zheng, Shuxin and Xing, Chen and Zhang, Huishuai and Lan, Yanyan and Wang, Liwei and Liu, Tie-Yan},
+  title     = {On Layer Normalization in the Transformer Architecture},
+  booktitle = {Proceedings of the 37th International Conference on Machine Learning (ICML)},
+  year      = {2020}
+}
+
+% YingLong : encodeur bidirectionnel masque + delayed chain-of-thought, TSFM non causal proche en esprit.
+@article{yinglong2025,
+  author  = {Wang, Xue and Zhou, Tian and Gao, Jinyang and Ding, Bolin and Zhou, Jingren},
+  title   = {Output Scaling: {YingLong}-Delayed Chain of Thought in a Large Pretrained Time Series Forecasting Model},
+  journal = {arXiv preprint arXiv:2506.11029},
+  year    = {2025}
+}
+
+% DINO-WM : world model sur features SSL pre-entraines, planification zero-shot — parallele direct.
+@inproceedings{zhou2024dinowm,
+  author    = {Zhou, Gaoyue and Pan, Hengkai and LeCun, Yann and Pinto, Lerrel},
+  title     = {{DINO-WM}: World Models on Pre-trained Visual Features Enable Zero-shot Planning},
+  booktitle = {Proceedings of the 42nd International Conference on Machine Learning (ICML)},
+  year      = {2025}
+}
+
+% ===== NOTES =====
+% TODO-verify (2 entrees) :
+% - aksu2024gifteval : arXiv 2410.10393 verifie ; verifier si une venue publiee (conference) existe desormais.
+% - khwaja2026toto2 : papier verifie ("Toto 2.0: Time Series Forecasting Enters the Scaling Era",
+%   arXiv 2605.20119) mais il date de mai 2026 et le premier auteur est Khwaja, pas Cohen ;
+%   la cle khwaja2026toto2 est conservee telle que citee par le .tex.
+% Remarques (verifiees, pas de TODO) :
+% - cauker2025 : arXiv 2508.02879, auteurs releves depuis la page OpenReview/arXiv (Xie et al.).
+% - chen2024visionts : cite en preprint arXiv ; une acceptation ICML 2025 est possible, non confirmee ici.
+% - flowstate2025 : titre NeurIPS 2025 retenu (la v1 arXiv s'intitulait "Sampling-Rate-Equivariant
+%   Time-Series Forecasting") ; arXiv 2508.05287.
+% - auer2025tirex : NeurIPS 2025 (proceedings confirme) ; arXiv 2505.23719.
