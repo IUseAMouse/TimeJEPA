@@ -1,81 +1,35 @@
-\section{Pretraining, and the fate of the founding hypothesis}
+\section{The objective is not the lever}
 \label{sec:objective}
 
-\paragraph{Objective.}
-Standard JEPA plus one term:
-\begin{equation}
-\mathcal{L} = \operatorname{MSE}(\hat z, z_{\mathrm{tgt}})
-+ \lambda\,\Omega(z_{\mathrm{ctx}})
-\;[+\; \lambda_z \operatorname{SmoothL1}(\hat s, s)],
-\end{equation}
-with $\Omega$ = SIGReg \citep{balestriero2025lejepa} at $\lambda{=}1$ (16
-random 1-D projections pushed toward Gaussian; VICReg control was
-indistinguishable, 1.193 vs 1.183 average MASE, but SIGReg constrains the
-whole distribution where a variance hinge accepts bimodal collapse). The
-bracketed term is the ESJEPA arm ($\lambda_z{=}0.1$,
-Section~\ref{sec:esjepa}). Two implementation lessons that cost real
-results: compute variance statistics per patch position, not pooled
-(pooled 0.9990 vs per-position 0.0000, positional diversity masking true
-collapse), and never regularize a detached tensor (zero gradient, inflated
-reported loss). AdamW \citep{loshchilov2019adamw}, peak LR
-$3\times10^{-4}$, warmup 10\% then cosine, bf16, batch 512 per GPU on three
-3090s. The LR ceiling and the short budgets are measurements, not habits: a
-cosine calibrated for 40 epochs never decays in 3 (the run oscillated,
-0.345--0.445, and its ``best checkpoint'' was a noise trough), and the full
-corpus is exhausted in about one epoch, after which validation rises.
-Collapse is monitored by per-position std and effective rank, calibrated
-per corpus (rank at init: 3.7--4.8 on Monash, 43--87 on LOTSA).
+A reconstruction arm differing in exactly one variable (decode to raw
+normalized patches, SmoothL1) meets the latent arm at equal corpus,
+budget and geometry, checkpoints paired at 0.4\% of validation loss:
+MASE 1.150 vs 1.166 on a seven-dataset benchmark, reconstruction winning
+17 of 28 paired cells, and identical GIFT-Eval CRPS
+(\gpair{0.979}{0.6766} vs \gpair{1.003}{0.6764}). The objectives are
+indistinguishable.
 
-\subsection{The founding bet, tested to destruction}
-\label{sec:hypothesis}
+The one signal favoring the latent arm, an advantage monotone in the
+GIFT term ($+0.8/+3.1/+6.6\%$ short/medium/long), dissolves under a
+per-step analysis: inside a window the gap \emph{shrinks} with depth
+(slope $-1.64\%$ per 100 steps, 95\% CI $[-2.82,-0.56]$, paired
+bootstrap over eight held-out datasets), while across horizons it tracks
+the number of autoregressive rolls (Spearman $+0.404$, $p=0.019$). What
+survives is narrower: the latent objective may degrade less under
+iteration on its own outputs. A native h512 fine-tune, halving the roll
+count, gave the predicted sign at the magnitude of a minor lever
+($-1.7\%$ on multi-rollout configurations;
+Appendix~\ref{app:training}).
 
-The claim under test: latent extrapolation beats reconstruction as a
-pretraining objective, increasingly so at long horizon. Four measurements,
-in order.
-
-\textbf{1. The paired duel is null.} One-variable reconstruction arm
-(decode to normalized patches, SmoothL1, no anti-collapse: fixed targets
-cannot collapse), checkpoints paired at 0.4\% val loss. Seven-dataset MASE:
-latent 1.150, reconstruction 1.166. Reconstruction wins 17/28 paired cells,
-median gap 0.5\% in its favor. GIFT-Eval: \gpair{0.979}{0.6766} vs
-\gpair{1.003}{0.6764}, identical CRPS. Verdict: not ``JEPA loses'' but
-``indistinguishable,'' which suffices to strike the claim.
-
-\textbf{2. A horizon signal appeared and replicated.} Latent advantage
-monotone in the GIFT term: $+0.8\%$ (short, $n{=}55$), $+3.1\%$ (medium,
-$n{=}21$), $+6.6\%$ (long, $n{=}21$); same pattern in the Nixtla cells.
-For a week this was the thesis.
-
-\textbf{3. The per-step analysis killed the obvious mechanism.} If
-predicting far is cheaper in latent space, the gap must grow with depth
-\emph{inside} a window. Paired bootstrap over per-step MAE, eight datasets,
-20{,}000 resamples: the gap \emph{shrinks} with depth, slope $-1.64\%$ per
-100 steps, 95\% CI $[-2.82, -0.56]$, negative in 6/8 datasets. Across
-rollout counts the picture inverts: gap vs number of rolls, Spearman
-$+0.404$, $p{=}0.019$; latent significantly \emph{worse} at h192
-(single window), ahead only at h720 (three rolls). Surviving candidate:
-\emph{the latent objective degrades less under iteration on its own
-outputs}. Fragile ($p{=}0.069$ without one dataset), with a registered
-three-seed protocol not yet funded. A native h512 fine-tune (grown query
-table, same pretrain, halving the roll count for the affected horizons)
-supplied a paired check: on configurations unaffected by a window-induced
-corpus change (Section~\ref{sec:results}), the multi-rollout group improved
-by 1.7\% relative to the single-roll group, the sign the boundary
-hypothesis predicts and the magnitude of a minor lever, consistent with the
-flat term aggregates.
-
-\textbf{4. What pretraining itself buys.} Against from-scratch at equal
-fine-tuning: in-domain, nothing (1.193 vs 1.187, strict equality); on
-never-fine-tuned datasets, $-26\%$ MASE on 8/8 (upper bound: the strongest
-dataset was later found contaminated, Appendix~\ref{app:pitfalls}), tightened
-to $-8.7\%$ in a budget-controlled clean rerun. Pretraining does not
-improve fit; it improves transfer. And note the selector trap: fine-tuning
-validation loss preferred the wrong model (0.159 scratch vs 0.181
-pretrained) while the pretrained one transferred better.
-
-One argument for JEPA survives untouched, and it is architectural, not
-empirical: latents allow equivariance by objective. A context at
-resolution $k_1$ and a target at $k_2$ can be tied through a predictor
-conditioned on $w{=}k_2/k_1$; reconstruction cannot do this, two
-resolutions do not share target values. Built (the FiLM path), never
-funded. It is the cleanest reason to keep the formulation.
+One scope condition must be named: the duel is measured under this
+recipe's ceiling (Section~\ref{sec:results}), a regime where no
+objective may have room to differentiate; the claimed scope is this
+capacity, corpus and budget, and the $\times 3$ rerun will widen it.
+Pretraining itself, independent of objective, buys transfer rather than
+fit: against a from-scratch control it is worth nothing in-domain
+(strict equality) and $-8.7\%$ MASE on datasets never seen at
+fine-tuning time. One architectural argument for the JEPA formulation
+survives untouched, unfunded: only latent comparison can impose
+resolution equivariance by the objective, since two resolutions do not
+share target values, and a competitor's ablation now prices exactly
+that lever at $+0.051$ CRPS \citep{flowstate2025}.

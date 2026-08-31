@@ -1919,6 +1919,39 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-31 (RECADRAGE MAJEUR : « plafond de capacité » → « plafond de RECETTE » —
+  amendé AVANT les résultats forecast de mini)** — Deux reviews externes + vérification à
+  la source (arXiv fetchés, les chiffres des reviews étaient directionnels mais imprécis).
+  FAITS VÉRIFIÉS : **FlowState-3M CRPS 0.496** (10.6M : 0.490 ; variante 3M-2k : 0.502 ±
+  0.001 sur 3 graines) ; **TinyCast 146 505 params, nWQL 0.545** (périodicité CALCULÉE :
+  FFT + test de Fisher, zéro paramètre ; flip par équivariance de signe = NOTRE TTA
+  exact ; contexte 2048/champ 2047) ; ablation FlowState (3 graines) : sans équivariance
+  d'échantillonnage 0.502→**0.553** (+0.051), sans parallel forecasts →**0.548** (+0.046) ;
+  contexte d'entraînement FlowState 4096 ; corpus des deux = GiftEvalPretrain + synthétique
+  (FlowState : CauKer). CONSÉQUENCES : (1) l'hypothèse « capacité liante à 1.14M » est
+  RÉFUTÉE en lecture transversale — un 0.15M fait 0.545 ; la triple convergence
+  0.597 ± 0.002 mesure le plafond de NOTRE RECETTE, pas de la taille. (2) **AMENDEMENT
+  P-mini (gravé avant toute éval forecast de mini, pretrain à ~10 %)** : les bandes
+  P-mini.1..4 restent telles quelles, mais l'ÉCHEC-DIAGNOSTIC change de lecture — flip
+  > 0.593 ne dira plus « la capacité n'était pas le mur » (on le sait déjà par TinyCast),
+  il dira « la capacité n'améliore pas CETTE recette » ; et un succès ≤ 0.580 dira « la
+  capacité lève une part du plafond de recette », pas « la capacité était le mur ».
+  (3) Le mur a maintenant un NOM et un PRIX, publiés par l'ablation d'un concurrent :
+  équivariance d'échelle temporelle ~0.051 + multi-forecast parallèle ~0.046 ≈ 0.097 ≈
+  notre écart total (0.094). Le levier n°1 devient **xres/G9.2** — implémenté, jamais
+  couru, et c'est précisément la version JEPA-native de l'équivariance (la seule
+  justification architecturale du JEPA qui a survécu à E15/E20b) — plus **contexte long
+  ENTRAÎNÉ** (E19b l'avait déjà montré : bizitobs CRPS ÷2 à ctx2048 même hors
+  distribution) et la piste périodicité-calculée de TinyCast (zéro paramètre, cousine de
+  notre SN-dans-le-pool). (4) Corrections des reviews elles-mêmes : la « sur-exclusion
+  auto-infligée » est mesurée à 0.9 % d'observations (G8.1 clos, levier vide) — ce point
+  des reviews est faux chez nous ; TinyCast utilisant NOTRE flip renforce la note de
+  fairness. (5) Fixes papier actés : confound de capacité NOMMÉ dans §objectif (le null
+  est mesuré sous le plafond de la recette), abstract aligné sur la nuance du gate (le z
+  achète la couverture nominale à CRPS égal, pas le CRPS), position de classe assumée
+  dans la légende de la table leaderboard, baseline probabiliste pour le reranker
+  (conformal sur résidus TTM) enregistrée comme expérience à courir. Rattraper 0.496 en
+  solo : improbable ; la bande 0.52-0.55 : plausible par les leviers nommés ci-dessus.
 - **2026-08-31 (mini @5 % : LE JUGE SUIT LA CAPACITÉ, et vite)** — Deux mesures sur le
   tout premier checkpoint mini-v3 (epoch00_valloss0.6836, ~5 % d'époque). (1) **Probe
   standalone : rang 0.211** (ρ 0.472, electricity/H méd 0.000) — meilleur juge à 5 %

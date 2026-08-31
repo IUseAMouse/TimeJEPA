@@ -1,0 +1,103 @@
+\section{Corpus and batch composition in detail}
+\label{app:corpus}
+
+\paragraph{Chunking and windowing.}
+Series are segmented into fixed-length, non-overlapping float32 chunks
+(object arrays break copy-on-write under forked data workers; measured as
+a 51~GiB resident set), chunk length adapted per subset and capped at
+2048 for real data. Chunks above 5\% missing are dropped; below, gaps are
+linearly interpolated (rejecting any NaN cost 100\% of two metro datasets
+whose nightly closures are regular; a higher threshold would fabricate
+3\,a.m.\ ridership). Training windows slide at stride 8 over a flat int32
+index. A per-family cap prevents climate reanalysis (63 of 118 audited
+files) from becoming half the corpus. Short-series configurations get a
+pad-to path: short real series are left-padded by repeating their first
+value, so the real data occupies the end of the chunk where the target is
+read; the target is always real, and the flat-then-data context is the
+condition evaluation already imposes. Geometry still binds: a 256-step
+real target cannot come from a 30-point yearly series. Real 5-minute data
+is additionally mean-pooled by 2 and 3 into legitimate 10- and 15-minute
+series (downward aggregation is physically correct; upward interpolation
+would fabricate information).
+
+\paragraph{Sampler drift and rationing.}
+Family $i$ receives batch share $\propto n_i^{0.5}$ per \emph{file}, with
+an oversampling cap of $3\times$ its natural share per epoch (at
+$6\times$, small files overfit visibly). Per-file weighting means a
+family sharded into $k$ files gets $k$ draws; we first suffered this
+(climate shards inflated to 66.5\% of the batch until capped) and later
+exploited it (the synthetic dose is set by shard count: 3 unsharded
+families measured 11.2\% of the batch, the 23-shard v3 allocation was
+predicted at $\sim$51\% and audited at 54.0\%). Consumed greedily, a
+family's cap exhausts early and the family vanishes: audited, 16 of 71
+families extinct before 1\% of the epoch, capped-family share drifting
+from 46.6\% to 35.7\% between first and last decile, batch shrinking from
+493 to 409 as slots went unfilled. Rationing converts each cap into a
+fractional per-batch quota with carry-over (a family entitled to 0.4
+samples per batch contributes 2 every 5 batches): same total exposure,
+composition stationary across all ten deciles. Augmentation cannot
+substitute for it: it diversifies the samples that are present, not the
+families that are absent.
+
+\paragraph{The synthetic generator.}
+Exact GP sampling is $O(N^3)$; summing $K{=}64$ sinusoids drawn from the
+kernel's spectral density \citep{rahimi2007rff} is $O(NK)$ and
+indistinguishable by eye at 8192 steps. Component bank: seasonal blocks
+with decaying harmonics, smooth GPs (length scale log-uniform in
+$[16,1024]$), trends with 30\% slope breaks, Student-$t$ noise 15\% of
+the time, level shifts and impulses, 25\% multiplicative modulation, and
+a final random affine map so synthetic series are not recognizable by
+their normalization. Table~\ref{tab:families} lists the five families.
+The ops\_bursty family draws Poisson-arriving bursts with amplitudes up
+to $300\times$ a log-uniform base level and exponential decay,
+zero-inflation segments at exactly zero, capacity saturation at a high
+quantile, and grid quantization; the intermittent family draws integer
+counts from a Bernoulli occurrence process with negative binomial sizes.
+External calibration: Chronos reports about 10\% synthetic as optimal in
+their setting \citep{ansari2024chronos}; Toto-2 reports a majority
+synthetic recipe \citep{khwaja2026toto2}; our 50--55\% batch target sits
+deliberately at the aggressive end because the per-configuration error
+map showed the holes to be exactly where no real data can be added. The
+dose is audited, never estimated: a first estimate landed at double the
+intended share and was corrected before the run.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+Family & Morphology & Target hole & batch share \\
+\midrule
+ops\_bursty & Poisson bursts, exact zeros, saturation & 10-second IT-ops (no public data) & 19.7\% \\
+intermittent & integer counts, neg.\ binomial sizes & sparse monthly demand & 9.9\% \\
+subhourly & periods 24--150 & 10/15-minute frequency gap & 7.4\% \\
+broadband & periods 4--2048 & diversity floor & 7.7\% \\
+lowfreq & periods 4--52, high trend prob. & short-series shapes & 5.7\% \\
+\bottomrule
+\end{tabular}
+\caption{The five synthetic families (audited v3 shares; 54.0\% synthetic
+total).}
+\label{tab:families}
+\end{table}
+
+\paragraph{Augmentations.}
+Shape-changing transforms only (scale augmentation is provably inert
+under the normalization): amplitude modulation by a random piecewise
+curve ($p{=}0.5$); censoring at a random high quantile with the same
+threshold for context and target, since saturation is a property of the
+world ($p{=}0.5$); periodic spike trains applied to both ($p{=}0.05$; a
+random spike in the target alone is unlearnable noise, a periodic one is
+signal). Order mirrors physics: modulate, spike, then censor. Mild jitter
+is context-only, keeping the JEPA target clean.
+
+\paragraph{Accounting.}
+The final corpus assembles by symlink from immutable sources: capped
+LOTSA (10.05B observations, 4.9M chunks), extra public datasets, the
+padded short-series block, the decimated block, and 23 seeded synthetic
+shards (cross-corpus seed collisions impossible by derivation). The audit
+is the corpus's identity card: 106 families, 54.0\% synthetic, capped
+real tail 24.6\%, composition stationary across deciles. One imprecision
+reported rather than hidden: the pre-v3 capped corpus was logged as both
+3--4 billion and about 1.7 billion observations; the exact count was
+never instrumented, and the volume-scaling comparison in
+Section~\ref{sec:results} states the range.

@@ -93,7 +93,8 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
     total = sum(1 for _ in gift.iter_test_instances(series, h, windows))
     stride = max(1, total // max_inst)
 
-    accs = {r: gift.MetricAccumulator() for r in ("ttm", "hybrid_ttm")}
+    readers = ("ttm",) if judge is None else ("ttm", "hybrid_ttm")
+    accs = {r: gift.MetricAccumulator() for r in readers}
     sn_acc = gift.MetricAccumulator()
     n_used, n_ttm_nonfinite = 0, 0
     for i, inst in enumerate(gift.iter_test_instances(series, h, windows)):
@@ -101,10 +102,11 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
             continue
         if np.isnan(inst.target).any():
             continue
-        ctx = prepare_context(inst.context, judge.input_length,
-                              judge.patching.stride, judge.patching.patch_size)
-        if ctx is None:
-            continue
+        if judge is not None:
+            ctx = prepare_context(inst.context, judge.input_length,
+                                  judge.patching.stride, judge.patching.patch_size)
+            if ctx is None:
+                continue
         scale = gift.seasonal_error(inst.context, m)
 
         tp = ttm_rollout(prop, inst.context.astype(np.float32), h, n_jitter, rng)
@@ -117,14 +119,15 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
         tp = tp[np.isfinite(tp).all(axis=1)]
         accs["ttm"].add(inst.target, tp[0], None, scale)      # chemin propre, point
 
-        # h_judge : l'énergie se lit sur les premiers pas <= horizon natif du
-        # juge (single-shot par construction) ; les quantiles sur h complet.
-        cands, e = candidate_energies(judge, ctx, inst.context, h, m, K,
-                                      rng, device, extra_cands=tp,
-                                      h_judge=judge.prediction_length,
-                                      centered=centered)
-        fan = fan_from_energies(cands, e)                     # [h, 9]
-        accs["hybrid_ttm"].add(inst.target, fan[:, 4], fan, scale)
+        if judge is not None:
+            # h_judge : l'énergie se lit sur les premiers pas <= horizon natif
+            # du juge (single-shot par construction) ; quantiles sur h complet.
+            cands, e = candidate_energies(judge, ctx, inst.context, h, m, K,
+                                          rng, device, extra_cands=tp,
+                                          h_judge=judge.prediction_length,
+                                          centered=centered)
+            fan = fan_from_energies(cands, e)                 # [h, 9]
+            accs["hybrid_ttm"].add(inst.target, fan[:, 4], fan, scale)
 
         sn_acc.add(inst.target, gift.seasonal_naive_forecast(inst.context, h, m),
                    None, scale)
@@ -140,7 +143,17 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("--judge-checkpoint", required=True)
+    ap.add_argument("--judge-checkpoint", default=None,
+                    help="requis sauf en --ttm-only")
+    ap.add_argument("--ttm-only", action="store_true",
+                    help="validation croisée du claim TTM (2026-08-31) : TTM "
+                         "brut sur les fenêtres COMPLÈTES, sans juge, agrégé "
+                         "vs SN locale ET officielle. Sa MASE se compare au "
+                         "0.7240 du CSV leaderboard ; l'écart mesure ce que "
+                         "leur recette per-régime + leur pipeline achètent "
+                         "par rapport à UNE variante (1024-96) roulée par "
+                         "nous. Sa 'CRPS' est un point effondré (=ND) : ne "
+                         "comparer qu'en le disant.")
     ap.add_argument("--judge-config", default="lotsa_tiny_v3_eval")
     ap.add_argument("--ttm-model", default="ibm-granite/granite-timeseries-ttm-r3")
     ap.add_argument("--ttm-revision", default="1024-96-r3")
@@ -159,22 +172,31 @@ def main():
                          "une variante de pool (sinon collision de marqueurs "
                          "avec le run de base du même juge)")
     args = ap.parse_args()
+    if not args.ttm_only and args.judge_checkpoint is None:
+        ap.error("--judge-checkpoint est requis (sauf en --ttm-only)")
+    if args.ttm_only and args.instances == 150:
+        args.instances = 10 ** 9           # fenêtres complètes par défaut
+    if args.ttm_only:
+        args.ttm_jitter = 0                # un seul chemin propre
 
-    config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
-    with initialize_config_dir(version_base=None, config_dir=config_dir):
-        cfg = compose(config_name=args.judge_config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    judge = create_model_from_config(cfg)
-    judge = load_checkpoint(judge, args.judge_checkpoint, device)
-    judge.to(device).eval()
+    judge = None
+    if not args.ttm_only:
+        config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
+        with initialize_config_dir(version_base=None, config_dir=config_dir):
+            cfg = compose(config_name=args.judge_config)
+        judge = create_model_from_config(cfg)
+        judge = load_checkpoint(judge, args.judge_checkpoint, device)
+        judge.to(device).eval()
     prop = TTMProposer(args.ttm_model, device, revision=args.ttm_revision)
 
     configs = ([c.strip() for c in args.configs.split(",")] if args.configs
                else list(gift.GIFT_CONFIGS))
     rng = np.random.default_rng(args.seed)
+    stem = ("ttm_raw" if args.ttm_only
+            else Path(args.judge_checkpoint).stem)
     out_dir = (Path("evaluation") / "gift_hybrid"
-               / (Path(args.judge_checkpoint).stem
-                  + (f"_{args.tag}" if args.tag else "")))
+               / (stem + (f"_{args.tag}" if args.tag else "")))
     (out_dir / "per_config").mkdir(parents=True, exist_ok=True)
 
     results = {}
@@ -196,13 +218,17 @@ def main():
             continue
         marker.write_text(json.dumps(res, indent=1))
         results[config] = res
-        t, hy, sn = res["ttm"], res["hybrid_ttm"], res["seasonal_naive_local"]
-        cov = hy.get("coverage") or {}
+        t = res["ttm"]
+        if "hybrid_ttm" in res:
+            hy = res["hybrid_ttm"]
+            cov = hy.get("coverage") or {}
+            extra = (f"hybrid MASE {hy['MASE']:.3f} CRPS {hy['CRPS']:.3f} "
+                     f"couv80 {(cov.get('0.9', 0) - cov.get('0.1', 0)):.2f} ")
+        else:
+            extra = ""
         logger.info(
             f"[{i}/{len(configs)}] {config}: ttm MASE {t['MASE']:.3f} | "
-            f"hybrid MASE {hy['MASE']:.3f} CRPS {hy['CRPS']:.3f} "
-            f"couv80 {(cov.get('0.9', 0) - cov.get('0.1', 0)):.2f} "
-            f"({res['n_instances']} inst, {time.time() - t0:.0f}s)")
+            f"{extra}({res['n_instances']} inst, {time.time() - t0:.0f}s)")
 
     # Agrégats : geomean des ratios vs SN LOCAL (mêmes fenêtres — apparié).
     def geomean_ratio(metric, reader):
@@ -211,24 +237,38 @@ def main():
                   if results[c]["seasonal_naive_local"][metric] > 0]
         return float(np.exp(np.mean(np.log(ratios)))) if ratios else float("nan")
 
+    readers = ("ttm",) if args.ttm_only else ("ttm", "hybrid_ttm")
     summary = {"judge": args.judge_checkpoint, "ttm": args.ttm_model,
                "revision": args.ttm_revision, "instances_cap": args.instances,
                "aggregates_vs_local_sn": {
                    r: {m: geomean_ratio(m, r) for m in ("MASE", "CRPS")}
-                   for r in ("ttm", "hybrid_ttm")}}
+                   for r in readers}}
     covs = [results[c]["hybrid_ttm"].get("coverage") for c in results
-            if results[c]["hybrid_ttm"].get("coverage")]
+            if results[c].get("hybrid_ttm", {}).get("coverage")]
     if covs:
         summary["hybrid_coverage80_mean"] = float(
             np.mean([c["0.9"] - c["0.1"] for c in covs]))
+    if args.ttm_only:
+        # Le chiffre de la validation croisée : ratio vs la SN OFFICIELLE
+        # vendorée — la normalisation du leaderboard (TTM-R3-PT : MASE 0.7240).
+        summary["ttm_vs_official_sn"] = gift.aggregate(
+            {c: results[c]["ttm"] for c in results},
+            gift.official_seasonal_naive())
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     logger.info("=" * 60)
-    for r in ("ttm", "hybrid_ttm"):
+    for r in readers:
         a = summary["aggregates_vs_local_sn"][r]
         note = "  (CRPS point effondré — ne pas citer)" if r == "ttm" else ""
         logger.info(f"  {r:11s} MASE ratio {a['MASE']:.4f} | "
-                    f"CRPS ratio {a['CRPS']:.4f}{note}")
+                    f"CRPS ratio {a['CRPS']:.4f}{note}  [vs SN locale]")
+    if args.ttm_only:
+        o = summary["ttm_vs_official_sn"]
+        logger.info(
+            f"  ttm vs SN OFFICIELLE : MASE ratio {o['geomean_MASE_ratio']:.4f} "
+            f"({o['n_configs_MASE']} configs) | claim leaderboard TTM-R3-PT : "
+            f"0.7240 | CRPS point {o['geomean_CRPS_ratio']:.4f} vs leur 0.5195 "
+            f"probabiliste (pas comparable)")
     if covs:
         logger.info(f"  couverture 80% hybride : "
                     f"{summary['hybrid_coverage80_mean']:.3f} (nominal 0.800)")

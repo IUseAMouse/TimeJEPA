@@ -1,117 +1,29 @@
-\section{Corpus and batch composition}
+\section{Corpus}
 \label{sec:corpus}
 
-Most of the accuracy came from here. Working principle: \emph{the batch is
-the target, the corpus is the means}; every decision is made against an
-audit of what the sampler actually serves, never against file sizes.
+Real data is LOTSA \citep{woo2024moirai}, split into univariate
+channels, with every subset matching an evaluation benchmark excluded by
+verified name patterns (all 28 GIFT-Eval datasets plus the Nixtla suite,
+whole datasets, pinned by a non-regression test); our patterns are
+strictly stricter than Salesforce's own sanctioned pretraining corpus at
+a quantified cost of 0.9\% of observations
+(Appendix~\ref{app:corpus}).
 
-\paragraph{Sources and decontamination.}
-Real data is LOTSA \citep{woo2024moirai}, univariate by channel split. Every
-subset matching an evaluation benchmark is excluded: 7 Nixtla patterns plus
-24 GIFT patterns covering all 28 datasets, checked against the official
-repository tree and pinned by a non-regression test. Exclusion is by whole
-dataset; exact-name overrides (never substrings) readmit provably disjoint
-subsets, each justified against all three suites. Cross-check: Salesforce's
-GiftEvalPretrain is byte-identical to LOTSA minus 18 datasets; our patterns
-are strictly stricter, at a quantified cost of 0.9\% of observations. PEMS
-is retained and declared (same road network as \texttt{traffic}, no shared
-sensor, year or frequency). We are strict because we got burned: our
-original Monash corpus contained \texttt{electricity-hourly} and
-\texttt{traffic-hourly}, whose last 20\% of steps \emph{are} the Nixtla
-benchmark; every early number on those two is in-domain, flagged wherever
-cited, and only the LOTSA lineage is presented as zero-shot
-(Appendix~\ref{app:pitfalls}).
+Batches are drawn with square-root temperature weighting and a $3\times$
+oversampling cap, \emph{rationed}: consumed greedily, the cap makes
+small families vanish early and batch composition drift through the
+epoch; converting it to a fractional per-batch quota makes composition
+stationary, and the rationed run produced the CRPS champion
+(Appendix~\ref{app:corpus}).
 
-\paragraph{Chunking.}
-Fixed-length non-overlapping float32 chunks (object arrays break
-copy-on-write under forked workers; measured 51~GiB), length adapted per
-subset, capped 2048 for real data. Chunks above 5\% missing are dropped;
-below, linearly interpolated: rejecting any NaN cost 100\% of two metro
-datasets whose nightly closures are regular, and a higher threshold would
-fabricate 3\,a.m.\ ridership. Windows slide at stride 8 over an int32 index.
-A per-family cap stops climate reanalysis (era5, cmip6: 63 of 118 audited
-files) from becoming half the corpus. Short-series GIFT configurations get
-a pad-to path in v3: left-pad by repeating the first value, so the real data
-sits where the target is read; the target is always real. Geometry still
-binds: a 256-step real target cannot come from a 30-point yearly series, so
-the yearly block stays under-served. Real 5-minute data is mean-pooled by 2
-and 3 into legitimate 10/15-minute series.
-
-\paragraph{Sampler, drift, rationing.}
-Batch share $\propto n_i^{0.5}$ per \emph{file}, oversampling cap
-$3\times$ (at $6\times$, small files overfit visibly). Per-file weighting
-cuts both ways: climate shards inflated to 66.5\% of the batch until
-capped; later, sharding became our dosing instrument. The cap's failure
-mode deserves a paragraph in any pretraining paper: consumed greedily, a
-family's cap exhausts early and the family vanishes. Audited: 16 of 71
-families extinct before 1\% of the epoch, capped-family share drifting
-46.6\% $\to$ 35.7\% between first and last decile, batch shrinking
-493 $\to$ 409. Late training sees a different distribution; a plausible
-mechanism for late-run GIFT degradation. Fix: \emph{rationing}, a
-fractional per-batch quota with carry-over. Same exposure, stationary
-composition across all ten deciles, and the rationed run produced the CRPS
-champion. Augmentation cannot substitute: it diversifies present samples,
-not absent families.
-
-\paragraph{Synthetic generator.}
-Three measured holes: nothing between 5-minute and hourly (10T/15T degraded
-on four datasets), short-series shapes structurally rejected, and no chunks
-long enough for cross-resolution pairs. The generator follows KernelSynth
-\citep{ansari2024chronos} via random Fourier features
-\citep{rahimi2007rff}: exact GP sampling is $O(N^3)$, prohibitive at
-$N{=}8192$; summing $K{=}64$ sinusoids drawn from the kernel's spectral
-density is $O(NK)$ and indistinguishable by eye. Component bank: seasonal
-blocks with decaying harmonics, smooth GPs, breaking trends, Student-$t$
-noise 15\% of the time, level shifts, impulses, 25\% multiplicative
-modulation, and a final random affine so synthetic series are not
-recognizable by their normalization. Table~\ref{tab:families} lists the
-five families and their targets; two have no public-data substitute at all.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{llll}
-\toprule
-Family & Morphology & Target hole & v3 batch \\
-\midrule
-ops\_bursty & Poisson bursts to $300\times$, exact zeros, & bizitobs 10S (ratio 1.387), & 19.7\% \\
- & saturation, quantization & no public data exists & \\
-intermittent & integer counts, neg.\ binomial sizes, & car\_parts, sparse monthly & 9.9\% \\
- & seasonal occurrence & (our one CRPS loss to SN) & \\
-subhourly & periods 24--150 & 10T/15T frequency gap & 7.4\% \\
-broadband & periods 4--2048 & diversity floor & 7.7\% \\
-lowfreq & periods 4--52, high trend prob. & short-series shapes & 5.7\% \\
-\bottomrule
-\end{tabular}
-\caption{The five synthetic families. Batch shares from the audited v3
-composition (54.0\% synthetic total, target 50--55\%).}
-\label{tab:families}
-\end{table}
-
-\paragraph{Augmentations.}
-Scale augmentation is provably inert under our normalization
-(Section~\ref{sec:normalization}), so the budget goes to shape: amplitude
-modulation ($p{=}0.5$), censoring at a random high quantile, same threshold
-for context and target since saturation is a property of the world
-($p{=}0.5$), and periodic spike trains ($p{=}0.05$; a random spike in the
-target alone is unlearnable noise, a periodic one is signal). Order mirrors
-physics: modulate, spike, then censor. All three are the largest single
-contributor in the TiRex ablation \citep{auer2025tirex}. Historical note:
-for the entire first phase the augmentation config was parsed and never
-wired to the data module; every early run trained without its declared
-augmentations (Appendix~\ref{app:pitfalls}).
-
-\paragraph{The v3 corpus.}
-Assembled by symlink, nothing deleted: full capped LOTSA (10.05B
-observations, 4.9M chunks), Chronos-era extras, the padded short-series
-block, solar\_power, the decimated block, and the synthetic families
-sharded into 23 seeded files (collision with earlier corpora impossible by
-seed derivation). Because share follows shard count, dose is set by
-sharding: 3 unsharded families measured 11.2\%; the 23-shard allocation was
-predicted at $\sim$51\% and audited at 54.0\% after removing two symlinks
-from a first pass at 55.2\%. The audit is the corpus's identity card: 106
-families, stationary across deciles, capped real tail 24.6\%. One
-imprecision reported rather than hidden: the earlier capped corpus was
-logged as both ``3--4 billion'' and ``$\sim$1.7 billion'' observations; the
-exact count was never instrumented, and the scaling comparison in
-Section~\ref{sec:results} states the range.
+54\% of the served batch is synthetic, a dose that is audited rather
+than estimated. It exists because the per-configuration error map showed
+holes exactly where no real data can be added: a frequency gap between
+5-minute and hourly sampling, short yearly shapes rejected by chunking,
+and two morphologies with no public data at all, bursty IT-operations
+series and intermittent integer counts, generated by a
+random-Fourier-feature KernelSynth
+\citep{ansari2024chronos,rahimi2007rff} plus dedicated samplers.
+Shape augmentations follow the TiRex ablation \citep{auer2025tirex};
+scale augmentation is inert under the normalization
+(Lemma~\ref{lem:affine}), so the budget goes entirely to shape.

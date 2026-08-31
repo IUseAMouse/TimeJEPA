@@ -1,0 +1,58 @@
+\section{Design for an actioned world model}
+\label{app:worldmodel}
+
+The judge results reframe the predictor as a world model of an autonomous
+system; this appendix records the design its measurements fix, as future
+work.
+
+\paragraph{Mechanism.}
+An action embedding conditions the predictor through zero-initialized
+FiLM, the pattern of Section~\ref{sec:architecture}: $a = \varnothing$ is
+the identity, so the actioned model \emph{is} the current forecaster with
+unchanged benchmarks. A spectator has no action, which is marginal
+dynamics, already learned; an actor knows its candidate action by
+definition. The controller is not a network but inference-time
+optimization, planning by backprop with the action as the variable, or
+propose-and-judge over candidate plans
+\citep{williams2017mppi,hansen2024tdmpc2}. The predictor never decides;
+it simulates, and the loop decides.
+
+\paragraph{What the judge knows: the thermostat study.}
+On a fully owned testbed (a linear thermostat with hidden action,
+history generated under a bang-bang policy, so that every verdict is
+checkable against the true dynamics), the frozen judge discriminates
+time-reversed futures (AUC 0.808) and morphology violations (0.935) but
+is blind to state-jump discontinuities (0.556, chance): it knows the
+arrow of time and the shape of trajectories, and accepts a teleported
+future. Consistently, using $E$ as a planning regularizer fails a fair
+test: the dormant term changes nothing and the active term raises
+violation rates from 78.7\% to 82.4\% across three concordant runs. The
+energy is a classifier, not a regularizer.
+
+\paragraph{Constraints this fixes.}
+Prudence comes from the fan and the z head, not from the energy,
+converging with the uncertainty-regularized MPC of
+\citet{henaff2019mpur}. State continuity must be an explicit term of the
+planning cost, since the energy will not supply it. The judging
+checkpoint is not the forecasting checkpoint and is selected by an early
+probe.
+
+\paragraph{The wall is data.}
+Observational corpora carry no labeled actions and are confounded: a
+model trained on thermostat logs learns that heating turns on when
+temperature drops, and a naive planner cuts the heating to warm the room,
+a failure we measured in miniature on the owned simulator (plans pulled
+toward historical setpoints). The exit is what the synthetic pipeline
+makes cheap: causal generators with labeled interventions
+\citep{cauker2025} grafted onto the corpus machinery. The through-line:
+an unobserved action is a latent variable explaining the future, the $z$
+of \citet{lecun2022path}; the residual-statistics head is its
+deterministic shadow, the action input its declared form.
+
+\paragraph{The claim this aims at.}
+A quantile-fan forecaster whose native output supports chance-constrained
+model-predictive control, zero-shot, on unseen systems, with
+$a=\varnothing$ leaving its benchmarks untouched. Every component (fan,
+gate, judge, refinement machinery, generator pipeline) exists in this
+codebase; the sequence is action FiLM, causal corpus, then the planner
+that is already written.

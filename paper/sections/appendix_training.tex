@@ -1,0 +1,108 @@
+\section{Architecture, training and evaluation details}
+\label{app:training}
+
+\paragraph{Geometry.}
+The geometry bundle (context 1024, native horizon 256, patch 16/8,
+randomization at fine-tuning) came from a dedicated round that improved a
+seven-dataset average MASE from 1.365 to 1.159 and flattened the context
+sweep (512 to 1280 within 5\%, against 33\% before). Randomization is per
+batch, keeping tensors rectangular with no masking; validation always
+uses native geometry so losses stay comparable.
+
+\paragraph{Encoder, target, predictor.}
+Three pre-norm blocks \citep{xiong2020preln} with RoPE \citep{su2024rope},
+4 heads, feed-forward 512; the target encoder is an EMA copy on the
+BYOL/MoCo~v3 cosine schedule, $\tau: 0.996 \to 1$
+\citep{grill2020byol,chen2021mocov3}. The predictor concatenates 127
+context embeddings with 31 learned future queries; the query table is
+deliberately oversized because slicing past a table's size silently
+returns fewer rows, a failure that once corrupted every horizon above 136
+steps with valid shapes throughout (Appendix~\ref{app:pitfalls}).
+Horizon extension at fine-tuning grows the table by merging trained rows.
+An optional zero-initialized FiLM conditions the queries on a scalar,
+built for cross-resolution training and reusable for action conditioning.
+
+\paragraph{Anti-collapse and two lessons.}
+SIGReg \citep{balestriero2025lejepa} at $\lambda{=}1$ (16 random 1-D
+projections toward Gaussian); a VICReg arm was indistinguishable (1.193
+vs 1.183 average MASE). Two implementation lessons cost real results:
+variance statistics must be computed per patch position, not pooled
+(pooled variance 0.9990 against per-position 0.0000, positional diversity
+masking true collapse at fixed positions), and a regularizer computed on
+a detached tensor contributes zero gradient while inflating the reported
+loss.
+
+\paragraph{Optimization budgets are measurements.}
+The $3\times10^{-4}$ ceiling: at higher rates the online encoder outruns
+the EMA teacher and latent targets drift. A cosine calibrated for 40
+epochs never decays in 3 (the run oscillated and its best checkpoint was
+a noise trough); the full corpus is exhausted in about one epoch, after
+which validation rises. Collapse monitoring (per-position std, effective
+rank) must be calibrated per corpus: rank at initialization is 3.7--4.8
+on a 24-dataset corpus and 43--87 on LOTSA.
+
+\paragraph{Comonotone fan rollout.}
+Feeding back the median beyond the native horizon has a measured bias:
+the median path is smoother than any trajectory, so intervals shrink with
+depth (a 10--90 band of width 0.267 at h720 against a truth growing like
+$\sqrt{h}$). We propagate all nine levels, copy $k$ continuing from its
+own level $k$; the marginal fan is the per-step sort. The assumption,
+stated honestly, is perfect rank dependence across rolls. Deterministic,
+no sampling, and it moved the average fan gain at h720 from $-4\%$ to
+$-16\%$ WQL with band widths finally increasing in depth.
+
+\paragraph{The h512 arm.}
+A native h512 fine-tune (grown query table, same pretrain) plateaus at
+\gpair{0.892}{0.612} with flip. Its deficit decomposes mechanically: the
+1536-step training window drops the decimated 10-minute block and the
+padded short-series block from the fine-tuning corpus, costing $+11.1\%$
+on the 21 affected configurations, while unaffected multi-rollout
+configurations improve by 1.7\% relative to single-roll ones
+(Section~\ref{sec:objective}). Its 40\% checkpoint is the best-calibrated
+of the project, empirical 80\% coverage of exactly 0.800 (0.102/0.901 at
+the nominal 0.1/0.9), plausibly because horizon-randomized fine-tuning up
+to 512 steps teaches the head to calibrate across horizons.
+
+\paragraph{Reranker pool design.}
+The propose-judge-reweight pipeline pools the proposer's clean path and
+jittered variants, seasonal naive as an alternative center, and $K$
+bootstrap candidates, softmaxing standardized energies into weights.
+Two measurements fixed the design. Bootstrapping \emph{raw history}
+centers candidates on the past, and every gram of weight they receive
+pulls the weighted median off the proposer's trend whenever the proposer
+is right: this dilution signature replicated four times, on the same two
+datasets, across three different proposers and two judges. The fix
+bootstraps seasonal innovations $y_t - y_{t-m}$ and re-attaches the
+blocks to the proposer's path, so every candidate shares the proposer's
+center and dilution of the center is impossible by construction;
+registered predictions (both dilution datasets recover, all four wins
+keep their margins) held. Separately, a proposer-paths-only pool
+degenerates because a point forecaster contracts input jitter:
+near-identical candidates give near-identical energies, and dividing by
+a tiny energy standard deviation turns the softmax into a noise
+amplifier that dumps mass on anchor candidates (measured as localized
+disasters on daily and weekly configurations where a linear drift
+anchor diverges, and an 80\% coverage of 0.206). Energies below a
+variance floor therefore fall back to uniform weights, and the drift
+anchor left the pool. Candidate refinement by gradient descent on $E$
+repairs the envelope of uncentered pools (replicated) but is null to
+slightly harmful on centered ones: refinement and centering are
+substitutes, and the pipeline uses centering alone. Judging power also
+scales with capacity faster than forecasting: a $\times 3$ model at 5\%
+of one pretraining epoch already out-judges the fully pretrained small
+model on both the probe (0.211 against 0.233) and the GIFT reranking
+task.
+
+\paragraph{Negative results, expanded.}
+The weight soup's damage is localized (one weekly configuration's ratio
+moving from 2.76 to 4.13), the signature of interpolating between
+unaligned solutions. The conformal no-op's gammas,
+$\gamma \approx [1.01, \dots, 1.12, \dots, 1.03]$ calibrated strictly on
+held-out training data, show the fan already conformally calibrated in
+distribution, which relocates the observed zero-shot under-coverage to
+distribution shift, precisely the conditional problem the z gate
+addresses. Long context taken at inference alone collapses hourly
+configurations (unseen patch counts) even though two high-frequency
+blocks improve dramatically; long context must be bought at training
+time. Test-time translation loses more to staleness than it gains in
+phase decorrelation.

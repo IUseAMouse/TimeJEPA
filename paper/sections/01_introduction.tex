@@ -1,50 +1,73 @@
 \section{Introduction}
 \label{sec:intro}
 
-This paper reports a model and the fate of the idea behind it. Both matter.
+We tested latent extrapolation as a pretraining objective for
+forecasting; at equal corpus and budget it is indistinguishable from
+reconstruction (Section~\ref{sec:objective}). Given the current interest
+in JEPA for time series \citep{lecun2022path,assran2023ijepa}, we state
+this plainly, and report what the project delivers instead
+(Figure~\ref{fig:claims}):
 
-The idea: in I-JEPA \citep{assran2023ijepa} the predictor is scaffolding,
-discarded after pretraining. TimeJEPA inverts that. The predictor
-extrapolates the future in latent space and is kept as the inference organ;
-the decoder is a reading head. The bet, registered before any measurement:
-latent extrapolation is the right pretraining task for a forecaster.
-Forecasting is generation, not infilling, the causal/masked split of
-language modeling \citep{radford2018gpt,devlin2019bert}; the irreducibly
-unpredictable share of a series' future is enormous, and a latent loss lets
-the EMA target encoder absorb it \citep{lecun2022path}; transfer should be
-clean.
+\begin{itemize}
+\item \textbf{A competitive small foundation model, from data alone.}
+One 1.14M checkpoint, one configuration, all 97 GIFT-Eval configurations
+zero-shot: \gpair{0.863}{0.596} with flip TTA (\gpair{0.895}{0.624}
+plain). Every accuracy step traces to corpus composition or inference
+protocol; none to the objective (Section~\ref{sec:results}).
+\item \textbf{The frozen latent is a judge.} Its implicit energy ranks
+true futures far above chance and, as a zero-training reranker, turns
+TTM-R3 \citep{ekambaram2024ttm} into a probabilistic forecaster that
+beats its own WQL on 6/6 held-out datasets and its point CRPS by 7\%
+across GIFT (Section~\ref{sec:judge}).
+\item \textbf{Four latent dimensions carry the calibration.} A residual
+statistics head, gated into the quantile decoder, is load-bearing for
+the predictive distribution: gate off costs $+18.7$ CRPS points with
+MASE bit-identical, and what it buys the full model is nominal coverage
+at equal accuracy (Section~\ref{sec:esjepa}).
+\end{itemize}
 
-We tested the bet the way we tested everything: paired runs, one variable
-each, numeric predictions written into a dated log before results. The bet
-lost. At equal corpus and budget, latent extrapolation and reconstruction
-differ by 1.4\%, and reconstruction wins most paired cells
-(Section~\ref{sec:objective}). A monotone long-horizon advantage did appear
-on GIFT-Eval (+0.8/+3.1/+6.6\% over short/medium/long), then a per-step
-analysis killed the obvious reading: within a window the advantage
-\emph{shrinks} with depth (slope $-1.64\%$ per 100 steps, CI excluding
-zero). What survives is narrower and unconfirmed: the latent objective may
-degrade less under iteration on its own outputs.
+Three properties frame every number: one checkpoint and one
+configuration for all 97 configurations (the TTM family, among others,
+publishes per-regime variants; we do not); nothing tuned or selected on
+GIFT-Eval data; three RTX~3090s end to end, with predictions registered
+in a dated log before each run and negatives reported as results
+(Section~\ref{sec:negative}).
 
-What moved the numbers instead was data. The full trajectory from
-\gpair{0.979}{0.677} to \gpair{0.863}{0.596} (Figure~\ref{fig:progression})
-decomposes into protocol, geometry, corpus, normalization, synthetic data,
-batch rationing, checkpoint selection, and one test-time symmetry. The
-pretraining objective contributed nothing measurable. The field is currently
-excited about JEPA for time series; our evidence says that as a way to make
-a small model forecast better, it is not where the leverage is.
-
-The latent earns its keep elsewhere. A pretrained JEPA is implicitly an
-energy over (context, future) pairs, and that energy is a competent
-\emph{judge}: it ranks true futures far above chance, improves TTM-R3 on
-five of six datasets as a frozen zero-training reranker, and a
-4-dimensional latent trained to predict residual statistics carries the
-entire calibration of the quantile fan, an 18.7-point CRPS ablation with
-the median invariant by construction (Section~\ref{sec:judge}). One
-sentence summarizes twenty experiments: \emph{the corpus makes the
-forecast; the latent makes the judge.}
-
-Three evaluation properties frame every number. One checkpoint and one
-configuration serve all 97 GIFT-Eval configurations; no per-regime variants
-(the TTM family publishes several). Nothing is tuned, calibrated or
-selected on GIFT-Eval data. The compute budget is three RTX~3090s; every
-experiment here is re-runnable by one person on one machine.
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  key/.style={font=\normalsize\scshape, align=center},
+  sub/.style={font=\scriptsize, text=gray, align=center},
+  big/.style={font=\Large\bfseries, align=center},
+  res/.style={font=\scriptsize, align=center},
+  arr/.style={-{Stealth[length=3mm]}, line width=1.4pt},
+  verb/.style={font=\small\itshape, above=1pt}]
+% claim 1
+\node[key] (c) at (0,0) {corpus};
+\node[sub, below=0mm of c] {54\% synthetic, rationed};
+\node[big] (f) at (5.0,0) {0.596};
+\node[res, below=0mm of f] {CRPS at 1.1M params, 3 GPUs};
+\draw[arr] ($(c.east)+(2mm,0)$) -- node[verb]{makes the forecast} ($(f.west)+(-2mm,0)$);
+% claim 2
+\node[key] (l) at (8.6,0) {frozen latent};
+\node[sub, below=0mm of l] {pretrain only, no training};
+\node[big] (j) at (14.2,0) {6/6};
+\node[res, below=0mm of j] {TTM $\times$ judge WQL, $+7\%$ GIFT};
+\draw[arr] ($(l.east)+(2mm,0)$) -- node[verb]{judges futures} ($(j.west)+(-2mm,0)$);
+% claim 3
+\node[key, text=red!60!black] (z) at (2.0,-1.7) {z gate};
+\node[sub, below=0mm of z] {4 latent dims, zero-init};
+\node[big] (k) at (8.2,-1.7) {$+18.7$};
+\node[res, below=0mm of k] {CRPS if disabled, median bit-identical};
+\draw[arr, red!60!black] ($(z.east)+(2mm,0)$) --
+  node[verb]{carries the calibration} ($(k.west)+(-2mm,0)$);
+\end{tikzpicture}
+\caption{The three claims in three numbers. Data composition, not the
+pretraining objective, makes the forecast (Sections~\ref{sec:results},
+\ref{sec:objective}); the frozen latent upgrades an external
+state-of-the-art point forecaster (Section~\ref{sec:judge}); four
+predicted residual dimensions carry the entire calibration of the fan
+(Section~\ref{sec:esjepa}, Figure~\ref{fig:gatefan}).}
+\label{fig:claims}
+\end{figure*}

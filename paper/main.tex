@@ -1,19 +1,20 @@
-% TimeJEPA technical report.
-% Build: make  (tectonic, or pdflatex+bibtex chain)
+% TimeJEPA - v4 structure (review round 3): two-column, 8-9 pages main,
+% three-claims figure, show-don't-tell.
 %
 % House rules (do not violate when editing):
 %   * no em-dashes anywhere
 %   * every GIFT-Eval aggregate appears both plain and with flip TTA
 %   * every claim points to its experiment; negative results stay in
-%   * tell less, show more: prefer a table or figure over a paragraph
-%   * grep PENDING to find spots awaiting running results
-\documentclass[11pt,a4paper]{article}
+%   * main body: only numbers that change the conclusion; the rest -> appendix
+%   * never write a sentence that repeats what a table already shows
+%   * grep PENDING (in comments) to find spots awaiting running results
+\documentclass[10pt,twocolumn]{article}
 
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
 \usepackage{microtype}
-\usepackage[margin=2.6cm]{geometry}
+\usepackage[margin=2.0cm,columnsep=0.8cm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
@@ -22,10 +23,13 @@
 \usetikzlibrary{positioning,arrows.meta,fit,calc}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.17}
+\usepackage{amsthm}
 \usepackage[numbers,sort&compress]{natbib}
 \usepackage[hidelinks]{hyperref}
 
-\newcommand{\pending}[1]{\textcolor{gray}{[pending: #1]}}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+
 % GIFT-Eval aggregate pair: MASE ratio / CRPS ratio vs seasonal naive
 \newcommand{\gpair}[2]{#1\,/\,#2}
 
@@ -33,45 +37,48 @@
 \author{Yvann Vincent\\
 EFREI Paris\\
 \texttt{yvann.vincent@gmail.com}}
-\date{August 2026 \\ \small Working draft, updated as experiments complete.}
+\date{August 2026 \\ \small Working draft.}
 
 \begin{document}
-\maketitle
 
+\twocolumn[
+\maketitle
 \begin{abstract}
+\noindent
 TimeJEPA is a 1.14M-parameter univariate forecaster pretrained with a
-joint-embedding predictive architecture (JEPA) and evaluated zero-shot on
-all 97 GIFT-Eval configurations with one checkpoint, one configuration, and
-no adaptation of any kind. It reaches \gpair{0.863}{0.596} (MASE/CRPS
-geometric-mean ratios vs seasonal naive, with sign-flip test-time
-augmentation; \gpair{0.895}{0.624} without), between Moirai-large (311M) and
-Moirai-base (91M) on the CRPS ranking, trained on three RTX~3090s. The
-project's founding bet was that latent extrapolation is the right
-pretraining objective for long-horizon forecasting. We pre-registered
-predictions, ran the paired ablations, and the bet lost: the latent
-objective is indistinguishable from reconstruction at equal budget, and its
-apparent long-horizon advantage lives at rollout boundaries, not within the
-window. Two things won instead. The corpus: every accuracy jump traces to
-data composition, not to the objective. And the latent as a \emph{judge}:
-the frozen pretrained energy ranks true futures far above chance, improves
-TTM-R3 on five of six datasets as a zero-training reranker, and a
-4-dimensional residual-statistics latent, gated into the quantile head,
-carries the entire calibration of the forecast distribution (switching it
-off costs 18.7 CRPS points; the median is invariant by construction). The
-corpus makes the forecast; the latent makes the judge. All numbers trace to
-a dated, pre-registered experimental log.
+joint embedding predictive architecture (JEPA), evaluated zero-shot on
+all 97 GIFT-Eval configurations with one checkpoint, one configuration
+and no per-dataset adaptation, and trained on three consumer GPUs. It
+reaches \gpair{0.863}{0.596} (MASE/CRPS ratios vs seasonal naive with
+sign-flip TTA; \gpair{0.895}{0.624} without), between Moirai-large
+(311M) and Moirai-base (91M) on CRPS. Three claims, each carried by
+paired, pre-registered experiments. (1) The accuracy comes from corpus
+composition and inference protocol: a one-variable ablation finds latent
+extrapolation indistinguishable from reconstruction, and a per-step
+analysis refutes its apparent long-horizon advantage. (2) The frozen
+JEPA latent is nonetheless a competent judge of candidate futures: as a
+zero-training reranker it turns TTM-R3 into a probabilistic forecaster
+that beats its own weighted quantile loss on 6/6 held-out datasets and
+beats its point CRPS by 7\% over all 97 GIFT configurations on paired
+windows. (3) Four latent dimensions of predicted residual statistics
+carry the calibration of the forecast distribution: disabling their
+gate costs 18.7 CRPS points at a bit-identical median, and the
+counterfactual trained without them matches the champion's CRPS, so
+what the latent buys is nominal coverage at equal accuracy.
+The corpus makes the forecast; the latent makes the judge. Clean
+negative results are reported as results.
 \end{abstract}
+\vspace{1.2em}
+]
 
 \input{sections/01_introduction}
 \input{sections/02_related}
 \input{sections/03_architecture}
-\input{sections/04_objective}
 \input{sections/05_corpus}
-\input{sections/06_protocol}
 \input{sections/07_results}
+\input{sections/04_objective}
 \input{sections/08_judge}
 \input{sections/09_negative}
-\input{sections/10_worldmodel}
 \input{sections/11_limitations}
 \input{sections/12_reproducibility}
 
@@ -79,6 +86,10 @@ a dated, pre-registered experimental log.
 \bibliography{refs}
 
 \appendix
+\onecolumn
+\input{sections/appendix_corpus}
+\input{sections/appendix_training}
 \input{sections/appendix_pitfalls}
+\input{sections/appendix_worldmodel}
 
 \end{document}
