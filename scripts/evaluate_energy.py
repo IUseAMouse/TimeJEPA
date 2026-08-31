@@ -82,7 +82,8 @@ DEFAULT_DATASETS = ["ettm1", "ettm2", "etth1", "etth2", "weather", "exchange"]
 def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
                        m: int, K: int, rng, device,
                        extra_cands: np.ndarray = None,
-                       refine_steps: int = 0, refine_lr: float = 0.05):
+                       refine_steps: int = 0, refine_lr: float = 0.05,
+                       h_judge: int = None, centered: bool = False):
     """
     Construit le pool de candidats et calcule leurs énergies -> (cands, e).
 
@@ -92,6 +93,17 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
     de l'enveloppe historique, ce que le bootstrap ne sait pas — l'échec
     exchange d'E18d), le pretrain juge (son alignement énergie est intact,
     E18b). Deux checkpoints d'une même lignée en tandem, aucun modèle nouveau.
+
+    h_judge : fenêtre de jugement (bug G12-sur-GIFT, 2026-08-31). La lecture
+    énergie est SINGLE-SHOT par construction (ẑ = num_target_patches, h natif
+    256) ; sur GIFT, h va de 6 à 720. Quand h_judge est fourni, l'énergie est
+    calculée sur les h_judge PREMIERS pas de chaque candidat (les candidats
+    retournés restent pleine longueur pour la lecture des quantiles). Lecture
+    honnête : la diversité des chemins TTM naît au premier segment (jitter
+    premier segment seulement), donc juger le début capture leur écart ; pour
+    h < patch_size, le candidat est paddé au bord POUR L'ENCODAGE SEUL (la
+    transformation étant ponctuelle, padder après normalisation = normaliser
+    le paddé). None = comportement bit-identique à l'existant (Nixtla, h=96).
     """
     drift = ctx[-1] + (ctx[-1] - ctx[max(0, len(ctx) - m - 1)]) / max(m, 1) \
         * np.arange(1, h + 1, dtype=np.float32)
@@ -99,10 +111,31 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
     # Deux échelles de blocs : la saisonnalité entière (structure de cycle) et
     # un sous-bloc (textures locales) — diversifie le pool sans rien apprendre.
     blocks = [max(8, min(m, h)), max(8, min(m, h) // 3)]
-    pool = [sn, drift] + [block_bootstrap(history, h, blocks[i % 2], rng)
-                          for i in range(K)]
-    if extra_cands is not None:
-        pool += [c.astype(np.float32) for c in extra_cands]
+    if centered and extra_cands is not None:
+        # G12c (2026-08-31) — bootstrap CENTRÉ SUR LE PROPOSEUR. Le diagnostic
+        # de la dilution (4 réplications) est un problème de CENTRE, pas
+        # d'étalement : un bootstrap de l'historique brut est centré sur le
+        # PASSÉ, et chaque gramme de poids qu'il reçoit tire la médiane
+        # pondérée hors de la tendance du proposeur. Ici : candidats = chemin
+        # propre du proposeur + blocs rééchantillonnés des INNOVATIONS
+        # saisonnières (y_t − y_{t−m}) — tous les candidats partagent le
+        # centre, la dilution du centre est impossible PAR CONSTRUCTION, et le
+        # juge n'arbitre que ce qu'un vérificateur doit toucher : texture et
+        # étalement. Le drift (l'ancre qui a empoisonné le run ttmonly sur les
+        # configs D/W) sort du pool ; sn reste comme centre alternatif légitime.
+        center = extra_cands[0].astype(np.float32)
+        if len(history) > m:
+            resid = (history[m:] - history[:-m]).astype(np.float32)
+        else:
+            resid = np.diff(history).astype(np.float32)
+        pool = [sn] + [c.astype(np.float32) for c in extra_cands] \
+            + [center + block_bootstrap(resid, h, blocks[i % 2], rng)
+               for i in range(K)]
+    else:
+        pool = [sn, drift] + [block_bootstrap(history, h, blocks[i % 2], rng)
+                              for i in range(K)]
+        if extra_cands is not None:
+            pool += [c.astype(np.float32) for c in extra_cands]
     cands = np.stack(pool)
 
     x_ctx = torch.from_numpy(ctx).reshape(1, -1, 1).to(device)
@@ -115,7 +148,17 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
     ctx_norm = model.revin(x_ctx, mode='norm') if model.revin is not None else x_ctx
     xc_norm = (xc - model.revin.mean) / model.revin.std if model.revin is not None else xc
 
-    n_tgt = (h - model.patching.patch_size) // model.patching.stride + 1
+    # Fenêtre de jugement : l'énergie se calcule sur les hj premiers pas
+    # (padde au bord si plus court qu'un patch) ; cands (pleine longueur)
+    # porte la lecture des quantiles. La tranche elle-même est prise APRÈS le
+    # bloc refine (qui réassigne xc_norm).
+    hj = h if h_judge is None else min(h_judge, h)
+    if refine_steps > 0 and hj < h:
+        raise ValueError("refine_steps avec h_judge < h raffinerait des "
+                         "candidats via une énergie tronquée — non défini.")
+    P = model.patching.patch_size
+    hj_enc = max(hj, P)
+    n_tgt = (hj_enc - P) // model.patching.stride + 1
     ctx_emb = model.online_encoder(model.patching(ctx_norm))
     z_pred = model.predictor.forward_simple(
         context_embeddings=ctx_emb, num_targets=model.num_target_patches,
@@ -150,7 +193,11 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
             raw = model.robust_scaler.inverse(raw)
         cands = raw[..., 0].cpu().numpy()
 
-    full = torch.cat([ctx_norm.expand(xc_norm.shape[0], -1, -1), xc_norm], dim=1)
+    xc_judge = xc_norm[:, :hj]
+    if hj < P:
+        xc_judge = torch.cat(
+            [xc_judge, xc_judge[:, -1:].expand(-1, P - hj, -1)], dim=1)
+    full = torch.cat([ctx_norm.expand(xc_judge.shape[0], -1, -1), xc_judge], dim=1)
     z_cand = model.online_encoder(model.patching(full))[:, -n_tgt:, :]
     e = 1.0 - torch.nn.functional.cosine_similarity(
         z_cand.flatten(1), z_pred.expand_as(z_cand).flatten(1), dim=1)
@@ -166,8 +213,16 @@ def fan_from_energies(cands: np.ndarray, e: np.ndarray,
     les meilleurs candidats — le remède à la dilution mesurée trois fois
     (E18e / e-v2 / g, toujours weather+exchange) ; T grand = pool ~uniforme.
     """
-    z = (e - e.mean()) / max(e.std(), 1e-8)
-    w = np.exp(-z / max(temperature, 1e-3)); w /= w.sum()
+    # Garde de dégénérescence (mesuré, run ttmonly 2026-08-31) : un pool de
+    # candidats quasi identiques donne des énergies quasi identiques, et la
+    # division par un std minuscule transforme le softmax en amplificateur de
+    # bruit (masse posée sur une ancre arbitraire — ett1/D MASE 1.63→5.29).
+    # Sous le seuil, l'information d'énergie est du bruit : poids uniformes.
+    if e.std() < 1e-4:
+        w = np.full(len(e), 1.0 / len(e))
+    else:
+        z = (e - e.mean()) / e.std()
+        w = np.exp(-z / max(temperature, 1e-3)); w /= w.sum()
 
     h = cands.shape[1]
     fan = np.empty((h, len(QUANTILE_LEVELS)), dtype=np.float32)
@@ -184,11 +239,12 @@ def fan_from_energies(cands: np.ndarray, e: np.ndarray,
 @torch.no_grad()
 def energy_readout(model, ctx, history, h, m, K, rng, device,
                    extra_cands=None, refine_steps=0, refine_lr=0.05,
-                   temperature: float = 1.0) -> np.ndarray:
+                   temperature: float = 1.0, centered: bool = False) -> np.ndarray:
     """Le pipeline complet : pool + énergies + lecture pondérée à T donné."""
     cands, e = candidate_energies(model, ctx, history, h, m, K, rng, device,
                                   extra_cands=extra_cands,
-                                  refine_steps=refine_steps, refine_lr=refine_lr)
+                                  refine_steps=refine_steps, refine_lr=refine_lr,
+                                  centered=centered)
     return fan_from_energies(cands, e, temperature)
 
 
@@ -204,7 +260,7 @@ def pinball_np(fan: np.ndarray, target: np.ndarray) -> float:
 @torch.no_grad()
 def calibrate_temperature(model, ctx: np.ndarray, h: int, m: int, K: int,
                           device, n_cal: int = 2, proposer_fn=None,
-                          seed: int = 1000) -> float:
+                          seed: int = 1000, centered: bool = False) -> float:
     """
     Calibration de T EN CONTEXTE — le prérequis G12(a), et le levier désigné
     par trois réplications de la signature de dilution. On rejoue le pipeline
@@ -226,7 +282,8 @@ def calibrate_temperature(model, ctx: np.ndarray, h: int, m: int, K: int,
             continue
         extra = proposer_fn(sub_ctx) if proposer_fn is not None else None
         cands, e = candidate_energies(model, sub_ctx, sub_ctx, h, m, K, rng,
-                                      device, extra_cands=extra)
+                                      device, extra_cands=extra,
+                                      centered=centered)
         for T in T_GRID:
             scores[T].append(pinball_np(fan_from_energies(cands, e, T), known))
     valid = {T: sum(v) / len(v) for T, v in scores.items() if v}
@@ -328,6 +385,11 @@ def main():
     ap.add_argument("--calibrate-T", action="store_true",
                     help="calibre T par série sur des sous-fenêtres du contexte (G12a)")
     ap.add_argument("--cal-windows", type=int, default=2)
+    ap.add_argument("--centered-bootstrap", action="store_true",
+                    help="G12c : pool hybrid_ttm centré sur le proposeur — "
+                         "bootstrap des innovations saisonnières RECOLLÉ sur "
+                         "le chemin TTM (anti-dilution par construction), "
+                         "drift hors du pool")
     ap.add_argument("--ttm-jitter", type=int, default=4,
                     help="contextes jitterés par fenêtre pour diversifier TTM")
     ap.add_argument("--max-windows", type=int, default=40, help="par série")
@@ -387,6 +449,7 @@ def main():
                         T["hybrid_ttm"] = calibrate_temperature(
                             model, c0, h, m, args.candidates, device,
                             n_cal=args.cal_windows, seed=args.seed + 1000,
+                            centered=args.centered_bootstrap,
                             proposer_fn=lambda sc: ttm.paths(sc, h, args.ttm_jitter,
                                                              np.random.default_rng(args.seed + 2000)))
                     T["hybrid"] = T["energy"]
@@ -431,7 +494,8 @@ def main():
                         model, ctx, ctx, h, m, args.candidates, rng, device,
                         extra_cands=tp,
                         refine_steps=args.refine_steps, refine_lr=args.refine_lr,
-                        temperature=T["hybrid_ttm"]))
+                        temperature=T["hybrid_ttm"],
+                        centered=args.centered_bootstrap))
                 for r in acc:
                     acc[r]["tgt"].append(tgt); acc[r]["ctx"].append(ctx)
 

@@ -92,18 +92,28 @@ our decoder (fine-tuned) & 0.92 & 0.74 & 0.70 & 0.92 & \textbf{0.76} & \textbf{0
 decoder proposes, judge weighs & 0.95 & 0.75 & \textbf{0.68} & \textbf{0.91} & 0.82 & 0.90 \\
 \midrule
 TTM-R3 alone \citep{ekambaram2024ttm} & 0.86 & 0.79 & 0.85 & 0.95 & \textbf{0.70} & \textbf{0.88} \\
-TTM proposes, our judge weighs & \textbf{0.84} & \textbf{0.74} & \textbf{0.72} & \textbf{0.88} & 0.85 & 0.97 $\to$ 0.94 \\
+TTM proposes, our judge weighs & \textbf{0.84} & \textbf{0.74} & \textbf{0.72} & \textbf{0.88} & 0.85 & 0.97 \\
+\midrule
+TTM-R3 alone (v3-judge run) & 0.88 & 0.81 & 0.85 & 0.95 & \textbf{0.63} & 0.88 \\
+\quad + judge, proposer-centered pool & \textbf{0.77} & \textbf{0.72} & \textbf{0.71} & \textbf{0.78} & 0.64 & \textbf{0.78} \\
 \bottomrule
 \end{tabular}
 \caption{Propose-judge-reweight, WQL ratios vs seasonal naive (lower is
-better; bold marks the winner within each block). A frozen 1M-parameter
-pretrain improves TTM-R3, the strongest sub-10M model on GIFT-Eval, on 4/6
-datasets; gradient refinement of candidates recovers part of a fifth
-(exchange, 0.97 to 0.94; TTM 0.88). The failure mode is
-\emph{dilution}, replicated three times on the same two datasets with three
-different proposers: when the proposer is already excellent, bootstrap
-candidates can only dilute it. Next lever: per-source priors, not a global
-temperature.}
+better; bold marks the winner within each block). Middle block: the
+original pool (raw history bootstraps), where a frozen 1M pretrain improves
+TTM-R3, the strongest sub-10M model on GIFT-Eval, on 4/6 datasets, with
+\emph{dilution} on the other two, a signature that replicated four times:
+when the proposer is already excellent, history-centered bootstrap
+candidates pull the weighted median toward the past. Bottom block: the fix,
+registered with numeric predictions before the run. Bootstrapping seasonal
+innovations and re-attaching the blocks onto the proposer's own path makes
+every candidate share the proposer's center, so center dilution is
+impossible by construction; the drift anchor leaves the pool, and a
+degeneracy guard returns uniform weights when energies carry no signal. The
+hybrid then beats or ties TTM on 6/6 (weather within one point), exchange
+swinging from a 20-point loss to a 10-point win with its point forecast
+restored. Judges from two unrelated pretraining lineages replicate the
+uplift.}
 \label{tab:hybrid}
 \end{table}
 
@@ -111,16 +121,46 @@ Three mechanisms behind the table. The bootstrap's failure is its envelope
 (it recombines the past; exchange trends out of it), which the decoder
 repairs as proposer. Candidate refinement by a few gradient steps on $E$
 (planning by backprop, small step count as a Goodhart guard) adds 1--2\%
-where the envelope binds and never degraded anything. And the deliverable
+where the envelope binds; on the centered pool below, where no envelope
+binds, we measured it null on five datasets and slightly harmful on the
+trending sixth, so refinement and centering are substitutes, not
+complements, and the official pipeline uses centering alone. And the deliverable
 is \emph{uplift over the proposer}: a verifier for forecasts, not a
 competing forecaster. Generation is hard, verification is easy; a frozen
 judge that improves a state-of-the-art proposer with zero dedicated
 training is, to our knowledge, a novel use of a JEPA latent in time
-series. A GIFT-Eval version of this harness is built and smoke-tested
-(TTM proposes on the official windows, coverage instrumented; a paper
-experiment, outside our official single-model numbers).
-\pending{hybrid-ttm: paired GIFT results; TTM-alone validation vs the
-official CSV; coverage prediction 0.70--0.80.}
+series.
+
+\paragraph{Killing the dilution was a matter of center, not of weighting.}
+The dilution signature survived a scalar temperature, a calibrated
+temperature, and three proposer changes; it died the day the candidates
+changed \emph{center}. A history bootstrap is centered on the past, so
+every gram of weight it receives pulls the weighted median away from the
+proposer's trend. The fix in the bottom block of Table~\ref{tab:hybrid}
+bootstraps seasonal innovations $y_t - y_{t-m}$ and re-attaches the blocks
+to the proposer's path: spread without a competing center. Registered
+predictions held on both counts (the two dilution datasets recover; the
+four wins keep or grow their margins), and one safety property survives by
+design: seasonal naive stays in the pool as an alternative center, and in
+a controlled test with a deliberately biased proposer the judge moves its
+mass there, three standard deviations of preference. A verifier that can
+fire its proposer is worth having.
+
+Two negative measurements bound the claim. Transplanting the pipeline
+naively onto the GIFT windows failed, mechanistically: a TTM-paths-only
+pool collapses because TTM contracts input jitter (near-identical paths,
+fan degenerating to a point, 80\% coverage 0.206), and near-identical
+energies turn the standardized softmax into a noise amplifier that dumps
+mass on anchor candidates, with localized disasters exactly on the daily
+and weekly configurations where a linear drift anchor diverges. Both
+mechanisms are now guarded (the drift anchor left the pool, degenerate
+energies fall back to uniform weights), and the centered pool is the
+registered candidate for a GIFT rerun; until measured there, the claim
+stays protocol-scoped to single-shot horizons. The TTM-alone GIFT column
+doubles as harness validation (MASE ratio 0.765 on capped windows against
+the official 0.724), and one side finding: TTM emits NaN on 100\% of two
+sparse count configurations (hierarchical\_sales and restaurant, daily)
+where our own model runs unaided.
 
 \subsection{ESJEPA: predict the statistics of what cannot be predicted}
 \label{sec:esjepa}

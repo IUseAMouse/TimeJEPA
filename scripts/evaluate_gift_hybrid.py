@@ -84,7 +84,7 @@ def ttm_rollout(prop: TTMProposer, ctx: np.ndarray, h: int,
 
 
 def evaluate_config(config, judge, prop, gift_root, device, rng,
-                    max_inst, K, n_jitter):
+                    max_inst, K, n_jitter, centered=False):
     h = gift.prediction_length(config)
     m = gift.seasonality(config.split("/")[1])
     series = gift.load_series(gift_root, config)
@@ -95,7 +95,7 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
 
     accs = {r: gift.MetricAccumulator() for r in ("ttm", "hybrid_ttm")}
     sn_acc = gift.MetricAccumulator()
-    n_used = 0
+    n_used, n_ttm_nonfinite = 0, 0
     for i, inst in enumerate(gift.iter_test_instances(series, h, windows)):
         if i % stride or n_used >= max_inst:
             continue
@@ -108,10 +108,21 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
         scale = gift.seasonal_error(inst.context, m)
 
         tp = ttm_rollout(prop, inst.context.astype(np.float32), h, n_jitter, rng)
+        # TTM émet des NaN sur certains contextes extrêmes (variance ~0,
+        # bitbrains) : chemin propre non fini -> instance sautée pour les DEUX
+        # readers (l'appariement prime) ; jitters non finis simplement écartés.
+        if not np.isfinite(tp[0]).all():
+            n_ttm_nonfinite += 1
+            continue
+        tp = tp[np.isfinite(tp).all(axis=1)]
         accs["ttm"].add(inst.target, tp[0], None, scale)      # chemin propre, point
 
+        # h_judge : l'énergie se lit sur les premiers pas <= horizon natif du
+        # juge (single-shot par construction) ; les quantiles sur h complet.
         cands, e = candidate_energies(judge, ctx, inst.context, h, m, K,
-                                      rng, device, extra_cands=tp)
+                                      rng, device, extra_cands=tp,
+                                      h_judge=judge.prediction_length,
+                                      centered=centered)
         fan = fan_from_energies(cands, e)                     # [h, 9]
         accs["hybrid_ttm"].add(inst.target, fan[:, 4], fan, scale)
 
@@ -120,6 +131,7 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
         n_used += 1
 
     out = {"config": config, "h": h, "n_instances": n_used,
+           "n_ttm_nonfinite_skipped": n_ttm_nonfinite,
            "seasonal_naive_local": sn_acc.result()}
     for r, acc in accs.items():
         out[r] = acc.result()
@@ -139,6 +151,13 @@ def main():
                     help="sous-ensemble GIFT 'a/b/c,d/e/f' (défaut : les 97)")
     ap.add_argument("--gift-root", default="data/gift_eval")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--centered-bootstrap", action="store_true",
+                    help="G12c : bootstrap des innovations saisonnières recollé "
+                         "sur le chemin TTM (anti-dilution par construction)")
+    ap.add_argument("--tag", default=None,
+                    help="suffixe du répertoire de sortie — OBLIGATOIRE pour "
+                         "une variante de pool (sinon collision de marqueurs "
+                         "avec le run de base du même juge)")
     args = ap.parse_args()
 
     config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
@@ -154,7 +173,8 @@ def main():
                else list(gift.GIFT_CONFIGS))
     rng = np.random.default_rng(args.seed)
     out_dir = (Path("evaluation") / "gift_hybrid"
-               / Path(args.judge_checkpoint).stem)
+               / (Path(args.judge_checkpoint).stem
+                  + (f"_{args.tag}" if args.tag else "")))
     (out_dir / "per_config").mkdir(parents=True, exist_ok=True)
 
     results = {}
@@ -168,7 +188,8 @@ def main():
         try:
             res = evaluate_config(config, judge, prop, Path(args.gift_root),
                                   device, rng, args.instances,
-                                  args.candidates, args.ttm_jitter)
+                                  args.candidates, args.ttm_jitter,
+                                  centered=args.centered_bootstrap)
         except Exception as exc:   # une config cassée ne tue pas les 96 autres
             logger.error(f"[{i}/{len(configs)}] {config} FAILED: "
                          f"{type(exc).__name__}: {exc}")

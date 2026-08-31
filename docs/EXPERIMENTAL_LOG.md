@@ -1919,6 +1919,105 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-31 (raffinement × centrage : SUBSTITUTS, PAS COMPLÉMENTS)** — Run G12c +
+  refine (10 pas, lr 0.5). Prédiction « deltas ≤ 0.01x » tenue sur 5/6 ; la violation est
+  exchange : hybrid centré 0.78 → **0.82** (+4 pts) — le juge sculpte la texture au-delà
+  du centre, et sur une série en tendance il la sculpte MAL (micro-Goodhart mesuré).
+  Dans le MÊME run, le reader energy (pool non centré) réplique E18f en grand : exchange
+  MASE ×1.55 → ×1.11, WQL ×1.36 → ×1.10 — la réparation d'enveloppe existe toujours,
+  le centrage la rend redondante. Verdict : centrage et raffinement sont des SUBSTITUTS ;
+  ligne officielle G12c = centré SANS refine. Décision connexe (question utilisateur) :
+  xres r/r' NI maintenant NI dans mini — mini teste la capacité SEULE (une variable) ;
+  le déclencheur de retour de xres est falsifiable : queue résiduelle per-config encore
+  inter-fréquences après mini. Sinon il reste « designed, never funded » au papier.
+- **2026-08-31 (G12c VERDICT : 6/6, LA DILUTION EST MORTE + verdict h512 intermédiaire)** —
+  Run Nixtla (juge v3, --proposer-ttm --calibrate-T --centered-bootstrap), WQL vs SN
+  ttm/hybrid : ettm1 0.88/0.77 · ettm2 0.81/**0.72** · etth1 0.85/**0.71** · etth2
+  0.95/**0.78** · weather 0.63/0.64 (égalité, ≤1.02× ✓) · exchange 0.88/**0.78** (de
+  1.08 à victoire de 10 pts ; MASE 1.22→0.89 ≈ TTM). **P-G12c.1 ✓ (les deux) ;
+  P-G12c.2 ✓** (3 marges sur 4 AGRANDIES). La signature de dilution, 4 réplications,
+  est éliminée par le centrage — c'était bien un problème de CENTRE. Témoin de
+  cohérence : la calibration T choisit 4.0 sur weather/exchange (pool centré + rien à
+  trancher ⇒ poids flats, plus d'amplification). Claim consolidée : un juge JEPA gelé
+  1.1M transforme TTM-R3 en probabiliste qui bat son WQL sur 6/6, zéro entraînement.
+  **h512 (script de groupes, h512@30 vs h256@50)** : multi-rollout sain **0.995**
+  (n=38) · single-roll sain 1.012 (n=38) · configs amputées **1.111** (n=21).
+  Amputation corpus CONFIRMÉE (+11.1 % sur 10T + A/Q/M/W — bloc décimé 1024/682 et
+  lotsa_short 1280 < fenêtre 1536) ; levier horizon RÉEL mais PETIT (différentiel
+  −1.7 %, le signe d'E20b, l'ampleur d'un non-levier). Recommandation : ne pas
+  réparer l'amputation (~1 pt de gain potentiel pour 1 h de pipeline + un re-run) —
+  le gate mini est rempli par trois faits (corpus résolu, horizon testé et petit,
+  capacité liante). Attendre la fin du run pour le verdict formel.
+- **2026-08-31 (G12c IMPLÉMENTÉ, prédictions gravées avant run)** — `--centered-bootstrap`
+  (evaluate_energy + evaluate_gift_hybrid) : candidats = chemin du proposeur + blocs
+  rééchantillonnés des innovations saisonnières — même centre partout, dilution du centre
+  impossible par construction ; drift hors du pool ; garde std(E)<1e-4 → poids uniformes.
+  Smoke-test notable : proposeur volontairement décalé de +1 ⇒ le juge met sn à z=−3.2
+  (il lâche un proposeur qui a tort — le mécanisme de sécurité espéré, observé).
+  **Prédictions (protocole Nixtla E18g/h, juge v3, --proposer-ttm --calibrate-T
+  --centered-bootstrap) : P-G12c.1** — weather et exchange cessent d'être des défaites
+  (hybrid_ttm WQL ≤ 1.02× TTM sur les deux) ; **P-G12c.2** — les 4 victoires gardent au
+  moins la moitié de leur marge (la texture centrée coûte moins que le bootstrap brut ne
+  rapportait) ; **échec-diagnostic** : si weather dilue ENCORE à pool centré, le résidu
+  n'est pas un problème de centre mais de texture (le juge préfère de mauvaises
+  textures) — et la piste s'arrête là proprement.
+- **2026-08-31 (suite — contre-vérification Nixtla : LE JUGE V3 RÉPLIQUE E18g)** —
+  evaluate_energy.py, protocole d'origine (h=96 single-shot, pool bootstrap K=32 + 4
+  jitters TTM, calibration T en contexte), juge = pretrain v3 final (0.6420). WQL vs SN,
+  ttm / hybrid_ttm : ettm1 0.88/**0.73** · ettm2 0.81/**0.77** · etth1 0.85/**0.73** ·
+  etth2 0.95/**0.83** · weather **0.63**/0.68 · exchange **0.88**/1.08. **4/6, les mêmes
+  quatre victoires qu'E18g, dilution sur les deux mêmes datasets — QUATRIÈME réplication
+  de la signature, avec un juge d'une AUTRE lignée.** Marges gagnantes plus grandes
+  qu'E18g (ettm1 0.73 vs 0.84) ; sur ettm1 l'hybride égale la MASE de TTM (0.88) en
+  écrasant son WQL. Verdict du diptyque GIFT/Nixtla : l'écart de transplantation est
+  100 % PROTOCOLE (rollout + pool dégénéré + pas de cascade), 0 % juge. Claim papier
+  consolidée : deux juges de deux pretrains répliquent l'uplift sur le protocole
+  single-shot ; l'échec GIFT est mécanisé ; pondération par source = correctif enregistré.
+  Sortie : evaluation/energy_nixtla/epoch01_valloss0.6420_h96.json.
+- **2026-08-31 (G12-sur-GIFT, variante ttmonly : NÉGATIF MÉCANISÉ)** — Pool ancres (SN +
+  drift) + 16 chemins TTM jitterés, juge v3 final (epoch01_valloss0.6420), 97 configs
+  plafonnées 150 inst : ttm seul MASE ratio **0.7649** (vs 0.7240 CSV officiel : harnais
+  validé à +5.6 % sur fenêtres plafonnées) ; hybrid_ttm **0.9098 / CRPS 0.7735 /
+  couverture 0.206**. DEUX mécanismes identifiés, pas une défaite du juge : (a) TTM
+  CONTRACTE le bruit d'entrée — 16 contextes jitterés donnent 16 chemins quasi identiques,
+  pool sans dispersion, fan quasi-point (couverture 0.206, CRPS ≈ le point effondré TTM
+  0.7258) ; (b) énergies quasi identiques → standardisation par σ_E minuscule → le softmax
+  amplifie du bruit et pose la masse sur les ANCRES — catastrophes localisées pile sur les
+  configs D/W où le drift linéaire diverge (ett1/D 1.63→5.29, ett1/W 1.58→4.97, ett2/W
+  0.86→2.85, kdd/D 1.19→4.99). Le run re-prouve le levier n°1 promu en E18h : pondération
+  PAR SOURCE (prior par famille de candidats, l'énergie arbitrant à l'intérieur), jamais
+  construit. Donnée annexe : TTM émet des NaN sur 100 % de hierarchical_sales/D et
+  restaurant/D (0 instance) — notre modèle y tourne. Statut papier : le PENDING hybrid-ttm
+  devient un négatif propre (« ne se transplante pas naïvement sur GIFT ») ; les claims
+  EBM qui tiennent restent la sonde, le gate +18.7 et l'uplift Nixtla E18d-h sur SON
+  protocole. Contre-vérification lancée : evaluate_energy.py (protocole E18g/h, h=96
+  single-shot) avec le juge v3 — réplique = écart 100 % protocole. À réclamer aussi :
+  summary.json du run pool-complet (jamais transmis).
+- **2026-08-31 (démo vidéo, et un piège cousin du last.ckpt)** — Démo de com
+  `scripts/forecast_video.py` : forecast d'une vidéo pixel par pixel (chaque pixel = une
+  série univariée, éclatement par canal comme le harnais) et en mode POD/PCA (forecast des
+  k coefficients modaux du contexte — « prédire dans une représentation », la thèse du
+  papier en démo). Deux scènes générées : pendule RK4 et allée de von Kármán (LBM D2Q9,
+  v2 calibrée : warmup 20k + perturbation initiale, période 61 frames, autocorr 0.95 — la
+  v1 à warmup 4k n'avait JAMAIS déclenché le lâcher, champ quasi statique, détecté par
+  persistance MAE 0.0069 et autocorr sans pic AVANT tout verdict modèle). Batterie sur le
+  champion mix nu (mix1ep3e4_25pct), ratio MAE vs persistance / couverture 80 :
+  pendule pixel **0.728 / 0.786** · pendule PCA-16 **0.340 / 0.885** · vortex pixel
+  **0.194 / 0.790 (nominale !)** · vortex PCA-12 **0.135 / 0.581** (sous-couverte :
+  l'hypothèse d'indépendance inter-modes du MC est optimiste, déclarée). Le pixel-par-pixel
+  sur objet translaté = régime intermittent binaire (impulsions sous le patch 16 :
+  médiane pinball-optimale ~0, mesuré) ; la PCA le répare (coefficients = échelle
+  d'harmoniques lisses). Champion v3@50 sur pod (runs utilisateur, mode pixel) :
+  ratio 0.581, couverture 0.814 ; flip DÉGRADE (0.597, cov 0.952) — prior de symétrie de
+  signe FAUX pour une intensité bornée à 0, jolie illustration que le TTA est un prior.
+  **PIÈGE découvert (candidat §5)** : un checkpoint de PRETRAIN porte une tête quantile
+  présente mais JAMAIS entraînée (le JEPA ne la traverse pas), et le contrat P3.2 ne
+  couvre que le cœur — le chargement passe et sort du bruit plausible. Mesuré : corr 0.00
+  sur sinusoïde nue (pretrain 0.5520) vs **1.00** (champion finetuné) ; une soirée de
+  chiffres locaux invalidés (dont un faux « PCA décevant »). Discriminant fiable :
+  `hyper_parameters` Lightning (`finetune_mode` vs `contextualized_targets`) ; garde-fou
+  de refus ajouté à la démo. Leçon répétée : la baseline aussi doit prouver qu'elle est
+  ce qu'elle prétend être.
 - **2026-08-30 (soir, finetune v3 @75 %)** — ×flip : **0.8636/0.5988**, couverture 0.751
   (q10 0.123 / q90 0.874). Deuxième meilleur checkpoint du run, à l'épaisseur du bruit du
   50 % (0.8633/0.5983) : ΔMASE 0.0003, ΔCRPS 0.0005. Lecture : (1) PAS de dérive tardive
