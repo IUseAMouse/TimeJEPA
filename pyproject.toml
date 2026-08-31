@@ -42,6 +42,13 @@ dev = [
     "jupyterlab",
     "matplotlib",
 ]
+# Proposeur TTM-R3 des expériences hybrides (scripts/evaluate_energy.py,
+# scripts/evaluate_gift_hybrid.py). Fournit le module `tsfm_public` et tire
+# transformers — volumineux, donc optionnel : le harnais officiel n'en a
+# pas besoin. Install : uv pip install -e ".[ttm]"
+ttm = [
+    "granite-tsfm>=0.2",
+]
 cluster = [
     "deepspeed",        
 ]

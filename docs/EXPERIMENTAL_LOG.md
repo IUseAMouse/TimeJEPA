@@ -1919,6 +1919,57 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-08-31 (mini @5 % : LE JUGE SUIT LA CAPACITÉ, et vite)** — Deux mesures sur le
+  tout premier checkpoint mini-v3 (epoch00_valloss0.6836, ~5 % d'époque). (1) **Probe
+  standalone : rang 0.211** (ρ 0.472, electricity/H méd 0.000) — meilleur juge à 5 %
+  jamais mesuré (tiny-v3 @5 % : 0.233 ; pic esjepa : 0.205) ; seuil P-mini.4 (≤ 0.21)
+  atteint au premier point ; solar-standalone ≈ hasard réplique (propriété de
+  l'encodage, pas de la lignée). Question pic-tôt : si 10-15 % érodent, 4e observation,
+  la plus précoce. (2) **GIFT hybride centré : le juge mini @5 % BAT le juge tiny
+  FINAL** — hybrid 0.7834/0.6554/couv 0.555 vs 0.7939/0.6732/0.622 (instances
+  appariées) ; taxe MASE +2.9 → +1.85 pts, fan vs point TTM effondré 5.3 → 7.0 pts.
+  Couverture en recul MÉCANIQUE : juge plus discriminant ⇒ poids concentrés ⇒ fan plus
+  étroit — le gap de couverture est un problème d'ÉTALEMENT DU POOL (innovations
+  sous-dimensionnées aux longs horizons), que le meilleur juge révèle ; correctif côté
+  génération de candidats, pas côté juge. Lecture d'ensemble : le pouvoir de jugement
+  scale avec la capacité ET émerge en heures — double soutien à pic-tôt et à
+  l'hypothèse capacité, avant même le premier point forecast de mini.
+- **2026-08-31 (VERDICT H512 : ARM CLOS, coupé à 40 % ; mini lancé)** — Trajectoire
+  ×flip : 5 % 0.9105/0.6423 · 30 % 0.8870/0.6137 · 35 % 0.8922/0.6194 · 40 %
+  0.8921/0.6121. Plateau 0.612-0.619, jamais sous 0.61 — avec l'amputation corpus
+  (+11.1 % sur 21 configs, ~2 pts d'agrégat structurels), h512 ne peut pas menacer le
+  0.598 de h256. Verdict en trois lignes : (1) levier horizon RÉEL mais PETIT
+  (différentiel −1.7 % multi-rollout vs single-roll — le signe d'E20b, l'ampleur d'un
+  non-levier) ; (2) coût de fenêtre dominant (bloc décimé 1024/682 + lotsa_short 1280
+  hors du finetune 1536) ; (3) **DONNÉE INATTENDUE : couverture 0.800 EXACTE au 40 %**
+  (q10 0.102 / q90 0.901) — meilleure calibration jamais mesurée sur la lignée, candidat
+  mécanisme : la randomisation d'horizon [64..512] apprend à la tête à calibrer à
+  travers les horizons. Ingrédient à recycler en S4 (horizon randomisé large SANS
+  étendre la fenêtre). Coupe réversible (save_top_k -1). MINI-V3 lancé dans la foulée
+  (bundle et prédictions P-mini.1..4 gravés à l'entrée précédente).
+- **2026-08-31 (soir — G12c-sur-GIFT : LE POOL CENTRÉ TRANSPLANTE ; bundle mini-v3 prêt,
+  prédictions gravées)** — Run GIFT hybride centré (97 configs, 150 inst, vs SN local) :
+  hybrid_ttm MASE **0.7939** / CRPS **0.6732** / couverture **0.622** — contre ttmonly
+  0.9098/0.7735/0.206 et TTM seul 0.7649 (point effondré 0.7258). Les deux mécanismes
+  d'échec sont morts : taxe MASE +14.5 → **+2.9 pts**, et le fan bat le point effondré de
+  TTM de **5.3 pts de CRPS sur les mêmes instances** (l'uplift point→probabiliste,
+  apparié, citable). Catastrophes D/W disparues (ett1/D 1.68 vs 5.29 ; m4_yearly :
+  l'hybride BAT TTM 3.72 vs 4.37). Restes honnêtes : sous-couverture 0.622 (bande
+  prédite 0.70-0.80 ratée — les innovations saisonnières sous-estiment l'étalement aux
+  longs horizons où le rollout TTM est déterministe après le 1er segment) et la taxe
+  MASE résiduelle. G12 est CLOS pour le papier : uplift Nixtla 6/6 (2 lignées de juges),
+  transplantation GIFT gardée et mesurée avec ses deux gaps quantifiés.
+  **MINI-V3 : trio de configs créé** (lotsa_mini_v3 / _zeroshot / _eval), composition
+  Hydra validée, **3 416 404 entraînables = ×3.01 vs tiny** (5.2M avec la copie EMA).
+  Bundle = recette v3 à l'identique (corpus lotsa_v3, ration des deux côtés, TiRex,
+  LR 3e-4, 2 ép. pretrain / 1 ép. finetune, save_top_k -1, cibles standalone) ; UNE
+  variable : la taille (d192, enc 4 / pred 3, d_ff 768). Écart déclaré : batch effectif
+  1152 vs 1536 (mémoire 24 Go). **PRÉDICTIONS GRAVÉES AVANT LANCEMENT** (aussi en tête
+  de config) : P-mini.1 succès CRPS ×flip ≤ 0.580, central 0.570 ± 0.010, étirement
+  < 0.555 ; P-mini.2 le gain vit dans le CORPS (81 configs), pas la queue ; P-mini.3
+  plateau de rang effectif plus haut que tiny-v3 ; P-mini.4 pic-tôt du juge (4e
+  observation, rang ≤ 0.21) ; **ÉCHEC-DIAGNOSTIC : ×flip > 0.593 ⇒ la capacité n'était
+  PAS le mur, la lecture triple-convergence est réfutée, sans appel.**
 - **2026-08-31 (raffinement × centrage : SUBSTITUTS, PAS COMPLÉMENTS)** — Run G12c +
   refine (10 pas, lr 0.5). Prédiction « deltas ≤ 0.01x » tenue sur 5/6 ; la violation est
   exchange : hybrid centré 0.78 → **0.82** (+4 pts) — le juge sculpte la texture au-delà

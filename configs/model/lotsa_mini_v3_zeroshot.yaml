@@ -1,0 +1,34 @@
+# @package _global_
+# Finetune zero-shot du mini-v3 — protocole G7.3c gelé (1 époque cosinus,
+# sélection par éval GIFT, tous les checkpoints conservés).
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/<dernier ckpt nommé>"'
+#   # JAMAIS last.ckpt (piège Lightning 2.6.5, §5 du registre) : pointer le
+#   # checkpoint NOMMÉ le plus tardif.
+#
+# Rationnement et augmentations hérités de lotsa_mini_v3 (mêmes règles que le
+# couple tiny-v3 : TiRex au pretrain seulement, ration des deux côtés).
+# Lecture du verdict : la trajectoire d'évals 5 %-en-5 % contre celle de
+# tiny-v3 (10 % 0.6042 / 50 % 0.5983 / plateau 0.598-0.601 ×flip) — le duel
+# se lit par checkpoints appariés en % d'époque, pas seulement au champion.
+defaults:
+  - lotsa_mini_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+  max_epochs: 1
+
+checkpoint:
+  save_top_k: -1
+
+data:
+  datasets_finetune: null
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "robust-scale"]

@@ -144,8 +144,18 @@ checkpoints, verdicts on P-v3.1 (bizitobs $<1.0$), P-v3.3
 Three fine-tunes from three pretrains on three corpora (rationed mix,
 ESJEPA, v3) land at flip CRPS 0.5959, 0.5981, 0.5983: $0.597 \pm 0.002$.
 Each varied a lever that had previously moved the aggregate; none crossed
-the floor. Reading: at 1.14M parameters the model is capacity-bound at
-this corpus quality. Sequencing follows: finish v3, test h512 (orthogonal,
-reuses the same pretrain by growing the query table, and doubles as the
-rollout-boundary test of Section~\ref{sec:hypothesis}), then scale.
-\pending{h512 aggregate pair.}
+the floor. The last orthogonal lever, a native h512 fine-tune from the
+same pretrain (grown query table), confirmed rather than threatened the
+reading: it plateaus at \gpair{0.892}{0.612} with flip, its deficit fully
+accounted for by a mechanical side effect (the 1536-step training window
+drops the decimated 10-minute block and the padded short-series block from
+the fine-tuning corpus, costing $+11.1\%$ on the 21 affected
+configurations) plus a horizon effect too small to matter
+(Section~\ref{sec:hypothesis}). It also produced the best-calibrated
+checkpoint of the project as a side effect, empirical 80\% coverage of
+exactly 0.800, plausibly because fine-tuning under horizon randomization
+up to 512 steps teaches the head to calibrate across horizons; we flag
+that ingredient for future recipes. Reading: at 1.14M parameters the model
+is capacity-bound at this corpus quality, and the next experiment is
+scale, one variable, with registered success and failure bands.
+\pending{mini: the 3.4M model against its registered bands.}

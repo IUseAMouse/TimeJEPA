@@ -56,10 +56,13 @@ $+0.404$, $p{=}0.019$; latent significantly \emph{worse} at h192
 (single window), ahead only at h720 (three rolls). Surviving candidate:
 \emph{the latent objective degrades less under iteration on its own
 outputs}. Fragile ($p{=}0.069$ without one dataset), with a registered
-three-seed protocol not yet funded. Testable corollary: native h512 (half
-the rolls) should shrink the latent advantage; the objective duel and the
-horizon lever test each other. \pending{h512 medium/long deltas vs the h256
-twin.}
+three-seed protocol not yet funded. A native h512 fine-tune (grown query
+table, same pretrain, halving the roll count for the affected horizons)
+supplied a paired check: on configurations unaffected by a window-induced
+corpus change (Section~\ref{sec:results}), the multi-rollout group improved
+by 1.7\% relative to the single-roll group, the sign the boundary
+hypothesis predicts and the magnitude of a minor lever, consistent with the
+flat term aggregates.
 
 \textbf{4. What pretraining itself buys.} Against from-scratch at equal
 fine-tuning: in-domain, nothing (1.193 vs 1.187, strict equality); on

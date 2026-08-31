@@ -1,127 +1,136 @@
-# TimeJEPA: Joint Embedding Predictive Architecture for Time Series
+# TimeJEPA: What 1.1M Parameters and Joint Embeddings Can Do
 
-Research implementation of JEPA applied to Univariate Time Series Forecasting and Representation Learning.
+A 1.14M-parameter univariate time series foundation model built around a Joint
+Embedding Predictive Architecture (JEPA), evaluated zero-shot on all 97
+GIFT-Eval configurations with **one checkpoint, one configuration, and no
+per-dataset adaptation** — trained end to end on three RTX 3090s.
 
-## 🔬 Overview
+## 📈 Results
 
-This project explores the application of non-generative self-supervised learning to time series. Unlike generative models that focus on pixel-level reconstruction, TimeJEPA first aims to learn forecasting-specific semantic representations by predicting the latent embeddings of future time patches.
+| | MASE ratio | CRPS ratio |
+|---|---|---|
+| TimeJEPA (plain) | 0.895 | 0.624 |
+| TimeJEPA (+ sign-flip TTA) | **0.863** | **0.596** |
+| Seasonal naive | 1.000 | 1.000 |
 
-**Key Features:**
-*   **Architecture:** Joint Embedding Predictive Architecture adapted for 1D signals forecasting.
-*   **Framework:** Built with **PyTorch** and **PyTorch Lightning**.
-*   **4 models:** TimeJEPA-tiny, TimeJEPA-mini, TimeJEPA-base and TimeJEPA-large.
+Geometric-mean ratios vs seasonal naive over the 97 GIFT-Eval configurations —
+between Moirai-large (311M params) and Moirai-base (91M) on the CRPS ranking,
+at roughly 1/300th of their size. Every number traces to a dated, pre-registered
+experimental log ([docs/EXPERIMENTAL_LOG.md](docs/EXPERIMENTAL_LOG.md)); the
+full technical report lives in [paper/](paper/).
+
+Two findings structure the project:
+
+* **The corpus makes the forecast.** Every accuracy jump traces to data
+  composition and inference protocol, not to the pretraining objective: at
+  equal budget, latent extrapolation and reconstruction are indistinguishable.
+* **The latent makes the judge.** The frozen pretrained JEPA is a competent
+  energy model over (context, future) pairs: it ranks true futures far above
+  chance, improves TTM-R3 (the strongest sub-10M model on GIFT-Eval) on 6/6
+  Nixtla datasets as a zero-training reranker, and a 4-dimensional latent
+  head carries the entire calibration of the forecast distribution.
+
+## 🎥 Zero-shot video forecasting
+
+Each pixel is treated as an independent univariate series; the GIFT-Eval
+checkpoint forecasts them as-is, with no fluid data anywhere in training.
+
+![TimeJEPA forecasting a von Kármán vortex street](docs/assets/vortex.gif)
+
+*Ground truth (lattice-Boltzmann simulation of flow past a cylinder), the
+model's median forecast, the fan mean, and the per-pixel uncertainty. The red
+frame marks where the context ends and the forecast begins. Empirical 80%
+coverage on this scene: 0.79 against a nominal 0.80 — the model calibrates
+its own doubt on a physical system it has never seen. Reproduce with
+`scripts/forecast_video.py`.*
 
 ## 🏗️ Architecture
 
-TimeJEPA models  use a non-generative approach to Time Series forecasting. Instead of predicting the raw signals, TimeJEPA models forecast the latent representation of future values.
+TimeJEPA forecasts in latent space: a RoPE transformer encoder embeds 1024
+context steps, a predictor with learned future queries extrapolates 256 steps
+of latent representations, and a quantile head decodes a monotone
+nine-quantile fan (median regressed directly, other levels by cumulative
+softplus widths — crossing is impossible by construction). Normalization is a
+robust arcsinh compression composed with RevIN; the pretraining target is an
+EMA copy of the encoder (I-JEPA style), regularized by SIGReg.
 
 ![TimeJEPA Architecture](docs/assets/architecture.png)
 
-*Figure 1: The Context Encoder (bottom) learns to predict the representations of the Target Encoder (top). The weights of the Target Encoder are an exponential moving average of the Context Encoder*
-
 ## 🚀 Quick Start
 
-### Prerequisites
-We use [uv](https://github.com/astral-sh/uv) for extremely fast dependency management and environment isolation.
+We use [uv](https://github.com/astral-sh/uv) for dependency management.
 
-### Installation
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone https://github.com/IUseAMouse/TimeJEPA.git
+cd TimeJEPA
+make install
+```
 
-1.  **Install uv** (if not already installed):
-    ```bash
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    ```
+The TTM-hybrid experiments (`scripts/evaluate_energy.py`,
+`scripts/evaluate_gift_hybrid.py`) need the optional IBM granite extra:
 
-2.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/IUseAMouse/TimeJEPA.git
-    cd TimeJEPA
-    ```
-
-3.  **Setup Environment:**
-    ```bash
-    make install
-    ```
-    This command creates the virtual environment and installs all dependencies defined in `pyproject.toml`.
-
-## 📁 Project Structure
-
-The project follows a `src`-layout for better packaging and reproducibility:
-
-```text
-timejepa/
-├── data/                   # Data directory (ignored by git)
-│   ├── raw/                # Raw .ts/.tsf files from Monash ziped
-│   └── processed/          # Pre-processed tensors (.npy/.pt)
-├── src/timejepa/            # Main package
-│   ├── data/               # DataModules & Parsers
-│   ├── models/             # Encoders, Predictors, Heads
-│   └── training/           # LightningModules
-├── scripts/                # Executable scripts (entry points)
-├── Makefile                # Command shortcuts
-└── pyproject.toml          # Dependency definitions
+```bash
+uv pip install -e ".[ttm]"
 ```
 
 ## 🎯 Usage
 
-### 1. Download & Prepare Data
-We utilize the Monash Time Series Archive. The following command downloads specific datasets (e.g., Electricity, Traffic) and converts them to efficient memory-mapped formats.
-
 ```bash
-make download-data
+# Pretrain (config lineage: lotsa_tiny_v3 is the current recipe)
+python scripts/train.py --config-name lotsa_tiny_v3 wandb.run_name=my-run
+
+# Finetune (1 cosine epoch, all checkpoints kept)
+python scripts/train.py --config-name lotsa_tiny_v3_zeroshot \
+    '+training.pretrained_encoder_path="checkpoints/.../<ckpt>"'
+
+# Evaluate on GIFT-Eval (97 configs, ~4 min on one 3090).
+# Official procedure reports plain AND flip numbers.
+python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval \
+    '+checkpoint_path="checkpoints/.../<ckpt>"' +tta_flip=true
+
+# Build the paper
+cd paper && make
 ```
 
-### 2. Pre-Train Model
-Launch a JEPA pre-training run. This uses PyTorch Lightning and logs to WandB. Choose a config between *tiny, mini, base and large*.
+## 📊 Data
+
+Pretraining uses [LOTSA](https://huggingface.co/datasets/Salesforce/lotsa_data)
+plus a seeded synthetic generator (random-Fourier-feature KernelSynth with
+bursty IT-operations and intermittent count families), assembled by symlink
+with an audited batch composition. Every subset overlapping an evaluation
+benchmark is excluded by verified name patterns; the decontamination
+discipline and its audit are documented in the experimental log.
 
 ```bash
-make train CONFIG=tiny
+python scripts/prepare_lotsa.py --out data/processed/lotsa  # streams + converts
 ```
 
-### 3. Fine tuning
-Evaluate the learned representations on forecasting tasks, choose your checkpoint:
+## 📁 Project Structure
 
-```bash
-make finetune CHECKPOINT=checkpoint
+```text
+timejepa/
+├── src/timejepa/           # Package: data, models, training, evaluation
+├── scripts/                # Entry points (train, evaluate_gift, probes, demos)
+├── configs/model/          # Declarative one-variable config lineages
+├── docs/EXPERIMENTAL_LOG.md  # The dated, pre-registered experiment registry
+├── paper/                  # LaTeX technical report
+└── evaluation/             # Per-config JSON results (cached, fingerprinted)
 ```
-
-You can also override config parameters:
-
-```bash
-make finetune CHECKPOINT=checkpoints/timejepa_mini/pretrain_True/best.ckpt LR=1e-4 MODE=gradual_unfrezze STRIDE=128 EPOCHS=20
-```
-
-
-## 📊 Datasets
-
-The code is designed to work seamlessly with datasets from the [Monash Time Series Forecasting Repository](https://zenodo.org/communities/forecasting), including:
-*   Electricity
-*   Traffic
-*   Weather
-*   Oikolab Weather
-*   Rain Temperature
-*   Australian Weather
-*   M4 Hourly
-*   Australian Electricity Demand
-*   Bitcoin 
-*   KDD Cup 2018
-*   Saugeenday River flow
-*   Solar Power 4 Seconds
-*   Solar Power 10 Minutes
-*   Sunspot Daily
-*   US Births
-*   Wind Power 4 Seconds
-*   NN5 Daily
-*   Melbourne Pedestrian Count
-*   Wikipedia Web Traffic Extended
-*   London Smart Meters
-*   FRED-MD
-*   Wind Farms Minutely
-*   Rideshare
 
 ## 📝 Citation
 
-Coming soon
+Paper in preparation (see [paper/](paper/)). Until the arXiv version lands:
+
+```bibtex
+@misc{vincent2026timejepa,
+  author = {Vincent, Yvann},
+  title  = {TimeJEPA: What 1.1M Parameters and Joint Embeddings Can Do},
+  year   = {2026},
+  url    = {https://github.com/IUseAMouse/TimeJEPA}
+}
+```
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+MIT

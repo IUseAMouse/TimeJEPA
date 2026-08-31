@@ -146,19 +146,23 @@ a controlled test with a deliberately biased proposer the judge moves its
 mass there, three standard deviations of preference. A verifier that can
 fire its proposer is worth having.
 
-Two negative measurements bound the claim. Transplanting the pipeline
-naively onto the GIFT windows failed, mechanistically: a TTM-paths-only
-pool collapses because TTM contracts input jitter (near-identical paths,
-fan degenerating to a point, 80\% coverage 0.206), and near-identical
-energies turn the standardized softmax into a noise amplifier that dumps
-mass on anchor candidates, with localized disasters exactly on the daily
-and weekly configurations where a linear drift anchor diverges. Both
-mechanisms are now guarded (the drift anchor left the pool, degenerate
-energies fall back to uniform weights), and the centered pool is the
-registered candidate for a GIFT rerun; until measured there, the claim
-stays protocol-scoped to single-shot horizons. The TTM-alone GIFT column
-doubles as harness validation (MASE ratio 0.765 on capped windows against
-the official 0.724), and one side finding: TTM emits NaN on 100\% of two
+The GIFT transplant took two attempts, and both teach. The naive one
+failed mechanistically: a TTM-paths-only pool collapses because TTM
+contracts input jitter (near-identical paths, fan degenerating to a point,
+80\% coverage 0.206), and near-identical energies turn the standardized
+softmax into a noise amplifier that dumps mass on anchor candidates, with
+localized disasters exactly on the daily and weekly configurations where a
+linear drift anchor diverges. With both mechanisms guarded (drift out of
+the pool, degenerate energies falling back to uniform weights) and the
+centered pool in place, the pipeline transplants: over all 97
+configurations on paired capped windows, the hybrid's fan beats TTM's
+collapsed point forecast by 7.2\% CRPS on identical instances at a 3.8\%
+MASE tax (ratio 0.794 against TTM's 0.765), with coverage improving from
+0.206 to 0.622. The remaining honest gap is that coverage: seasonal
+innovations understate spread at long horizons, where the proposer's
+rollout is deterministic past its first segment. The TTM-alone column
+doubles as harness validation (0.765 on capped windows against the
+official 0.724), and one side finding: TTM emits NaN on 100\% of two
 sparse count configurations (hierarchical\_sales and restaurant, daily)
 where our own model runs unaided.
 
