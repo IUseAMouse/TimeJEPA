@@ -121,7 +121,8 @@ def _negated(out: dict) -> dict:
 
 
 def tta_forecast(model, batch: torch.Tensor, h: int,
-                 lookbacks=None, flip: bool = False, shifts=None) -> dict:
+                 lookbacks=None, flip: bool = False, shifts=None,
+                 w=None) -> dict:
     """
     Moyenne de variantes d'inférence du MÊME checkpoint :
       * multi-lookback : le contexte tronqué à L' pour chaque L' de `lookbacks`
@@ -166,9 +167,11 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
                 ctx = ctx[:, trim:]
             if ctx.shape[1] < model.patching.patch_size:
                 continue
-            outs.append((model.forecast(ctx, n=h), s))
+            # w (RateIN x w) : le taux est invariant par négation -> même w
+            # sur la variante miroir.
+            outs.append((model.forecast(ctx, n=h, w=w), s))
             if flip:
-                outs.append((_negated(model.forecast(-ctx, n=h)), s))
+                outs.append((_negated(model.forecast(-ctx, n=h, w=w)), s))
 
     if len(outs) == 1:
         return outs[0][0]
@@ -364,7 +367,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     max_context: int = 0, tta_lookbacks=None,
                     tta_flip: bool = False, tta_shifts=None,
                     quantile_gamma=None,
-                    ratein_mode: str = "off", forced_k: int = 0) -> dict:
+                    ratein_mode: str = "off", forced_k: int = 0,
+                    ratein_w: bool = False, ratein_w_max_k: int = 4) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -426,18 +430,27 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         n_inst += 1
 
     for (length, k), items in sorted(buckets.items()):
+        # RateIN x w (synergie G9.3, flag gated) : contexte décimé par k, fan
+        # demandé DIRECTEMENT au taux natif via w = 1/k — zéro
+        # ré-interpolation (la seule perte que même l'oracle ne peut éviter).
+        # Garde d'extrapolation : la FiLM n'a vu que log2(w) dans la gamme
+        # des facteurs d'entraînement ([1,2,4] -> [-2,2]) ; au-delà de
+        # ratein_w_max_k, repli sur le chemin standard décimé+reinterp.
+        use_w = ratein_w and 1 < k <= ratein_w_max_k
         # Grille décimée : h' = ceil(h/k) pas suffisent à couvrir l'horizon
         # natif (bonus mesurable : moins de rollouts sur 10S/5T long-terme).
-        h_fc = -(-h // k)
+        h_fc = h if use_w else -(-h // k)
         for i in range(0, len(items), batch_size):
             chunk = items[i:i + batch_size]
             batch = torch.from_numpy(np.stack([c[0] for c in chunk]))
             batch = batch.unsqueeze(-1).to(device)          # [B, L, 1]
 
+            w_vec = (torch.full((batch.shape[0],), 1.0 / k, device=device)
+                     if use_w else None)
             with torch.no_grad():
                 out = tta_forecast(model, batch, h_fc,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
-                                   shifts=tta_shifts)
+                                   shifts=tta_shifts, w=w_vec)
             out = apply_quantile_gamma(out, quantile_gamma)
 
             median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h']
@@ -453,7 +466,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                    else (quants.shape[-1] // 2 if quants is not None else 0))
 
             for b, (ctx, target, past, scale) in enumerate(chunk):
-                if k > 1:
+                if k > 1 and not use_w:
                     if quants is not None:
                         fan_nat = ratein_mod.reinterp_fan(quants[b], h, k)
                         med_nat = fan_nat[:, mid]
@@ -534,6 +547,13 @@ def main(cfg: DictConfig):
                            ratein_raw, "off")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
+    # RateIN x w (gated) : +ratein_w=true — fan au taux natif via w=1/k sur
+    # les buckets décimés (k <= 4). Exige un modèle cross_resolution ET un
+    # mode ratein actif (sans décimation, w=1 partout = no-op trompeur).
+    ratein_w = str(cfg.get("ratein_w", "")).lower() in ("true", "1", "on")
+    if ratein_w and not (ratein_on or ratein_oracle):
+        raise ValueError("+ratein_w exige +ratein=backtest/fft/oracle "
+                         "(sans décimation, w vaudrait 1 partout)")
     tta_lookbacks = ([int(x) for x in str(cfg.tta_lookbacks).split(",")]
                      if cfg.get("tta_lookbacks") else None)
     tta_flip = bool(cfg.get("tta_flip", False))
@@ -572,12 +592,17 @@ def main(cfg: DictConfig):
         tag += "_lb" + "-".join(str(x) for x in tta_lookbacks)
     if tta_flip:
         tag += "_flip"
+    if ratein_w and getattr(model.predictor, "w_film", None) is None:
+        raise ValueError("+ratein_w exige un modèle cross_resolution "
+                         "(FiLM w absent du prédicteur — config xres)")
     if ratein_mode_val == "fft":
         tag += "_ratein"
     elif ratein_mode_val == "backtest":
         tag += "_ratein-bt"
     elif ratein_oracle:
         tag += "_ratein-oracle"
+    if ratein_w:
+        tag += "-w"
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     tag += gamma_tag
@@ -628,7 +653,7 @@ def main(cfg: DictConfig):
                                           tta_flip=tta_flip,
                                           tta_shifts=tta_shifts,
                                           quantile_gamma=quantile_gamma,
-                                          forced_k=kk)
+                                          forced_k=kk, ratein_w=ratein_w)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
@@ -644,7 +669,8 @@ def main(cfg: DictConfig):
                                       tta_flip=tta_flip,
                                       tta_shifts=tta_shifts,
                                       quantile_gamma=quantile_gamma,
-                                      ratein_mode=ratein_mode_val)
+                                      ratein_mode=ratein_mode_val,
+                                      ratein_w=ratein_w)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return

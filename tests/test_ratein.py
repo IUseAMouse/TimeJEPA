@@ -143,3 +143,34 @@ def test_harness_k1_bit_identical():
     assert decimate(x, 1) is x
     fan = rng.normal(size=(48, 9))
     assert np.array_equal(reinterp_fan(fan, 48, 1), fan)
+
+
+# --------------------------------------------------- RateIN x w (synergie)
+
+def test_tta_forecast_relays_w():
+    """Le harnais relaie w au modèle : identité exacte à l'init (FiLM
+    zéro-init), effet réel une fois la FiLM bruitée, flip compatible."""
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "scripts"))
+    import torch
+    from evaluate_gift import tta_forecast
+    from timejepa.models import JEPATST
+
+    model = JEPATST(input_length=512, prediction_length=128, patch_size=16,
+                    stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
+                    predictor_num_layers=1, predictor_num_heads=4,
+                    predictor_d_ff=64, decoder_type="mlp",
+                    cross_resolution=True).eval()
+    x = torch.randn(2, 512, 1)
+    w = torch.full((2,), 0.5)
+    with torch.no_grad():
+        base = tta_forecast(model, x, 64)
+        same = tta_forecast(model, x, 64, w=w)
+        assert torch.allclose(base["forecast_denorm"],
+                              same["forecast_denorm"], atol=0, rtol=0)
+        model.predictor.w_film.weight.add_(0.05)
+        diff = tta_forecast(model, x, 64, w=w)
+        flip_w = tta_forecast(model, x, 64, flip=True, w=w)
+    assert not torch.allclose(base["forecast_denorm"], diff["forecast_denorm"])
+    assert flip_w["forecast_denorm"].shape == base["forecast_denorm"].shape

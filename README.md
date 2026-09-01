@@ -1,64 +1,98 @@
-# TimeJEPA: What 1.1M Parameters and Joint Embeddings Can Do
+# TimeJEPA: Small Joint-Embedding Foundation Forecasters
 
-A 1.14M-parameter univariate time series foundation model built around a Joint
-Embedding Predictive Architecture (JEPA), evaluated zero-shot on all 97
-GIFT-Eval configurations with **one checkpoint, one configuration, and no
-per-dataset adaptation** — trained end to end on three RTX 3090s.
+![TimeJEPA forecasting a von Karman vortex street, one pixel per series](docs/assets/vortex.gif)
 
-## 📈 Results
+TimeJEPA is a family of univariate forecasters built on a Joint Embedding
+Predictive Architecture and trained end to end on three RTX 3090s. A single
+checkpoint is evaluated zero-shot on all 97 GIFT-Eval configurations, with no
+per-dataset adaptation of any kind. The animation above is the 1.14M-parameter
+checkpoint forecasting a fluid simulation it has never seen: the red frame
+marks the end of the context, and the model calibrates its own uncertainty on
+the way (empirical 80% coverage on this scene: 0.79).
 
-| | MASE ratio | CRPS ratio |
+## Results
+
+### TimeJEPA-tiny, 1.14M parameters
+
+| Inference | MASE ratio | CRPS ratio |
 |---|---|---|
-| TimeJEPA (plain) | 0.895 | 0.624 |
-| TimeJEPA (+ sign-flip TTA) | **0.863** | **0.596** |
-| Seasonal naive | 1.000 | 1.000 |
+| plain | 0.895 | 0.624 |
+| + sign-flip averaging | 0.863 | 0.598 |
+| + RateIN | **0.815** | **0.559** |
+| seasonal naive | 1.000 | 1.000 |
 
-Geometric-mean ratios vs seasonal naive over the 97 GIFT-Eval configurations —
-between Moirai-large (311M params) and Moirai-base (91M) on the CRPS ranking,
-at roughly 1/300th of their size. Every number traces to a dated, pre-registered
-experimental log ([docs/EXPERIMENTAL_LOG.md](docs/EXPERIMENTAL_LOG.md)); the
-full technical report lives in [paper/](paper/).
+Geometric mean over the 97 configurations, against the official seasonal
+naive numbers. Both inference layers are causal and identical across all
+datasets. Sign-flip averaging blends each forecast with the forecast of the
+negated context. RateIN mean-pools each context so that its dominant cycle
+falls inside the band the model was trained on, at a rate chosen by
+backtesting on the past of each series.
 
-Two findings structure the project:
+Among the sub-10M models of the GIFT-Eval leaderboard, aggregated with the
+same formula (parameter counts from the leaderboard metadata):
 
-* **The corpus makes the forecast.** Every accuracy jump traces to data
-  composition and inference protocol, not to the pretraining objective: at
-  equal budget, latent extrapolation and reconstruction are indistinguishable.
-* **The latent makes the judge.** The frozen pretrained JEPA is a competent
-  energy model over (context, future) pairs: it ranks true futures far above
-  chance, improves TTM-R3 (the strongest sub-10M model on GIFT-Eval) on 6/6
-  Nixtla datasets as a zero-training reranker, and a 4-dimensional latent
-  head carries the entire calibration of the forecast distribution.
+| Model | Parameters | CRPS ratio |
+|---|---|---|
+| FlowState-r1.1 | 9.1M | 0.487 |
+| TTM-R3 | 1.4M | 0.520 |
+| Toto-2.0-4m | 4.1M | 0.524 |
+| TempoPFN | n/a | 0.533 |
+| TinyCast | 0.1M | 0.545 |
+| goia-forecast-nano | 4.7M | 0.553 |
+| Kairos-10m | 9.9M | 0.554 |
+| Metamorph-4.5M | n/a | 0.555 |
+| **TimeJEPA-tiny** | **1.14M** | **0.559** |
+| YingLong-6m | 7.3M | 0.609 |
 
-## 🎥 Zero-shot video forecasting
+Every number traces to a dated entry in the experiment registry
+([docs/EXPERIMENTAL_LOG.md](docs/EXPERIMENTAL_LOG.md)), where predictions are
+written down before the runs. The technical report lives in
+[paper/](paper/).
 
-Each pixel is treated as an independent univariate series; the GIFT-Eval
-checkpoint forecasts them as-is, with no fluid data anywhere in training.
+### TimeJEPA-mini, 3.4M parameters
 
-![TimeJEPA forecasting a von Kármán vortex street](docs/assets/vortex.gif)
+Pretraining in progress.
 
-*Ground truth (lattice-Boltzmann simulation of flow past a cylinder), the
-model's median forecast, the fan mean, and the per-pixel uncertainty. The red
-frame marks where the context ends and the forecast begins. Empirical 80%
-coverage on this scene: 0.79 against a nominal 0.80 — the model calibrates
-its own doubt on a physical system it has never seen. Reproduce with
-`scripts/forecast_video.py`.*
+## Usage
 
-## 🏗️ Architecture
+```python
+import numpy as np
+import torch
+from pathlib import Path
+from hydra import compose, initialize_config_dir
 
-TimeJEPA forecasts in latent space: a RoPE transformer encoder embeds 1024
-context steps, a predictor with learned future queries extrapolates 256 steps
-of latent representations, and a quantile head decodes a monotone
-nine-quantile fan (median regressed directly, other levels by cumulative
-softplus widths — crossing is impossible by construction). Normalization is a
-robust arcsinh compression composed with RevIN; the pretraining target is an
-EMA copy of the encoder (I-JEPA style), regularized by SIGReg.
+from timejepa.evaluation import create_model_from_config, load_checkpoint
 
-![TimeJEPA Architecture](docs/assets/architecture.png)
+with initialize_config_dir(config_dir=str(Path("configs/model").resolve()),
+                           version_base=None):
+    cfg = compose(config_name="lotsa_tiny_v3_eval")
 
-## 🚀 Quick Start
+model = create_model_from_config(cfg)
+model = load_checkpoint(model, "checkpoints/<checkpoint>.ckpt",
+                        torch.device("cpu")).eval()
 
-We use [uv](https://github.com/astral-sh/uv) for dependency management.
+history = np.asarray(my_series, dtype=np.float32)    # raw values, any scale
+x = torch.from_numpy(history[-1024:])[None, :, None]
+
+with torch.no_grad():
+    out = model.forecast(x, n=192)                   # any horizon
+
+median = out["forecast_denorm"][0, :, 0]             # [n]
+fan = out["quantiles_denorm"][0]                     # [n, 9], levels 0.1 to 0.9
+```
+
+Normalization lives inside the model: feed raw values, read raw values back.
+The quantile fan cannot cross by construction. Interpolate NaNs in the
+context before calling. `scripts/evaluate_gift.py` is the reference
+inference pipeline; sign-flip averaging and RateIN live there.
+
+Checkpoints are not distributed yet. They will be published on Hugging Face
+together with the preprint. Until then, the training commands below produce
+one in about a day on three GPUs.
+
+## Setup
+
+[uv](https://github.com/astral-sh/uv) manages the environment:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -67,70 +101,92 @@ cd TimeJEPA
 make install
 ```
 
-The TTM-hybrid experiments (`scripts/evaluate_energy.py`,
-`scripts/evaluate_gift_hybrid.py`) need the optional IBM granite extra:
+Evaluation data, the 97 GIFT-Eval configurations (a few GB):
+
+```bash
+make gift-download
+```
+
+Pretraining corpus: LOTSA plus a seeded synthetic generator, streamed and
+converted once. Subsets overlapping any evaluation benchmark are excluded by
+verified name patterns; the decontamination audit is in the experiment
+registry.
+
+```bash
+python scripts/prepare_lotsa.py --out data/processed/lotsa
+```
+
+The TTM hybrid experiments need one extra dependency:
 
 ```bash
 uv pip install -e ".[ttm]"
 ```
 
-## 🎯 Usage
+## Architecture
+
+![TimeJEPA architecture](docs/assets/architecture.png)
+
+The model forecasts in embedding space. An encoder cuts the context into
+patches of 16 steps and embeds them with a RoPE transformer. A predictor
+reads those embeddings through learned queries, one query per future patch,
+and produces the embeddings of the future. A quantile head decodes each of
+them into nine quantiles: the median is regressed directly and the other
+levels are stacked on top of it as positive widths, so the fan cannot cross.
+
+Two normalizations let one checkpoint work at any scale: a robust arcsinh
+compression that tames spikes, then a per-window standardization. Both are
+inverted at the output.
+
+During pretraining, the target embeddings come from a slow moving-average
+copy of the encoder, and a variance regularizer keeps the embedding space
+from collapsing. The forecaster is then finetuned for one epoch with a
+pinball loss on the quantile fan.
+
+## Training and evaluation
 
 ```bash
-# Pretrain (config lineage: lotsa_tiny_v3 is the current recipe)
+# Pretrain (lotsa_tiny_v3 is the current recipe)
 python scripts/train.py --config-name lotsa_tiny_v3 wandb.run_name=my-run
 
-# Finetune (1 cosine epoch, all checkpoints kept)
+# Finetune (one cosine epoch, every checkpoint kept)
 python scripts/train.py --config-name lotsa_tiny_v3_zeroshot \
     '+training.pretrained_encoder_path="checkpoints/.../<ckpt>"'
 
-# Evaluate on GIFT-Eval (97 configs, ~4 min on one 3090).
-# Official procedure reports plain AND flip numbers.
+# GIFT-Eval, 97 configs, under 15 minutes on one 3090
 python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval \
-    '+checkpoint_path="checkpoints/.../<ckpt>"' +tta_flip=true
+    '+checkpoint_path="checkpoints/.../<ckpt>"' +tta_flip=true +ratein=backtest
+
+# Video demo: every pixel forecast as an independent series
+python scripts/forecast_video.py
 
 # Build the paper
 cd paper && make
 ```
 
-## 📊 Data
-
-Pretraining uses [LOTSA](https://huggingface.co/datasets/Salesforce/lotsa_data)
-plus a seeded synthetic generator (random-Fourier-feature KernelSynth with
-bursty IT-operations and intermittent count families), assembled by symlink
-with an audited batch composition. Every subset overlapping an evaluation
-benchmark is excluded by verified name patterns; the decontamination
-discipline and its audit are documented in the experimental log.
-
-```bash
-python scripts/prepare_lotsa.py --out data/processed/lotsa  # streams + converts
-```
-
-## 📁 Project Structure
+## Project structure
 
 ```text
-timejepa/
-├── src/timejepa/           # Package: data, models, training, evaluation
-├── scripts/                # Entry points (train, evaluate_gift, probes, demos)
-├── configs/model/          # Declarative one-variable config lineages
-├── docs/EXPERIMENTAL_LOG.md  # The dated, pre-registered experiment registry
-├── paper/                  # LaTeX technical report
-└── evaluation/             # Per-config JSON results (cached, fingerprinted)
+src/timejepa/             # data, models, training, evaluation
+scripts/                  # entry points: train, evaluate_gift, probes, demos
+configs/model/            # one-variable config lineages
+docs/EXPERIMENTAL_LOG.md  # dated experiment registry, predictions first
+paper/                    # LaTeX technical report
+evaluation/               # per-config JSON results, cached
 ```
 
-## 📝 Citation
+## Citation
 
-Paper in preparation (see [paper/](paper/)). Until the arXiv version lands:
+Paper in preparation. Until the arXiv version lands:
 
 ```bibtex
 @misc{vincent2026timejepa,
   author = {Vincent, Yvann},
-  title  = {TimeJEPA: What 1.1M Parameters and Joint Embeddings Can Do},
+  title  = {TimeJEPA: Small Joint-Embedding Foundation Forecasters},
   year   = {2026},
   url    = {https://github.com/IUseAMouse/TimeJEPA}
 }
 ```
 
-## 📄 License
+## License
 
-MIT
+[MIT](LICENSE)

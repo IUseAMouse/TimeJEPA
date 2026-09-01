@@ -1,0 +1,35 @@
+# @package _global_
+# Arm G9.0-AUGMENTATION (2026-09-01) — finetune avec entrées décimées, SANS FiLM.
+#
+# Motif MESURÉ (verdict RateIN v3) : la couche d'inférence décime 35 % des
+# instances d'éval (mean-pooling par blocs de k), or v3 n'a JAMAIS vu une
+# série décimée à l'entraînement — spectre coupé, plus lisse : un shift de
+# distribution qu'on inflige au modèle là où il gagne. Cet arm aligne le
+# train sur ce régime : k1=k2 tirés dans les mêmes facteurs que la config
+# xres (comparabilité : la paire (aug seul) vs (xres complet) ne diffère que
+# du bundle FiLM/w/ancre). cross_resolution reste false -> w=1 partout,
+# AUCUN paramètre nouveau : même architecture, éval via lotsa_tiny_v3_eval.
+#
+#   python scripts/train.py --config-name lotsa_tiny_v3_aug_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<ckpt>"'
+#
+# Prédictions (chiffres gravés au registre AU LANCEMENT) : P-aug.1 les
+# configs majoritairement décimées à l'éval (bizitobs, solar/10T,
+# electricity/15T, loop/5T…) s'améliorent sous flip+ratein ; P-aug.2 les
+# configs restées à k=1 sont stables (±1 %) ; P-aug.3 l'agrégat flip+ratein
+# bat 0.5588. ÉCHEC-DIAGNOSTIC : si l'agrégat ne bouge pas, voir des entrées
+# décimées ne suffit pas -> le dossier xres-FiLM (conditionnement w) reprend
+# la main sur le résiduel 0.5588->0.5358.
+defaults:
+  - lotsa_tiny_v3_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_v3_aug_zs"
+
+data:
+  multi_resolution_factors_finetune: [1, 2, 4]
+  p_multi_resolution_finetune: 0.3
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "aug-decim", "robust-scale"]

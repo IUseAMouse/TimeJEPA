@@ -1919,6 +1919,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (Pré-nettoyage : RateIN×w livré (gated), configs G9.0-aug créées, correctif
+  v2/v2.1 au registre, crédit Claude au papier)** — Derniers morceaux de code du périmètre
+  avant la passe de nettoyage/squash (décision utilisateur). **RateIN×w** : flag
+  `+ratein_w=true` — sur les buckets décimés (1<k≤4, gamme entraînée de la FiLM,
+  log₂w ∈ [−2,2] ; au-delà repli standard), le fan est demandé DIRECTEMENT au taux natif
+  via w=1/k, h_fc=h, zéro ré-interpolation (la seule perte que même l'oracle ne peut
+  éviter) ; w plombe `tta_forecast` (miroir : même w, le taux est invariant par négation) ;
+  refus bruyant sans FiLM ou sans mode ratein actif ; tag `-w` ; test relais w (25 verts
+  au total). GATED : n'a de sens qu'après un finetune xres. **Configs G9.0-aug** :
+  `lotsa_{tiny,mini}_v3_aug_zeroshot` — mêmes facteurs [1,2,4] p 0.3 que xres
+  (la paire aug-seul vs xres-complet ne diffère que du bundle FiLM/w/ancre),
+  cross_resolution false, ancre 0, composition vérifiée ; P-aug.1..3 esquissées en
+  en-tête, chiffres à graver AU LANCEMENT. **Papier** : section Acknowledgments ajoutée
+  (collaboration Claude/Anthropic décrite honnêtement, direction et validation par
+  l'auteur), recompilé. Décisions utilisateur actées : tag d'archive avant squash,
+  retrait des auteurs Claude des commits au moment du squash (ownership légal du repo),
+  anciennes versions PDF/gif non nécessaires dans l'historique (sauvegarde distante faite).
 - **2026-09-01 (P-J.1 RÉFUTÉE ET INVERSÉE : la probe ne prédit pas le juge ; probe
   RÉTROGRADÉE en diagnostic ; verdict pretrain = CONTINUER jusqu'au bout de l'epoch)** —
   Runs hybride appariés (bras TTM bit-identique 0.7649/0.7258, centered, seed 0) :
@@ -1987,8 +2004,12 @@ constitue le test le plus direct de la thèse du §7.
   d'objectif — geomean équipondérée des ratios par série ≠ CRPS config pondéré par |y|
   (bitbrains : k16 aide l'agrégat via les grosses séries, le pool équipondéré dit non).
   **DÉCISION : détecteur GELÉ à v3** — corriger (3) reviendrait à imiter l'objectif de
-  l'oracle (Goodhart), (1) et (2) sont des limites d'information, pas des bugs. Les modes
-  fft/v2.1-par-série restent en code pour la table d'ablation du papier. Le résiduel
+  l'oracle (Goodhart), (1) et (2) sont des limites d'information, pas des bugs.
+  [CORRECTIF 2026-09-01 : contrairement à la phrase initialement écrite ici, les
+  sélecteurs v2/v2.1 ne sont PLUS en code — v3 les a remplacés dans la même fonction ;
+  leurs résultats restent préservés (JSONs _ratein-bt_v2/_v21) et leur code vit dans
+  l'historique git (tag d'archive à poser avant tout squash). Modes en code :
+  fft / backtest-v3 / oracle.] Le résiduel
   0.5588→0.5358 (−4.1 % rel.) est structurellement HORS DE PORTÉE d'une sélection externe
   causale : c'est l'exhibit chiffré du dossier train-side (G9.0-augmentation d'abord —
   35 % des instances d'éval sont désormais des entrées décimées JAMAIS VUES au train —,
