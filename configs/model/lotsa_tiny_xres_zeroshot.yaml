@@ -1,10 +1,10 @@
 # @package _global_
-# Finetune zero-shot de l'arm xres. Hérite corpus mixte + arcsinh + FiLM.
+# Zero-shot finetune of the xres arm. Inherits mixed corpus + arcsinh + FiLM.
 #   python scripts/train.py --config-name lotsa_tiny_xres_zeroshot \
 #       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_xres/pretrain_True/last.ckpt
-# (audit 2026-08-20 : forward_finetune applique désormais le FiLM À w=1 —
-#  après pretrain, son biais est ENTRAÎNÉ et « ne pas l'appliquer » n'est plus
-#  l'identité ; le finetune vit ainsi exactement dans le régime w=1 appris.)
+# (audit 2026-08-20: forward_finetune now applies the FiLM AT w=1 - after
+#  pretrain its bias is TRAINED and "not applying it" is no longer the
+#  identity; the finetune thus lives exactly in the learned w=1 regime.)
 defaults:
   - lotsa_tiny_xres
   - _self_
@@ -15,21 +15,21 @@ model:
 training:
   mode: "finetune"
   finetune_mode: "full_finetune"
-  # Plafond LR 3e-4 (décision utilisateur 2026-08-21, hérité : 7.5e-4). Mesuré
-  # sur le finetune tiny-full : progrès net ~nul de 100k à 400k steps (bande
-  # d'oscillation, un pic d'instabilité à ~240k), TOUTE la descente une fois le
-  # cosinus passé sous ~3e-4. Démarrer à 3e-4 met les 3 époques entières dans
-  # le régime productif. Partagé mix/xres (duel à une variable préservé).
+  # LR cap 3e-4 (decision 2026-08-21, inherited: 7.5e-4). Measured on the
+  # tiny-full finetune: ~zero net progress from 100k to 400k steps
+  # (oscillation band, one instability spike at ~240k), ALL the descent once
+  # the cosine dropped below ~3e-4. Starting at 3e-4 puts the whole 3 epochs
+  # in the productive regime. Shared mix/xres (one-variable duel preserved).
   optimizer:
     learning_rate: 3.0e-4
-  # 3 époques (décision utilisateur 2026-08-21, après 2 le 2026-08-20) : sur
-  # tiny-full, les courbes de finetune descendaient encore nettement en fin
-  # d'époque 1 — le budget était le facteur limitant, pas le modèle. Le cosinus
-  # s'étale sur max_epochs, donc 3 est un choix de scheduler, pas un simple
-  # prolongement ; un arrêt manuel avant terme laisse le LR à mi-descente.
-  # ⚠️ Comparabilité : mix et xres partagent ce budget (leur duel — LA
-  # comparaison à une variable — reste propre) ; mix-vs-tiny-full ajoute le
-  # budget de finetune au bundle déjà assumé (corpus+arcsinh), à dire dans E18+.
+  # 3 epochs (decision 2026-08-21, after 2 on 2026-08-20): on tiny-full,
+  # the finetune curves were still going down clearly at the end of epoch 1 -
+  # budget was the limiting factor, not the model. The cosine spans
+  # max_epochs, so 3 is a scheduler choice, not a mere extension; a manual
+  # stop before the end leaves the LR mid-descent.
+  # WARNING - comparability: mix and xres share this budget (their duel - THE
+  # one-variable comparison - stays clean); mix-vs-tiny-full adds the finetune
+  # budget to the already accepted bundle (corpus+arcsinh), to state in E18+.
   max_epochs: 3
 
 data:

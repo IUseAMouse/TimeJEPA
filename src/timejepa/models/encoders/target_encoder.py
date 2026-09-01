@@ -19,7 +19,7 @@ from .bare_encoder import BareTransformerEncoder
 
 import math
 
-# Ligne 15 : Changer type hint
+# TODO: the encoder type hint should be nn.Module (any encoder works)
 class TargetEncoder(nn.Module):
     """
     Target encoder with Exponential Moving Average (EMA) updates.
@@ -66,7 +66,7 @@ class TargetEncoder(nn.Module):
         Compute EMA decay with cosine schedule.
         
         Formula from BYOL/MoCo v3:
-        tau = tau_end - (tau_end - tau_base) * (cos(π * k / K) + 1) / 2
+        tau = tau_end - (tau_end - tau_base) * (cos(pi * k / K) + 1) / 2
         
         where k = current step, K = max steps
         
@@ -91,7 +91,7 @@ class TargetEncoder(nn.Module):
         """
         Update target encoder weights using EMA.
         
-        Formula: θ_target = τ * θ_target + (1 - τ) * θ_online
+        Formula: theta_target = tau * theta_target + (1 - tau) * theta_online
         
         Args:
             online_encoder: The online encoder to copy from

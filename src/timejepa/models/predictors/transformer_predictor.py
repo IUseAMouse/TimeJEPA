@@ -24,10 +24,10 @@ class TransformerPredictor(nn.Module):
     
     Architecture:
         Context embeddings [B, N_context, d_model]
-        → Positional tokens for targets [B, N_target, d_model]
-        → Concat [B, N_context + N_target, d_model]
-        → Transformer blocks (4 layers)
-        → Extract target predictions [B, N_target, d_model]
+        -> Positional tokens for targets [B, N_target, d_model]
+        -> Concat [B, N_context + N_target, d_model]
+        -> Transformer blocks (4 layers)
+        -> Extract target predictions [B, N_target, d_model]
     
     Args:
         d_model: Model dimension (512)
@@ -48,14 +48,14 @@ class TransformerPredictor(nn.Module):
         dropout: float = 0.1,
         activation: str = 'gelu',
         max_target_patches: int = 16,
-        # G9.2 — conditionnement d'échelle w = k2/k1 (JEPA inter-résolution).
-        # OPT-IN À LA CONSTRUCTION : sans ce flag l'attribut w_film n'existe
-        # pas, donc le state_dict de toutes les configs existantes est inchangé
-        # au bit près (leurs checkpoints se rechargent à l'identique).
+        # G9.2 - scale conditioning w = k2/k1 (cross-resolution JEPA).
+        # OPT-IN AT CONSTRUCTION: without this flag the w_film attribute does
+        # not exist, so the state_dict of all existing configs is
+        # bit-identical (their checkpoints reload unchanged).
         use_w_film: bool = False,
-        # ESJEPA — voie z (statistiques du résidu, hétéroscédasticité
-        # conditionnelle). Même contrat opt-in que use_w_film : flag off ⇒
-        # l'attribut z_head n'existe pas, state_dict bit-identique.
+        # ESJEPA - z path (residual statistics, conditional
+        # heteroscedasticity). Same opt-in contract as use_w_film: flag off
+        # => the z_head attribute does not exist, state_dict bit-identical.
         error_signal: bool = False,
         z_dim: int = 4,
     ):
@@ -67,27 +67,28 @@ class TransformerPredictor(nn.Module):
         self.d_ff = d_ff
 
         if use_w_film:
-            # FiLM résiduel sur les requêtes futures : q · (1 + γ(log₂w)) + β(log₂w).
-            # Poids ET biais initialisés à ZÉRO → γ=β=0 → identité exacte pour
-            # tout w à l'initialisation. Deux conséquences voulues : (a) le
-            # début d'entraînement de l'arm se comporte comme la baseline, le
-            # conditionnement n'apparaît que si le gradient le demande ; (b) un
-            # checkpoint xres rechargé SANS passer w (finetune, forecast) est
-            # exactement le modèle à w=1 — aucun régime jamais vu.
+            # Residual FiLM on the future queries:
+            # q * (1 + gamma(log2 w)) + beta(log2 w). Weights AND bias
+            # initialized to ZERO -> gamma=beta=0 -> exact identity for any w
+            # at init. Two intended consequences: (a) the arm's early training
+            # behaves like the baseline, conditioning only appears if the
+            # gradient asks for it; (b) an xres checkpoint reloaded WITHOUT
+            # passing w (finetune, forecast) is exactly the model at w=1 - no
+            # never-seen regime.
             self.w_film = nn.Linear(1, 2 * d_model)
             nn.init.zeros_(self.w_film.weight)
             nn.init.zeros_(self.w_film.bias)
 
         if error_signal:
-            # ESJEPA — tête z sur le TRONC du prédicteur : lit les tokens
-            # cibles post-final_norm (AVANT prediction_head, qui est la tête de
-            # la voie signal) et prédit les statistiques du résidu par patch
-            # [B, N_target, z_dim]. Les gradients de la loss z remontent dans
-            # le tronc et l'encodeur : c'est le mécanisme voulu — la
-            # représentation apprend à retenir l'information de dispersion —
-            # dosé par lambda_z côté module. Pas de BatchNorm (l'update EMA du
-            # target encoder saute num_batches_tracked ; sans rapport ici mais
-            # la contrainte est de famille : LayerNorm uniquement).
+            # ESJEPA - z head on the predictor TRUNK: reads the target tokens
+            # post-final_norm (BEFORE prediction_head, which is the signal
+            # path's head) and predicts per-patch residual statistics
+            # [B, N_target, z_dim]. The z-loss gradients flow back into the
+            # trunk and the encoder: that is the intended mechanism - the
+            # representation learns to keep dispersion information - dosed by
+            # lambda_z on the module side. No BatchNorm (the target encoder's
+            # EMA update skips num_batches_tracked; unrelated here but the
+            # constraint is family-wide: LayerNorm only).
             self.z_head = nn.Sequential(
                 nn.Linear(d_model, d_model // 2),
                 nn.GELU(),
@@ -170,7 +171,7 @@ class TransformerPredictor(nn.Module):
         Slicing `future_position_embedding[:, :num_targets]` past the table size
         silently returns fewer rows. The output shape stayed correct downstream
         because the target slice `x[:, -num_targets:]` reads from the
-        concatenated sequence — so the missing queries were quietly replaced by
+        concatenated sequence - so the missing queries were quietly replaced by
         the LAST CONTEXT EMBEDDINGS, and those were then trained and scored as
         if they were predictions.
 
@@ -201,15 +202,15 @@ class TransformerPredictor(nn.Module):
         """
         Simplified forward pass when target positions are just 'next N'.
 
-        `w` (optionnel, [B]) : ratio d'échelle k2/k1 par ITEM (G9.2) — par item
-        et non par batch, parce que la résolution est tirée par item alors que
-        la randomisation de géométrie est par batch ; les deux coexistent.
+        `w` (optional, [B]): scale ratio k2/k1 per ITEM (G9.2) - per item and
+        not per batch, because resolution is drawn per item while geometry
+        randomization is per batch; the two coexist.
 
-        `return_z` (ESJEPA) : si True, retourne AUSSI z_pred [B, num_targets,
-        z_dim] — les statistiques du résidu prédites par la tête z. Refus
-        bruyant si le prédicteur a été construit sans error_signal (un z
-        silencieusement absent, c'est un arm qui croit moduler ses quantiles
-        et ne module rien). Flag off : signature et retour inchangés.
+        `return_z` (ESJEPA): if True, ALSO returns z_pred [B, num_targets,
+        z_dim] - the residual statistics predicted by the z head. Loud
+        refusal if the predictor was built without error_signal (a silently
+        absent z is an arm that thinks it modulates its quantiles and
+        modulates nothing). Flag off: signature and return unchanged.
 
         Args:
             context_embeddings: Context [B, N_context, d_model]
@@ -218,34 +219,34 @@ class TransformerPredictor(nn.Module):
 
         Returns:
             Predictions [B, num_targets, d_model]
-            (ou le tuple (predictions, z_pred) si return_z=True)
+            (or the (predictions, z_pred) tuple if return_z=True)
         """
         if return_z and not hasattr(self, 'z_head'):
             raise ValueError(
-                "return_z=True mais le prédicteur a été construit sans "
-                "error_signal — l'arm ESJEPA exige model.error_signal=true "
-                "à la construction."
+                "return_z=True but the predictor was built without "
+                "error_signal - the ESJEPA arm requires "
+                "model.error_signal=true at construction."
             )
         batch_size = context_embeddings.shape[0]
 
         future_queries = self._future_queries(batch_size, num_targets)
 
-        # G9.2 — conditionnement d'échelle par item (w = k2/k1, [B]).
+        # G9.2 - per-item scale conditioning (w = k2/k1, [B]).
         if w is not None:
             if not hasattr(self, 'w_film'):
-                # Refuser plutôt qu'ignorer : un w silencieusement perdu, c'est
-                # un arm inter-résolution qui entraîne SANS conditionnement et
-                # des chiffres qu'on croit conditionnés.
+                # Refuse rather than ignore: a silently lost w is a
+                # cross-resolution arm training WITHOUT conditioning and
+                # numbers believed to be conditioned.
                 if bool((w != 1).any()):
                     raise ValueError(
-                        "w != 1 reçu mais le prédicteur a été construit sans "
-                        "use_w_film — l'arm inter-résolution exige que le "
-                        "modèle soit construit avec cross_resolution=true."
+                        "w != 1 received but the predictor was built without "
+                        "use_w_film - the cross-resolution arm requires the "
+                        "model to be built with cross_resolution=true."
                     )
             else:
                 film = self.w_film(
                     torch.log2(w.to(future_queries.dtype)).unsqueeze(-1))
-                gamma, beta = film.chunk(2, dim=-1)              # [B, d] chacun
+                gamma, beta = film.chunk(2, dim=-1)              # [B, d] each
                 future_queries = (
                     future_queries * (1.0 + gamma.unsqueeze(1)) + beta.unsqueeze(1))
 
@@ -263,8 +264,8 @@ class TransformerPredictor(nn.Module):
         target_predictions = self.prediction_head(trunk_targets)
 
         if return_z:
-            # ESJEPA — z lu sur le tronc partagé (post-final_norm), pas sur la
-            # sortie de prediction_head : les deux voies bifurquent ici.
+            # ESJEPA - z read from the shared trunk (post-final_norm), not
+            # from prediction_head's output: the two paths fork here.
             return target_predictions, self.z_head(trunk_targets)
         return target_predictions
 
@@ -351,21 +352,21 @@ class MLPPredictor(nn.Module):
         **kwargs
     ) -> torch.Tensor:
         """Simple forward for N targets."""
-        # Le MLP mean-poole le contexte : il n'a ni ordre ni requêtes, donc
-        # aucun endroit où un conditionnement d'échelle aurait du sens. Sans
-        # cette garde, **kwargs avalait `w` en silence — l'arm inter-résolution
-        # aurait « tourné » sans conditionnement.
+        # The MLP mean-pools the context: it has neither order nor queries,
+        # so nowhere for scale conditioning to make sense. Without this
+        # guard, **kwargs swallowed `w` silently - the cross-resolution arm
+        # would have "run" without conditioning.
         if w is not None and bool((w != 1).any()):
             raise NotImplementedError(
-                "MLPPredictor ne supporte pas le conditionnement w (G9.2) — "
-                "utiliser predictor_type='transformer'."
+                "MLPPredictor does not support w conditioning (G9.2) - "
+                "use predictor_type='transformer'."
             )
-        # Même famille de garde pour ESJEPA : **kwargs ne doit pas avaler
-        # return_z en silence (un z jamais produit = quantiles jamais modulés).
+        # Same guard family for ESJEPA: **kwargs must not swallow return_z
+        # silently (a z never produced = quantiles never modulated).
         if kwargs.get('return_z', False):
             raise NotImplementedError(
-                "MLPPredictor ne supporte pas la voie z (ESJEPA) — "
-                "utiliser predictor_type='transformer'."
+                "MLPPredictor does not support the z path (ESJEPA) - "
+                "use predictor_type='transformer'."
             )
         # Mean pool
         context_pooled = context_embeddings.mean(dim=1, keepdim=True)

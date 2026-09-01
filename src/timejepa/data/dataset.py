@@ -59,7 +59,7 @@ def _pack_series(series_list):
 
     The case never arose before because the length filter always left series of
     mixed lengths. It appears as soon as a dataset whose survivors are uniform
-    is used — m4-hourly, whose series are all 1008 steps once filtered.
+    is used - m4-hourly, whose series are all 1008 steps once filtered.
     """
     if len(series_list) == 0:
         # Preserved on purpose: callers detect the empty case and raise
@@ -78,19 +78,19 @@ def _pack_series(series_list):
 
 def _to_tensor(window: np.ndarray) -> "torch.Tensor":
     """
-    Convertit une fenêtre en tenseur, en garantissant qu'elle est INSCRIPTIBLE.
+    Converts a window to a tensor, guaranteeing it is WRITABLE.
 
-    B23. Avec `use_mmap=True`, `np.load(mmap_mode="r")` renvoie un tableau en
-    lecture seule. `np.ascontiguousarray` sur une tranche déjà contiguë ne copie
-    PAS, et `.float()` sur du float32 est un no-op : le tenseur partage donc la
-    mémoire du mapping (vérifié : `t.data_ptr()` égale l'adresse du tableau).
-    PyTorch le signale — « writing to this tensor will result in undefined
-    behavior » — et les augmentations sont appliquées juste après.
+    B23. With `use_mmap=True`, `np.load(mmap_mode="r")` returns a read-only
+    array. `np.ascontiguousarray` on an already contiguous slice does NOT
+    copy, and `.float()` on float32 is a no-op: the tensor therefore shares
+    the mapping's memory (verified: `t.data_ptr()` equals the array address).
+    PyTorch warns about it - "writing to this tensor will result in undefined
+    behavior" - and the augmentations are applied right after.
 
-    Une écriture en place sur un mapping read-only, c'est au mieux un segfault,
-    au pire une corruption silencieuse du `.npy` sur disque. La copie n'a lieu
-    que si nécessaire : sur le chemin non-memmap, le tableau est déjà
-    inscriptible et rien ne change.
+    An in-place write on a read-only mapping is at best a segfault, at worst
+    silent corruption of the on-disk `.npy`. The copy only happens when
+    needed: on the non-memmap path, the array is already writable and nothing
+    changes.
     """
     arr = np.ascontiguousarray(window)
     if not arr.flags.writeable:
@@ -125,9 +125,9 @@ class TimeSeriesDataset(Dataset):
         augmentations: Optional[Union[TimeSeriesAugmentations, AugmentationConfig, Dict[str, Any]]] = None,
         multi_resolution_factors: Optional[List[int]] = None,
         p_multi_resolution: float = 0.0,
-        # G9.2 — JEPA inter-résolution : contexte décimé à k1, cible à k2,
-        # (k1, k2) tirés indépendamment dans multi_resolution_factors. À False
-        # (toutes les configs existantes), comportement inchangé au bit près.
+        # G9.2 - cross-resolution JEPA: context decimated at k1, target at
+        # k2, (k1, k2) drawn independently from multi_resolution_factors. At
+        # False (all existing configs), behavior bit-identical.
         cross_resolution: bool = False,
         use_mmap: bool = False,
     ):
@@ -154,7 +154,7 @@ class TimeSeriesDataset(Dataset):
         self.stride = stride
         self.return_tensor = return_tensor
         self.normalize_mode = normalize_mode
-        # Stocker les augmentations pour que AugmentedSubset y accède
+        # Store the augmentations so AugmentedSubset can access them
         self.augmentations = self._setup_augmentations(augmentations)
         self.multi_resolution_factors = list(multi_resolution_factors or [1])
         self.p_multi_resolution = float(p_multi_resolution)
@@ -173,7 +173,7 @@ class TimeSeriesDataset(Dataset):
                 data = np.load(self.data_path, mmap_mode="r")
             except ValueError as exc:
                 # numpy refuses object arrays with "Array can't be memory-mapped:
-                # Python objects in dtype." — accurate but it does not say what
+                # Python objects in dtype." - accurate but it does not say what
                 # to do about it.
                 raise ValueError(
                     f"use_mmap=True requires a dense array, but {self.data_path} "
@@ -182,7 +182,7 @@ class TimeSeriesDataset(Dataset):
                     f"fixed-length chunks precisely so the result is dense and "
                     f"memmappable. Original error: {exc}"
                 ) from exc
-            logger.info(f"  memmap enabled: {data.shape} {data.dtype} (RAM non chargée)")
+            logger.info(f"  memmap enabled: {data.shape} {data.dtype} (not loaded into RAM)")
         else:
             data = np.load(self.data_path, allow_pickle=True)
 
@@ -248,9 +248,9 @@ class TimeSeriesDataset(Dataset):
         self.normalized_data = self.normalizer.transform(self.data)
         self.window_indices = self._generate_window_indices()
 
-        # Log augmentation config (sera utilisé par AugmentedSubset)
+        # Log augmentation config (used by AugmentedSubset)
         if self.augmentations is not None:
-            logger.info(f"✓ Augmentations configured (applied via AugmentedSubset)")
+            logger.info(f"Augmentations configured (applied via AugmentedSubset)")
             self._log_augmentation_config()
 
         self._log_multi_resolution_coverage()
@@ -288,7 +288,7 @@ class TimeSeriesDataset(Dataset):
         if cfg.jitter_enabled:
             enabled.append(f"jitter(std={cfg.jitter_std}, p={cfg.p_jitter})")
         if cfg.magnitude_warp_enabled:
-            enabled.append(f"mag_warp(σ={cfg.magnitude_warp_sigma}, p={cfg.p_magnitude_warp})")
+            enabled.append(f"mag_warp(sigma={cfg.magnitude_warp_sigma}, p={cfg.p_magnitude_warp})")
         if cfg.drs_enabled:
             enabled.append(f"DRS({cfg.drs_factors}, p={cfg.p_drs})")
         if cfg.trend_enabled:
@@ -302,7 +302,7 @@ class TimeSeriesDataset(Dataset):
 
         A factor `f` needs `start + (ctx+pred)*f` timesteps of headroom, so short
         series silently fall back to f=1. Without this line there is no way to
-        tell from a training log whether multi-resolution did anything at all —
+        tell from a training log whether multi-resolution did anything at all -
         which is exactly the question that came up on the first real run.
         """
         if self.p_multi_resolution <= 0 or len(self.multi_resolution_factors) <= 1:
@@ -315,12 +315,12 @@ class TimeSeriesDataset(Dataset):
             return
 
         if self.cross_resolution:
-            # G9.2 — l'exigence n'est plus (ctx+pred)·f mais ctx·k1 + pred·k2.
-            # La paire la moins gourmande pour un facteur f est celle qui ne
-            # décime QUE la cible (k1=1, k2=f) : besoin = ctx + pred·f. Sans
-            # cette branche, le log annoncerait « inactif » sur les morceaux
-            # 2048 alors que les paires k1=1 y vivent très bien — ou pire,
-            # l'inverse : un arm silencieusement stérile.
+            # G9.2 - the requirement is no longer (ctx+pred)*f but
+            # ctx*k1 + pred*k2. The cheapest pair for a factor f only
+            # decimates the target (k1=1, k2=f): need = ctx + pred*f. Without
+            # this branch, the log would say "inactive" on 2048 chunks even
+            # though k1=1 pairs live there fine - or worse, the reverse: a
+            # silently sterile arm.
             series_ids = self.window_indices[:, 0]
             starts = self.window_indices[:, 1].astype(np.int64)
             if self.data.dtype == object:
@@ -342,15 +342,15 @@ class TimeSeriesDataset(Dataset):
             coverage = max(elig_tgt.values()) / total
             if coverage == 0:
                 logger.warning(
-                    "  ⚠️  Inter-résolution INACTIVE ici : aucune paire (k1,k2) "
-                    "ne tient dans les séries — l'arm serait STÉRILE sur ce "
-                    "dataset (il faut des morceaux ≥ ctx + pred·k2)."
+                    "  Cross-resolution INACTIVE here: no (k1,k2) pair fits "
+                    "the series; the arm would be STERILE on this dataset "
+                    "(chunks must be >= ctx + pred*k2)."
                 )
             else:
                 logger.info(
-                    f"  ✓ Inter-résolution p={self.p_multi_resolution} | "
-                    f"cible décimable: {parts} | contexte décimable: {parts_c} "
-                    f"| taux effectif ≈ {self.p_multi_resolution * coverage:.0%}"
+                    f"  Cross-resolution p={self.p_multi_resolution} | "
+                    f"decimable target: {parts} | decimable context: {parts_c} "
+                    f"| effective rate ~ {self.p_multi_resolution * coverage:.0%}"
                 )
             return
 
@@ -371,15 +371,15 @@ class TimeSeriesDataset(Dataset):
 
         if coverage == 0:
             logger.warning(
-                f"  ⚠️  Multi-resolution INACTIVE here: series are too short "
+                f"  Multi-resolution INACTIVE here: series are too short "
                 f"(need {need * min(eligible)} timesteps for the smallest factor). "
                 f"Every window falls back to f=1."
             )
         else:
             logger.info(
-                f"  ✓ Multi-resolution p={self.p_multi_resolution} | "
+                f"  Multi-resolution p={self.p_multi_resolution} | "
                 f"window eligibility: {parts} | effective rate "
-                f"≈ {self.p_multi_resolution * coverage:.0%}"
+                f"~ {self.p_multi_resolution * coverage:.0%}"
             )
 
     def _generate_window_indices(self) -> np.ndarray:
@@ -400,7 +400,7 @@ class TimeSeriesDataset(Dataset):
 
         Worse, that cost is paid PER PROCESS. Every dataloader worker walks the
         list, and touching a tuple bumps its refcount, which writes to its page
-        and defeats fork's copy-on-write — so the parent's 6.5 GB got duplicated
+        and defeats fork's copy-on-write - so the parent's 6.5 GB got duplicated
         into each of the 4 workers as the epoch progressed. That is the steady
         climb to ~50 GB observed on a 57 GB host.
 
@@ -414,7 +414,7 @@ class TimeSeriesDataset(Dataset):
 
         Both storage layouts behave the same way on short series. Previously the
         variable-length path silently dropped series that were too short, while
-        the fixed-length path raised — so a uniformly-short fixed-shape dataset
+        the fixed-length path raised - so a uniformly-short fixed-shape dataset
         (e.g. wikipedia-web-traffic-weekly, 114 weekly points against a required
         640) killed an entire multi-dataset run, whereas the same data stored as
         an object array would just have been skipped.
@@ -493,14 +493,15 @@ class TimeSeriesDataset(Dataset):
 
     def _sample_resolution_pair(self, series_len: int, start_idx: int):
         """
-        G9.2 — tire (k1, k2) indépendants pour l'arm inter-résolution.
+        G9.2 - draws independent (k1, k2) for the cross-resolution arm.
 
-        Le contexte est lu décimé à k1 et la cible à k2 : la fenêtre brute
-        requise est `ctx·k1 + pred·k2`, PAS `(ctx+pred)·f` — la contrainte
-        d'éligibilité en tient compte paire par paire. Repli (1, 1) si aucune
-        paire non triviale ne tient (le cas de TOUS les morceaux 2048 côté k1 :
-        1024·2 + 256 = 2304 > 2048 ; seules les paires k1=1 < k2 y vivent, et
-        l'espace complet exige les morceaux 8192 — synthétique, chronos_extras).
+        The context is read decimated at k1 and the target at k2: the raw
+        window needed is `ctx*k1 + pred*k2`, NOT `(ctx+pred)*f` - the
+        eligibility constraint accounts for this pair by pair. Fallback
+        (1, 1) when no non-trivial pair fits (the case of ALL 2048 chunks on
+        the k1 side: 1024*2 + 256 = 2304 > 2048; only k1=1 < k2 pairs live
+        there, and the full space requires the 8192 chunks - synthetic,
+        chronos_extras).
         """
         if self.p_multi_resolution <= 0.0 or len(self.multi_resolution_factors) <= 1:
             return 1, 1
@@ -546,9 +547,9 @@ class TimeSeriesDataset(Dataset):
         series_len = series.shape[-1]
 
         if allow_multi_resolution and self.cross_resolution:
-            # G9.2 — contexte à k1, cible à k2. La cible reste le futur
-            # PHYSIQUEMENT contigu : son premier point brut est exactement
-            # series[start + ctx·k1], quel que soit k2.
+            # G9.2 - context at k1, target at k2. The target stays the
+            # PHYSICALLY contiguous future: its first raw point is exactly
+            # series[start + ctx*k1], whatever k2 is.
             k1, k2 = self._sample_resolution_pair(series_len, start_idx)
             ctx_end = start_idx + self.context_length * k1
             tgt_end = ctx_end + self.prediction_length * k2
@@ -589,11 +590,11 @@ class TimeSeriesDataset(Dataset):
             'resolution_factor': factor,
         }
         if self.cross_resolution:
-            # w = k2/k1 par item (G9.2). Émise UNIQUEMENT en mode
-            # inter-résolution : le collate par défaut exige des clés
-            # identiques sur tous les items, et le flag étant un attribut du
-            # dataset, c'est tout ou rien — les configs existantes ne voient
-            # jamais cette clé (dict d'item inchangé, épinglé par test).
+            # w = k2/k1 per item (G9.2). Emitted ONLY in cross-resolution
+            # mode: the default collate requires identical keys on all items,
+            # and since the flag is a dataset attribute it is all or nothing
+            # - existing configs never see this key (item dict unchanged,
+            # pinned by test).
             item['w'] = w
         return item
 
@@ -656,7 +657,7 @@ class AugmentedSubset(Dataset):
             real_idx, allow_multi_resolution=self.apply_augmentation
         )
 
-        # Augmentation contrôlée par CETTE instance
+        # Augmentation controlled by THIS instance
         if self.apply_augmentation and self.dataset.augmentations is not None:
             item['context'], item['target'] = self.dataset.augmentations(
                 item['context'], item['target']

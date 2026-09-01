@@ -1,6 +1,6 @@
 # @package _global_
 #
-# EXPERIMENT — patch 32 / stride 16 (baseline tiny is 16 / 8)
+# EXPERIMENT - patch 32 / stride 16 (baseline tiny is 16 / 8)
 #
 # Tests the hypothesis that skill is governed by the seasonal period expressed
 # in PATCH POSITIONS, not by anything intrinsic to the dataset.

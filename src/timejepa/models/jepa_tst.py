@@ -1,12 +1,11 @@
-# src/timejepa/models/jepa_tst.py
 """
 JEPA-TST: Joint-Embedding Predictive Architecture for Time Series Forecasting.
 
 This model learns to predict future representations from past context:
-- Pretrain: Context → Encoder → Predictor → Predicted future repr
-            Target → Target Encoder (EMA) → Target repr
+- Pretrain: Context -> Encoder -> Predictor -> Predicted future repr
+            Target -> Target Encoder (EMA) -> Target repr
             Loss: MSE(Predicted, Target)
-- Finetune: Context → Encoder → Predictor → Decoder → Forecast values
+- Finetune: Context -> Encoder -> Predictor -> Decoder -> Forecast values
 """
 import torch
 import torch.nn as nn
@@ -34,14 +33,14 @@ def filter_loadable(
     Drop checkpoint entries whose shape does not match the target model.
 
     `load_state_dict(strict=False)` tolerates missing and unexpected keys but
-    NOT shape mismatches — those still raise. That bites whenever a component is
+    NOT shape mismatches - those still raise. That bites whenever a component is
     swapped for one that occupies the same key path with a different shape.
 
     The concrete case: a point decoder and the quantile head both own
     `decoder.decoder.unpatching.projection`, sized `patch_size * 1` and
     `patch_size * n_quantiles` respectively. Loading a pre-quantile checkpoint
     into a quantile model therefore aborted, which is precisely the intended
-    workflow — reuse a pretrained encoder, re-learn the head.
+    workflow - reuse a pretrained encoder, re-learn the head.
 
     Returns:
         (filtered_state_dict, list of (key, checkpoint_shape, model_shape))
@@ -62,26 +61,25 @@ def grow_future_query_table(
     key: str = "predictor.future_position_embedding",
 ) -> Dict[str, torch.Tensor]:
     """
-    Fusionne la table de requêtes d'un checkpoint COURT dans un modèle LONG.
+    Merges the query table of a SHORT checkpoint into a LONG model.
 
-    `predictor.future_position_embedding` est le seul paramètre du modèle dont
-    la forme dépende de `prediction_length` (table [1, max_target_patches,
-    d_model]). Passer l'horizon natif de 256 à 512 la fait grandir de 50 à 98
-    lignes : sans cette fonction, `filter_loadable` droppe la clé entière et le
-    prédicteur repart d'une table ALÉATOIRE — les 50 requêtes apprises sont
-    jetées alors que seules les 48 nouvelles ont besoin d'une initialisation.
+    `predictor.future_position_embedding` is the only model parameter whose
+    shape depends on `prediction_length` (table [1, max_target_patches,
+    d_model]). Raising the native horizon from 256 to 512 grows it from 50 to
+    98 rows: without this function, `filter_loadable` drops the whole key and
+    the predictor restarts from a RANDOM table - the 50 learned queries are
+    thrown away when only the 48 new ones need initialization.
 
-    Ici : les lignes existantes du checkpoint sont copiées telles quelles dans
-    une COPIE de la table du modèle (dont l'init fournit les lignes neuves), et
-    le state_dict retourné n'a plus de mismatch sur cette clé. Refus explicite
-    (ValueError) si la table du checkpoint est PLUS LONGUE (tronquer des
-    requêtes apprises serait une perte silencieuse) ou si d_model diffère
-    (aucune fusion n'a de sens). No-op si les formes coïncident.
+    Here: the checkpoint's existing rows are copied as-is into a COPY of the
+    model's table (whose init provides the new rows), and the returned
+    state_dict has no mismatch left on this key. Explicit refusal (ValueError)
+    if the checkpoint table is LONGER (truncating learned queries would be a
+    silent loss) or if d_model differs (no merge makes sense). No-op when the
+    shapes match.
 
-    Opt-in uniquement : appelée par FinetuneModule quand
-    `extend_horizon_queries=true` (config d'arm), jamais par défaut — sans le
-    flag, le mismatch reste un échec bruyant, ce qui est le bon comportement
-    pour une géométrie NON intentionnelle.
+    Opt-in only: called by FinetuneModule when `extend_horizon_queries=true`
+    (arm config), never by default - without the flag, the mismatch stays a
+    loud failure, which is the right behavior for an UNINTENDED geometry.
     """
     if key not in state_dict:
         return state_dict
@@ -94,14 +92,14 @@ def grow_future_query_table(
     if ckpt_table.shape[-1] != model_table.shape[-1]:
         raise ValueError(
             f"{key}: d_model {ckpt_table.shape[-1]} (checkpoint) != "
-            f"{model_table.shape[-1]} (modèle) — fusion impossible."
+            f"{model_table.shape[-1]} (model) - cannot merge."
         )
     if ckpt_table.shape[1] > model_table.shape[1]:
         raise ValueError(
-            f"{key}: la table du checkpoint ({ckpt_table.shape[1]} lignes) est "
-            f"plus longue que celle du modèle ({model_table.shape[1]}) — la "
-            f"tronquer jetterait des requêtes apprises. Réduire l'horizon du "
-            f"checkpoint n'exige aucune fusion : le prédicteur slice sa table."
+            f"{key}: checkpoint table ({ckpt_table.shape[1]} rows) is "
+            f"longer than the model's ({model_table.shape[1]}); truncating "
+            f"would drop learned queries. Shrinking the horizon needs no "
+            f"merge: the predictor slices its own table."
         )
     merged = model_table.detach().clone()
     n = ckpt_table.shape[1]
@@ -109,9 +107,9 @@ def grow_future_query_table(
     out = dict(state_dict)
     out[key] = merged
     logger.info(
-        f"  ⤢ {key}: table étendue {tuple(ckpt_table.shape)} → "
-        f"{tuple(model_table.shape)} ({n} lignes pré-entraînées copiées, "
-        f"{model_table.shape[1] - n} lignes neuves à l'init du modèle)"
+        f"  {key}: table extended {tuple(ckpt_table.shape)} -> "
+        f"{tuple(model_table.shape)} ({n} pretrained rows copied, "
+        f"{model_table.shape[1] - n} new rows at model init)"
     )
     return out
 
@@ -122,13 +120,13 @@ class JEPATST(nn.Module):
 
     Architecture:
         Pretrain (True Forecasting JEPA):
-            Context [B, L_ctx, C] → RevIN → Patching → Online Encoder → context_repr
-            Target [B, L_tgt, C] → RevIN (same stats) → Patching → Target Encoder (EMA) → target_repr
-            Predictor(context_repr) → pred_repr
+            Context [B, L_ctx, C] -> RevIN -> Patching -> Online Encoder -> context_repr
+            Target [B, L_tgt, C] -> RevIN (same stats) -> Patching -> Target Encoder (EMA) -> target_repr
+            Predictor(context_repr) -> pred_repr
             Loss: MSE(pred_repr, target_repr.detach())
         
         Finetune:
-            Context [B, L_ctx, C] → RevIN → Patching → Encoder → Predictor → Decoder → Forecast
+            Context [B, L_ctx, C] -> RevIN -> Patching -> Encoder -> Predictor -> Decoder -> Forecast
             Loss: MSE(Forecast, Ground Truth)
     """
 
@@ -167,25 +165,25 @@ class JEPATST(nn.Module):
         # RevIN
         use_revin: bool = True,
 
-        # G9.2 — arm JEPA inter-résolution : construit le prédicteur avec le
-        # FiLM de conditionnement d'échelle (w = k2/k1). Opt-in strict : à
-        # False, aucun paramètre supplémentaire n'existe et le state_dict des
-        # configs existantes est inchangé au bit près.
+        # G9.2 - cross-resolution JEPA arm: builds the predictor with the
+        # scale-conditioning FiLM (w = k2/k1). Strict opt-in: at False, no
+        # extra parameter exists and the state_dict of existing configs is
+        # bit-identical.
         cross_resolution: bool = False,
 
-        # G8.4 — mise à l'échelle robuste arcsinh COMPOSÉE autour de RevIN
-        # (voir components/robust_scale.py). Opt-in strict : à False, aucun
-        # attribut, aucun chemin de calcul, state_dict inchangé.
+        # G8.4 - robust arcsinh scaling COMPOSED around RevIN (see
+        # components/robust_scale.py). Strict opt-in: at False, no attribute,
+        # no compute path, state_dict unchanged.
         robust_scale: bool = False,
 
-        # ESJEPA — arm ErrorSignal : deuxième voie latente qui prédit les
-        # STATISTIQUES du résidu de lissage (hétéroscédasticité conditionnelle,
-        # jamais sa réalisation — irrécupérable par définition). z_target est
-        # calculé des données (EWMA causal, aucun encodeur), z_pred sort d'une
-        # tête sur le tronc du prédicteur, et au finetune z module l'étalement
-        # du fan quantile (gate zéro-init — la médiane est intouchable par
-        # construction). Opt-in strict : à False, aucun attribut, aucun chemin
-        # de calcul, state_dict inchangé au bit près.
+        # ESJEPA - ErrorSignal arm: second latent path that predicts the
+        # STATISTICS of the smoothing residual (conditional
+        # heteroscedasticity, never its realization - unrecoverable by
+        # definition). z_target is computed from the data (causal EWMA, no
+        # encoder), z_pred comes from a head on the predictor trunk, and at
+        # finetune z modulates the quantile fan's spread (zero-init gate - the
+        # median is untouchable by construction). Strict opt-in: at False, no
+        # attribute, no compute path, state_dict bit-identical.
         error_signal: bool = False,
 
         affine: bool = True,
@@ -195,15 +193,15 @@ class JEPATST(nn.Module):
 
         if error_signal and predictor_type != 'transformer':
             raise ValueError(
-                "error_signal=True exige predictor_type='transformer' — la "
-                "tête z vit sur le tronc du prédicteur (MLPPredictor n'a ni "
-                "requêtes ni tokens cibles où la brancher)."
+                "error_signal=True requires predictor_type='transformer' - "
+                "the z head lives on the predictor trunk (MLPPredictor has "
+                "neither queries nor target tokens to attach it to)."
             )
         if error_signal and num_features != 1:
             raise ValueError(
-                "error_signal=True n'est implémenté qu'en univarié "
-                "(num_features=1) — les stats de résidu par patch sont "
-                "calculées canal replié."
+                "error_signal=True is only implemented univariate "
+                "(num_features=1) - per-patch residual stats are computed "
+                "with channels folded."
             )
 
         self.input_length = input_length
@@ -289,7 +287,7 @@ class JEPATST(nn.Module):
         # 128, silently truncated, with no error anywhere.
         #
         # This stayed invisible because train.py and evaluate.py both replace
-        # model.decoder with a correctly-strided one right after construction —
+        # model.decoder with a correctly-strided one right after construction -
         # but anything using JEPATST directly (notably the packaged
         # `model.forecast(...)` API) got the broken head.
         self.decoder = ForecastingHead(
@@ -307,8 +305,8 @@ class JEPATST(nn.Module):
         self._pretrain_mode = True
         
         print(f"JEPATST initialized:")
-        print(f"  Context: {input_length} tp → {self.num_patches} patches")
-        print(f"  Target: {prediction_length} tp → {self.num_target_patches} patches")
+        print(f"  Context: {input_length} tp -> {self.num_patches} patches")
+        print(f"  Target: {prediction_length} tp -> {self.num_target_patches} patches")
         
     def set_pretrain_mode(self, mode: bool = True):
         """Set whether model is in pretrain or finetune mode."""
@@ -341,7 +339,7 @@ class JEPATST(nn.Module):
                 - 'targets': Target encoder representations [B, num_target_patches, d_model]
                 - 'context_embeddings': Context embeddings [B, num_context_patches, d_model]
         """
-        # 0. G8.4 — compression robuste, stats du CONTEXTE, avant RevIN.
+        # 0. G8.4 - robust compression, CONTEXT stats, before RevIN.
         if self.robust_scaler is not None:
             self.robust_scaler.fit(context)
             context = self.robust_scaler.transform(context)
@@ -376,7 +374,7 @@ class JEPATST(nn.Module):
                 #
                 # Encoding it alone means the target encoder sees far fewer
                 # patches than the online encoder (31 vs 127 at the current
-                # geometry ctx=1024/pred=256/patch=16/stride=8) — a distribution shift
+                # geometry ctx=1024/pred=256/patch=16/stride=8) - a distribution shift
                 # between two networks that are supposed to be an EMA pair. It
                 # also makes targets nearly context-free (a 96-step window in
                 # isolation is little more than local statistics), which is a
@@ -384,7 +382,7 @@ class JEPATST(nn.Module):
                 #
                 # Patch geometry works out exactly: with L_ctx=384, L_tgt=96,
                 # patch=16, stride=8, the concatenated window yields 59 patches
-                # whose last 11 start at 384, 392, ..., 464 — the same spans as
+                # whose last 11 start at 384, 392, ..., 464 - the same spans as
                 # the 11 standalone target patches, now contextualized.
                 full_norm = torch.cat([context_norm, target_norm], dim=1)
                 full_patches = self.patching(full_norm)
@@ -396,7 +394,7 @@ class JEPATST(nn.Module):
 
         # 5. Predict target representations from context embeddings
         if self.error_signal:
-            # ESJEPA : la même passe du tronc produit aussi z_pred [B, N, 4].
+            # ESJEPA: the same trunk pass also produces z_pred [B, N, 4].
             predictions, z_predictions = self.predictor.forward_simple(
                 context_embeddings=context_embeddings,
                 num_targets=num_target_patches,
@@ -407,8 +405,8 @@ class JEPATST(nn.Module):
             predictions = self.predictor.forward_simple(
                 context_embeddings=context_embeddings,
                 num_targets=num_target_patches,
-                # G9.2 : ratio d'échelle par item — None sur tous les chemins
-                # existants, donc bit-identique hors arm inter-résolution.
+                # G9.2: per-item scale ratio - None on all existing paths,
+                # so bit-identical outside the cross-resolution arm.
                 w=w,
             )
         # [B, num_target_patches, d_model]
@@ -419,8 +417,8 @@ class JEPATST(nn.Module):
             'context_embeddings': context_embeddings,
         }
         if self.error_signal:
-            # Clés ABSENTES flag off (le dict de sortie des configs existantes
-            # est épinglé par test).
+            # Keys ABSENT with the flag off (the output dict of existing
+            # configs is pinned by test).
             out['z_predictions'] = z_predictions
             out['z_targets'] = self._residual_stats(
                 context_norm, target_norm, num_target_patches)
@@ -434,31 +432,31 @@ class JEPATST(nn.Module):
         num_target_patches: int,
     ) -> torch.Tensor:
         """
-        ESJEPA — z_target : statistiques DÉTERMINISTES du résidu de lissage de
-        la fenêtre cible, par patch. [B, num_target_patches, 4].
+        ESJEPA - z_target: DETERMINISTIC statistics of the target window's
+        smoothing residual, per patch. [B, num_target_patches, 4].
 
-        Ground truth calculée des DONNÉES normalisées (post-arcsinh+RevIN),
-        indépendante de tout encodeur : rien à EMA-iser, rien qui puisse
-        s'effondrer, compatible contextualized_targets=false et
-        cross_resolution (en xres les grilles contexte/cible diffèrent — le
-        lissage traverse la jonction, approximation acceptée et documentée).
+        Ground truth computed from the normalized DATA (post-arcsinh+RevIN),
+        independent of any encoder: nothing to EMA, nothing that can collapse,
+        compatible with contextualized_targets=false and cross_resolution (in
+        xres the context/target grids differ - the smoothing crosses the
+        junction, an accepted and documented approximation).
 
-        Lissage : EWMA CAUSAL (halflife = patch_size/2), implémenté en
-        convolution à noyau exponentiel tronqué, initialisé sur la queue du
-        contexte — aucun lookahead : la stat du patch t ne dépend que des
-        valeurs <= fin du patch t (épinglé par test).
+        Smoothing: CAUSAL EWMA (halflife = patch_size/2), implemented as a
+        convolution with a truncated exponential kernel, initialized on the
+        context tail - no lookahead: the stat of patch t only depends on
+        values <= end of patch t (pinned by test).
 
-        Les 4 composantes par patch de résidu r :
-          0. log(RMS(r) + 1e-3)          — l'essentiel : l'échelle du bruit
-          1. log(MAD(r)·1.4826 + 1e-3)   — échelle robuste (queues lourdes)
-          2. tanh(mean(r³)/RMS³)          — asymétrie bornée
-          3. autocorrélation lag-1        — bruit blanc vs bruit structuré
-        Plancher 1e-3 : patches plats (solar de nuit — pathologie mesurée de
-        l'arm recon, cf. jepa_pretrain_module).
+        The 4 components per residual patch r:
+          0. log(RMS(r) + 1e-3)          - the essential one: noise scale
+          1. log(MAD(r)*1.4826 + 1e-3)   - robust scale (heavy tails)
+          2. tanh(mean(r^3)/RMS^3)       - bounded asymmetry
+          3. lag-1 autocorrelation       - white vs structured noise
+        Floor 1e-3: flat patches (solar at night - measured pathology of the
+        recon arm, see jepa_pretrain_module).
         """
         B, target_len, C = target_norm.shape
-        # Noyau exponentiel tronqué à K pas (couvre >99 % de la masse à
-        # halflife=8 pour K=64), jamais plus long que le contexte disponible.
+        # Exponential kernel truncated at K steps (covers >99% of the mass at
+        # halflife=8 for K=64), never longer than the available context.
         halflife = self.patch_size / 2.0
         alpha = 1.0 - 0.5 ** (1.0 / halflife)
         K = min(context_norm.shape[1] + 1, 4 * self.patch_size)
@@ -467,16 +465,16 @@ class JEPATST(nn.Module):
         kern = alpha * (1.0 - alpha) ** lags
         kern = (kern / kern.sum()).flip(0).reshape(1, 1, K)
 
-        # Fenêtre = queue du contexte (K-1 pas) ‖ cible ; conv "valid" rend
-        # exactement target_len lissages causaux.
+        # Window = context tail (K-1 steps) + target; "valid" conv yields
+        # exactly target_len causal smoothings.
         tail = torch.cat([context_norm[:, -(K - 1):], target_norm], dim=1)
         x = tail.permute(0, 2, 1).reshape(B * C, 1, -1)
         smooth = F.conv1d(x, kern).reshape(B, C, target_len).permute(0, 2, 1)
         resid = (target_norm - smooth).squeeze(-1)          # [B, target_len]
 
-        # Découpe par patch sur la grille du Patching (16/8). Si la géométrie
-        # randomisée laisse un patch de padding (règle répétition du dernier
-        # point), on réplique la dernière stat — même politique que Patching.
+        # Per-patch split on the Patching grid (16/8). If the randomized
+        # geometry leaves a padding patch (last-point repetition rule), the
+        # last stat is replicated - same policy as Patching.
         patches = resid.unfold(1, self.patch_size, self.stride)  # [B, N', P]
         rms = patches.pow(2).mean(-1).sqrt()
         mad = (patches - patches.median(-1, keepdim=True).values).abs() \
@@ -516,9 +514,9 @@ class JEPATST(nn.Module):
         Returns:
             Dictionary with 'forecast' and 'forecast_denorm'
         """
-        # 0. G8.4 — compression robuste. Même sémantique que RevIN :
-        # skip_revin=True signifie « appel interne de forecast(), le contexte
-        # est déjà dans le repère transformé » — ne rien refaire.
+        # 0. G8.4 - robust compression. Same semantics as RevIN:
+        # skip_revin=True means "internal forecast() call, the context is
+        # already in the transformed frame" - do nothing again.
         if self.robust_scaler is not None and not skip_revin:
             self.robust_scaler.fit(context)
             context = self.robust_scaler.transform(context)
@@ -539,11 +537,10 @@ class JEPATST(nn.Module):
         # [B, num_patches, d_model]
         
         # 4. Predict future representations
-        # G9.3 (2026-08-31) : w devient un argument — le finetune xres passe
-        # le w du batch, l'inférence RateIN pourra passer w=1/k. Défaut w=None
-        # = le comportement T2 exact : w=1 explicite quand le FiLM existe
-        # (son biais est entraîné, ne pas l'appliquer n'est PAS l'identité),
-        # None sinon.
+        # G9.3 (2026-08-31): w becomes an argument so xres finetuning passes
+        # the batch's w and RateIN inference can pass w=1/k. Default None
+        # keeps exact T2 behavior: explicit w=1 when the FiLM exists (its
+        # bias is trained, skipping it is not identity), None otherwise.
         if w is not None:
             w_eff = w.to(context_embeddings.device).reshape(-1)
         elif hasattr(self.predictor, 'w_film'):
@@ -554,9 +551,10 @@ class JEPATST(nn.Module):
 
         z_pred = None
         if self.error_signal:
-            # ESJEPA : z_pred sort de la même passe et modulera l'étalement du
-            # fan quantile ; recalculé à chaque roll par le rollout (qui passe
-            # par forward_finetune), y compris sur le batch B×Q du fan.
+            # ESJEPA: z_pred comes from the same pass and will modulate the
+            # quantile fan's spread; recomputed at every roll by the rollout
+            # (which goes through forward_finetune), including on the fan's
+            # B*Q batch.
             predictions, z_pred = self.predictor.forward_simple(
                 context_embeddings=context_embeddings,
                 num_targets=self.num_target_patches,
@@ -567,13 +565,12 @@ class JEPATST(nn.Module):
             predictions = self.predictor.forward_simple(
                 context_embeddings=context_embeddings,
                 num_targets=self.num_target_patches,
-                # Audit 2026-08-20 (T2) : après pretrain xres, le biais du FiLM
-                # est ENTRAÎNÉ — le comportement appris « à w=1 » l'inclut. Ne
-                # pas appliquer le FiLM au finetune/éval n'est donc PAS
-                # l'identité : c'est un modèle différent de celui qui a été
-                # pré-entraîné. On applique explicitement w=1 quand le FiLM
-                # existe ; sans FiLM (toutes les configs non-xres), w=None et
-                # rien ne change.
+                # Audit 2026-08-20 (T2): after xres pretrain, the FiLM bias is
+                # TRAINED - the learned behavior "at w=1" includes it. Not
+                # applying the FiLM at finetune/eval is therefore NOT the
+                # identity: it is a different model from the pretrained one.
+                # We apply w=1 explicitly when the FiLM exists; without FiLM
+                # (all non-xres configs), w=None and nothing changes.
                 w=w_eff,
             )
         # [B, num_target_patches, d_model]
@@ -585,24 +582,24 @@ class JEPATST(nn.Module):
         #
         # `context_embeddings` is forwarded unconditionally: the point decoders
         # ignore it, the quantile head cross-attends to it. The predictor output
-        # is E[z_target | z_context] under MSE — a conditional mean — so a head
+        # is E[z_target | z_context] under MSE - a conditional mean - so a head
         # that only sees it cannot separate two contexts with the same expected
         # future but different volatility. Giving it the context restores that.
         forecast, forecast_denorm = self.decoder(
             predictions, skip_revin=skip_revin,
             context_embeddings=context_embeddings,
-            # ESJEPA : None hors arm (kwarg par défaut — chemin bit-identique) ;
-            # avec l'arm, la tête quantile refuse bruyamment un z manquant et
-            # un décodeur point refuse un z fourni.
+            # ESJEPA: None outside the arm (default kwarg - bit-identical
+            # path); with the arm, the quantile head loudly refuses a missing
+            # z and a point decoder refuses a provided z.
             z=z_pred,
         )
         # Point decoders: [B, prediction_length, C]
         # Quantile head:  [B, prediction_length, Q], sorted along Q
 
-        # G8.4 — retour à l'espace brut pour les sorties dénormalisées. sinh est
-        # monotone : sur un fan de quantiles l'ordre des niveaux est préservé,
-        # et median(inverse(q)) == inverse(median(q)) — le médian extrait plus
-        # bas reste donc cohérent.
+        # G8.4 - back to raw space for denormalized outputs. sinh is
+        # monotonic: on a quantile fan the level order is preserved, and
+        # median(inverse(q)) == inverse(median(q)) - the median extracted
+        # below stays consistent.
         if self.robust_scaler is not None and not skip_revin:
             forecast_denorm = self.robust_scaler.inverse(forecast_denorm)
 
@@ -624,8 +621,8 @@ class JEPATST(nn.Module):
             result['forecast_denorm'] = head.median(forecast_denorm)
 
         if z_pred is not None:
-            # Exposé pour le vérificateur G12 (lecture de confiance par patch)
-            # et les sondes ; clé ABSENTE hors arm.
+            # Exposed for the G12 verifier (per-patch confidence read) and
+            # the probes; key ABSENT outside the arm.
             result['z'] = z_pred
 
         if return_representations:
@@ -652,8 +649,8 @@ class JEPATST(nn.Module):
         TRAINED in), the whole rollout happens in a single instance-normalized
         frame: RevIN statistics are computed once on the real context, pinned
         via `revin.freeze()`, and every roll operates in that frame. The result
-        is denormalized once at the end. Mixing spaces mid-rollout — feeding a
-        normalized forecast back into a raw-space context — silently produces
+        is denormalized once at the end. Mixing spaces mid-rollout - feeding a
+        normalized forecast back into a raw-space context - silently produces
         garbage, which is what the previous implementation did.
 
         `skip_revin=True` means "the caller guarantees the context is already in
@@ -692,7 +689,7 @@ class JEPATST(nn.Module):
                 w=w,
             )
             # Every horizon-shaped tensor must be truncated, the quantile fan
-            # included — leaving it at prediction_length while the point forecast
+            # included - leaving it at prediction_length while the point forecast
             # is cut to n silently mismatches them downstream.
             for key in ('forecast', 'forecast_denorm', 'quantiles', 'quantiles_denorm'):
                 if key in result:
@@ -700,22 +697,22 @@ class JEPATST(nn.Module):
             return result
 
         # ---- Case 2: rolling forecast ----
-        # Audit 2026-08-20 (T5) : sur un checkpoint arcsinh, skip_revin=True
-        # (le flag eval_skip_revin d'evaluate.py) court-circuiterait AUSSI la
-        # compression robuste et sortirait des chiffres silencieusement faux —
-        # le refus P3.2 ne couvre que le state_dict, pas ce flag. Refus bruyant.
+        # Audit 2026-08-20 (T5): on an arcsinh checkpoint, skip_revin=True
+        # (evaluate.py's eval_skip_revin flag) would ALSO bypass the robust
+        # compression and emit silently wrong numbers - the P3.2 refusal only
+        # covers the state_dict, not this flag. Refuse loudly.
         if self.robust_scaler is not None and skip_revin:
             raise ValueError(
-                "skip_revin=True est incompatible avec un modèle robust_scale : "
-                "la compression arcsinh serait court-circuitée et les chiffres "
-                "seraient silencieusement faux (eval_skip_revin est un mode "
-                "legacy pré-P0, jamais valide sur un checkpoint arcsinh)."
+                "skip_revin=True is incompatible with a robust_scale model: "
+                "the arcsinh compression would be bypassed and the numbers "
+                "would be silently wrong (eval_skip_revin is a pre-P0 legacy "
+                "mode, never valid on an arcsinh checkpoint)."
             )
 
-        # G8.4 — compression robuste au POINT D'ENTRÉE UNIQUE du rollout :
-        # stats calculées une fois sur le vrai contexte, tout le rollout
-        # (feedback compris) vit dans l'espace compressé, l'inverse ne
-        # s'applique qu'aux sorties *_denorm.
+        # G8.4 - robust compression at the rollout's SINGLE ENTRY POINT:
+        # stats computed once on the true context, the whole rollout
+        # (feedback included) lives in compressed space, the inverse only
+        # applies to *_denorm outputs.
         if self.robust_scaler is not None and not skip_revin:
             self.robust_scaler.fit(context)
             context = self.robust_scaler.transform(context)
@@ -736,7 +733,7 @@ class JEPATST(nn.Module):
             # With a probabilistic head, propagate the FAN through the rolls
             # instead of the median. Median feedback makes every later roll see
             # a context smoother than real data, so intervals shrink with
-            # horizon when the truth widens — measured on exchange h720: width
+            # horizon when the truth widens - measured on exchange h720: width
             # 0.267 against a sqrt(h)-growing true uncertainty.
             if sample_paths and getattr(self.decoder, 'is_probabilistic', False):
                 forecast_norm, quantiles_norm, quantile_levels = \
@@ -854,19 +851,19 @@ class JEPATST(nn.Module):
         Mechanism
         ---------
         Roll 1 is a single exact forward. For later rolls the batch is expanded
-        Q-fold — one copy per quantile level — and copy k is fed the level-k
+        Q-fold - one copy per quantile level - and copy k is fed the level-k
         trajectory of the previous roll. Each copy then continues at its own
         level (a comonotonic coupling), and the marginal fan at every timestep
         is the per-timestep SORT of the Q paths (rearrangement, which also
         restores monotonicity where paths cross).
 
-        What this assumes, honestly: perfect rank dependence across rolls — a
+        What this assumes, honestly: perfect rank dependence across rolls - a
         series running at its q90 keeps running at its q90. True temporal
         dependence is weaker, so this bounds the spread from above the way
         independence would bound it from below. It replaces a systematic bias
         (median feedback shrinks intervals as the horizon grows, because the
         median path is smoother than any real trajectory) with a much smaller,
-        sign-known one. Deterministic — the levels ARE the stratified sample,
+        sign-known one. Deterministic - the levels ARE the stratified sample,
         no RNG involved.
 
         Cost: rolls after the first run at batch B*Q (Q=9 by default). Only the
@@ -1019,4 +1016,4 @@ class JEPATST(nn.Module):
                 if not k.endswith('.mean') and not k.endswith('.std')
             }
         torch.save(state, save_path)
-        print(f"✅ Saved pretrained encoder + predictor to {save_path}")
+        print(f"Saved pretrained encoder + predictor to {save_path}")

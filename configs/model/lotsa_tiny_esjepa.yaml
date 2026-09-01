@@ -1,40 +1,42 @@
 # @package _global_
 #
-# ARM ESJEPA — « ErrorSignal-JEPA » : la deuxième voie latente (G8.6, idée
-# utilisateur ; conception 2026-08-23).
+# ESJEPA ARM - "ErrorSignal-JEPA": the second latent pathway (G8.6;
+# designed 2026-08-23).
 #
-#   # CONTRÔLE (déjà couru) : le pretrain mix lui-même —
+#   # CONTROL (already run): the mix pretrain itself -
 #   #   checkpoints/timejepa_lotsa_tiny_mix/pretrain_True/
-#   # L'arm :
+#   # The arm:
 #   python scripts/train.py --config-name lotsa_tiny_esjepa wandb.run_name=esjepa
-#   # puis : lotsa_tiny_esjepa_zeroshot (finetune 1 époque) et lotsa_tiny_esjepa_eval
+#   # then: lotsa_tiny_esjepa_zeroshot (1-epoch finetune) and lotsa_tiny_esjepa_eval
 #
-# Mécanisme : le prédicteur MSE converge vers E[z_tgt|z_ctx] — une moyenne
-# conditionnelle (mesuré : pred_var 0.6 vs target_var 0.95) ; l'information de
-# dispersion vit dans le résidu, jamais observé. L'arm ajoute une tête z sur le
-# tronc du prédicteur qui prédit les STATISTIQUES du résidu de lissage EWMA de
-# la fenêtre cible (log-RMS, log-MAD, asymétrie, autocorr lag-1 par patch —
-# l'hétéroscédasticité conditionnelle, jamais la réalisation du bruit,
-# irrécupérable par définition). Au finetune, z module l'ÉTALEMENT du fan
-# quantile via un gate zéro-init sur les largeurs de _make_monotone — la
-# médiane est intouchable par construction : MASE structurellement invariant,
-# tout delta WQL attribuable à l'étalement. Coût : <9k params (+0.8 %).
+# Mechanism: the MSE predictor converges to E[z_tgt|z_ctx] - a conditional
+# mean (measured: pred_var 0.6 vs target_var 0.95); the dispersion information
+# lives in the residual, never observed. The arm adds a z head on the
+# predictor trunk that predicts the STATISTICS of the target window's EWMA
+# smoothing residual (log-RMS, log-MAD, skewness, lag-1 autocorr per patch -
+# conditional heteroscedasticity, never the noise realization, unrecoverable
+# by definition). At finetune, z modulates the SPREAD of the quantile fan via
+# a zero-init gate on the _make_monotone widths - the median is untouchable by
+# construction: MASE structurally invariant, any WQL delta attributable to the
+# spread. Cost: <9k params (+0.8%).
 #
-# UNE VARIABLE : hérite de lotsa_tiny_mix (corpus v2, arcsinh, LR 3e-4, cibles
-# standalone, budget 2 époques) — le duel esjepa-vs-mix ne porte que l'objectif z.
+# ONE VARIABLE: inherits from lotsa_tiny_mix (v2 corpus, arcsinh, LR 3e-4,
+# standalone targets, 2-epoch budget) - the esjepa-vs-mix duel carries only
+# the z objective.
 #
-# Écarts délibérés (dits, pas cachés) :
-#   1. val_loss inclut la composante z (λ_z·smooth_l1) ⇒ NON comparable en brut
-#      à celle du contrôle mix — comparer val_loss/{invariance,sigreg,z}.
-#   2. λ_z = 0.1 (training.loss.lambda_z) : 4 dims contre 128 pour l'invariance.
-#      Témoin de siphonnage : si train_loss/invariance dévie de >2 % du contrôle
-#      à époque égale → λ_z=0.03 ou repli « prédicteur z séparé » (au plan).
+# Deliberate deviations (stated, not hidden):
+#   1. val_loss includes the z component (lambda_z * smooth_l1) => NOT
+#      comparable raw to the mix control's - compare val_loss/{invariance,sigreg,z}.
+#   2. lambda_z = 0.1 (training.loss.lambda_z): 4 dims vs 128 for invariance.
+#      Siphoning witness: if train_loss/invariance deviates >2% from the
+#      control at equal epoch -> lambda_z=0.03 or the "separate z predictor"
+#      fallback (in the plan).
 #
-# TÉMOINS (équivalents du aug/w_neq1_frac d'xres — s'ils sont mauvais, le run
-# ne mesure rien) :
-#   * esjepa/z_corr (val, Spearman z_pred↔log-RMS réalisée) : prédiction P1
-#     posée AVANT le run : > 0.3 ; ≈ 0 = kill-switch, l'arm meurt au pretrain.
-#   * esjepa/z_pred_std_ratio : collapse-vers-la-moyenne-marginale.
+# WITNESSES (equivalents of xres's aug/w_neq1_frac - if they are bad, the run
+# measures nothing):
+#   * esjepa/z_corr (val, Spearman z_pred vs realized log-RMS): prediction P1
+#     stated BEFORE the run: > 0.3; ~0 = kill switch, the arm dies at pretrain.
+#   * esjepa/z_pred_std_ratio: collapse toward the marginal mean.
 defaults:
   - lotsa_tiny_mix
   - _self_
@@ -48,18 +50,18 @@ training:
     lambda_z: 0.1
 
 checkpoint:
-  # Ajouté APRÈS le lancement du run du 2026-08-25 (sans effet sur lui —
-  # snapshots manuels de last.ckpt en palliatif) : val plateau => top-3 gelé
-  # à mi-run, les checkpoints tardifs manquaient à la série probe-juge.
+  # Added AFTER the 2026-08-25 run launched (no effect on it - manual
+  # snapshots of last.ckpt as a stopgap): val plateau => top-3 frozen mid-run,
+  # the late checkpoints were missing from the probe-judge series.
   save_top_k: -1
 
 data:
-  #   3. ration_oversample au PRETRAIN (décision utilisateur 2026-08-25, E20 :
-  #      les fluctuations de loss du pretrain suivent le même drift de
-  #      composition G10.2 ; v3 l'aura aussi). Le contrôle mix ne l'avait pas ⇒
-  #      règle d'attribution si le duel GIFT est gagné : témoins z vivants
-  #      (z_corr > 0.3, gate_absmean décollé) = l'arm ; témoins morts = le
-  #      rationnement, et l'arm est neutre.
+  #   3. ration_oversample at PRETRAIN (decision 2026-08-25, E20: the
+  #      pretrain loss fluctuations follow the same G10.2 composition drift;
+  #      v3 will have it too). The mix control did not have it =>
+  #      attribution rule if the GIFT duel is won: live z witnesses
+  #      (z_corr > 0.3, gate_absmean lifted off) = the arm; dead witnesses =
+  #      the rationing, and the arm is neutral.
   ration_oversample: true
 
 wandb:

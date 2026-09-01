@@ -1,35 +1,31 @@
-#!/usr/bin/env python
 """
-Démo de communication : TimeJEPA forecast une VIDÉO, pixel par pixel.
+Communication demo: TimeJEPA forecasts a VIDEO, pixel by pixel.
 
     python scripts/forecast_video.py --scene pendulum \\
         --checkpoint checkpoints/timejepa_lotsa_tiny_v3_zs/pretrain_False/<champion>.ckpt \\
         --model-config lotsa_tiny_v3_eval
 
-Principe (conçu 2026-08-31) : chaque pixel est une série univariée d'intensité,
-traitée EXACTEMENT comme le harnais traite le multivarié (éclatement par canal,
-zéro couplage spatial). Le modèle finetuné produit la médiane (vidéo forecast)
-ET le fan q10-q90 (heatmap d'incertitude par pixel — l'image que personne ne
-montre : le forecaster qui dessine son propre doute). Aucune modification du
-modèle, aucun entraînement : c'est le checkpoint GIFT tel quel.
+Principle (designed 2026-08-31): each pixel is a univariate intensity series,
+handled EXACTLY like the harness handles multivariate data (per-channel split,
+zero spatial coupling). The finetuned model produces the median (forecast
+video) AND the q10-q90 fan (per-pixel uncertainty heatmap - the forecaster
+drawing its own doubt). No model change, no training: the GIFT checkpoint as is.
 
-Deux scènes générées ici même (pas de dépendance codec, et la vérité terrain
-de la continuation est disponible par construction) :
-  * pendulum — pendule non linéaire intégré en RK4 (période ~64 frames à
-    l'amplitude par défaut : ~16 périodes dans le contexte de 1024 frames).
-  * vortex   — allée de von Kármán derrière un cylindre, solveur
-    lattice-Boltzmann D2Q9 minimal (Re ~ 220) ; le champ rendu est la
-    vorticité. Le lâcher tourbillonnaire est périodique : cas nominal pour un
-    forecast par pixel. La simulation est mise en cache (.npy) — la partie
-    lente ne tourne qu'une fois.
+Two scenes generated in this script (no codec dependency, and the ground truth
+of the continuation is available by construction):
+  * pendulum - non-linear pendulum integrated with RK4 (period ~64 frames at
+    the default amplitude: ~16 periods in the 1024-frame context).
+  * vortex   - von Karman street behind a cylinder, minimal D2Q9
+    lattice-Boltzmann solver (Re ~ 220); the rendered field is vorticity.
+    Vortex shedding is periodic: the nominal case for per-pixel forecasting.
+    The simulation is cached (.npy) - the slow part runs once.
 
-Sortie : un GIF côte à côte [vérité | médiane forecastée | largeur du fan]
-(la barre verticale marque la frontière contexte→forecast), des PNG
-d'instantanés, et deux chiffres honnêtes : MAE du modèle vs MAE de la
-persistance (dernière frame du contexte figée) sur l'horizon forecasté.
+Output: a side-by-side GIF [truth | forecast median | fan width], snapshot
+PNGs, and two honest numbers: model MAE vs persistence MAE (last context
+frame frozen) over the forecast horizon.
 
-Statut : démo, jamais un chiffre officiel. Le forecast est fait SANS TTA par
-défaut (--tta-flip pour l'activer, formule officielle E19b).
+Status: demo, never an official number. Forecast runs WITHOUT TTA by default
+(--tta-flip to enable, official E19b formula).
 """
 
 import argparse
@@ -46,26 +42,26 @@ from hydra import compose, initialize_config_dir              # noqa: E402
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
 
 
-# ---------------------------------------------------------------- scènes
+# ---------------------------------------------------------------- scenes
 
 def render_disc(h: int, w: int, cx: float, cy: float, r: float) -> np.ndarray:
-    """Disque anti-aliasé par fonction de distance — rendu sub-pixel propre."""
+    """Anti-aliased disc via a distance function - clean sub-pixel rendering."""
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
     return np.clip(r + 0.5 - d, 0.0, 1.0)
 
 
 def scene_pendulum(n_frames: int, h: int, w: int) -> np.ndarray:
-    """Pendule NON linéaire (RK4) — la période dépend de l'amplitude, donc le
-    motif par pixel n'est pas une sinusoïde de manuel : un vrai test."""
-    # Période 128 frames et disque h/7 : le transit sur un pixel dure ~8-15
-    # frames — AU-DESSUS de la résolution du patch (16/8). Mesuré 2026-08-31 :
-    # à période 64 / rayon h/12, les impulsions par pixel font 2-3 frames et la
-    # médiane pinball-optimale est ~0 partout (max 0.03) — le cas bizitobs en
-    # vidéo. La démo doit rester dans le régime que le modèle résout.
+    """NON-linear pendulum (RK4) - the period depends on amplitude, so the
+    per-pixel pattern is not a textbook sinusoid: a real test."""
+    # Period 128 frames and disc h/7: the transit over one pixel lasts ~8-15
+    # frames - ABOVE the patch resolution (16/8). Measured 2026-08-31: at
+    # period 64 / radius h/12, per-pixel pulses last 2-3 frames and the
+    # pinball-optimal median is ~0 everywhere (max 0.03) - the bizitobs case
+    # in video. The demo must stay in the regime the model resolves.
     g_over_l = (2 * np.pi / 128.0) ** 2
     theta, omega = np.deg2rad(40.0), 0.0
-    dt, sub = 1.0, 8                          # 8 sous-pas RK4 par frame
+    dt, sub = 1.0, 8                          # 8 RK4 sub-steps per frame
 
     pivot = (w / 2.0, h * 0.12)
     rod = h * 0.62
@@ -90,31 +86,31 @@ def scene_pendulum(n_frames: int, h: int, w: int) -> np.ndarray:
 
 def scene_vortex(n_frames: int, h: int, w: int, cache: Path,
                  record_every: int = 35, warmup: int = 20000) -> np.ndarray:
-    """Allée de von Kármán — LBM D2Q9 sur cylindre, champ rendu = vorticité.
+    """Von Karman street - D2Q9 LBM past a cylinder, rendered field = vorticity.
 
-    Solveur volontairement minimal (BGK, rebond simple sur l'obstacle,
-    Zou/He approximé aux bords) : l'objectif est un lâcher PÉRIODIQUE
-    visuellement juste, pas une CFD de production. Simulation à 3x la
-    résolution de sortie puis moyennage — l'anti-aliasing gratuit.
+    Deliberately minimal solver (BGK, simple bounce-back on the obstacle,
+    approximate Zou/He at the borders): the goal is a visually correct
+    PERIODIC shedding, not production CFD. Simulated at 3x the output
+    resolution then averaged - free anti-aliasing.
 
-    Calibration mesurée (2026-08-31, v1 ratée) : à warmup 4000 le lâcher n'a
-    JAMAIS démarré (autocorr sans pic, persistance MAE 0.0069 — champ quasi
-    statique, le modèle forecastait un transitoire apériodique). L'instabilité
-    met ~15-25k pas à s'établir ; on perturbe l'état initial en plus du
-    décentrage. Période visée : St≈0.2 → T ≈ D/(St·ulb) pas de lattice ; avec
-    D=2·(3h//9) et record_every=35, ~70-80 frames/période → ~13 périodes dans
-    le contexte de 1024.
+    Measured calibration (2026-08-31, failed v1): at warmup 4000 the shedding
+    NEVER started (no autocorr peak, persistence MAE 0.0069 - near-static
+    field, the model was forecasting an aperiodic transient). The instability
+    takes ~15-25k steps to establish; the initial state is perturbed on top
+    of the off-centering. Target period: St~0.2 -> T ~ D/(St*ulb) lattice
+    steps; with D=2*(3h//9) and record_every=35, ~70-80 frames/period -> ~13
+    periods in the 1024 context.
     """
     if cache.exists():
         arr = np.load(cache)
         if arr.shape == (n_frames, h, w):
-            print(f"vortex : cache {cache}")
+            print(f"vortex: cache {cache}")
             return arr
 
     nx, ny = w * 3, h * 3
     re, ulb = 220.0, 0.04
     cyl_r = ny // 9
-    cx, cy = nx // 4, ny // 2 + 2              # +2 : brise la symétrie, amorce le lâcher
+    cx, cy = nx // 4, ny // 2 + 2              # +2: breaks symmetry, seeds the shedding
     nulb = ulb * 2 * cyl_r / re
     omega = 1.0 / (3 * nulb + 0.5)
 
@@ -133,8 +129,8 @@ def scene_vortex(n_frames: int, h: int, w: int, cache: Path,
         return rho * t9[:, None, None] * (1 + cu + 0.5 * cu ** 2 - usqr)
 
     vel_in = np.zeros((2, ny, nx)); vel_in[0] = ulb
-    # État initial perturbé (pas seulement décentré) : sans cela le sillage
-    # symétrique métastable survit à tout le warmup (mesuré, v1).
+    # Perturbed initial state (not just off-centered): without it the
+    # metastable symmetric wake survives the whole warmup (measured, v1).
     vel_0 = vel_in.copy()
     vel_0[0] *= 1.0 + 0.04 * np.sin(2 * np.pi * yy / ny) \
                     * np.sin(2 * np.pi * xx / nx)
@@ -143,17 +139,17 @@ def scene_vortex(n_frames: int, h: int, w: int, cache: Path,
     frames = np.empty((n_frames, h, w), dtype=np.float32)
     total = warmup + n_frames * record_every
     for step in range(total):
-        fin[col_right, :, -1] = fin[col_right, :, -2]          # sortie libre
+        fin[col_right, :, -1] = fin[col_right, :, -2]          # free outlet
         rho = fin.sum(axis=0)
         u = np.einsum('qd,qyx->dyx', v, fin) / rho
-        u[:, :, 0] = vel_in[:, :, 0]                           # entrée imposée
+        u[:, :, 0] = vel_in[:, :, 0]                           # imposed inlet
         rho[:, 0] = 1.0 / (1.0 - u[0, :, 0]) * (
             fin[col_mid, :, 0].sum(axis=0) + 2 * fin[col_right, :, 0].sum(axis=0))
         feq = equilibrium(rho, u)
         fin[col_left, :, 0] = feq[col_left, :, 0] \
             + fin[col_right[::-1], :, 0] - feq[col_right[::-1], :, 0]
         fout = fin - omega * (fin - feq)
-        for q in range(9):                                     # rebond obstacle
+        for q in range(9):                                     # obstacle bounce-back
             fout[q, obstacle] = fin[8 - q, obstacle]
         for q in range(9):                                     # streaming
             fin[q] = np.roll(np.roll(fout[q], v[q, 0], axis=1), v[q, 1], axis=0)
@@ -166,10 +162,10 @@ def scene_vortex(n_frames: int, h: int, w: int, cache: Path,
             small = vort.reshape(h, 3, w, 3).mean(axis=(1, 3))
             frames[k // record_every] = small
         if step % 5000 == 0:
-            print(f"vortex : pas {step}/{total}")
+            print(f"vortex: step {step}/{total}")
 
-    # Vorticité signée -> [0,1] par une échelle GLOBALE robuste (q99) : la même
-    # pour toutes les frames, sinon la normalisation détruirait la dynamique.
+    # Signed vorticity -> [0,1] through a robust GLOBAL scale (q99): the same
+    # for all frames, otherwise normalization would destroy the dynamics.
     s = np.quantile(np.abs(frames), 0.99)
     frames = np.clip(frames / (2 * max(s, 1e-9)) + 0.5, 0.0, 1.0).astype(np.float32)
     cache.parent.mkdir(parents=True, exist_ok=True)
@@ -181,7 +177,7 @@ def scene_vortex(n_frames: int, h: int, w: int, cache: Path,
 
 def forecast_series(model, series: np.ndarray, horizon: int,
                     device, chunk: int, tta_flip: bool) -> np.ndarray:
-    """[N, ctx] -> fan [N, horizon, 9]. Le cœur commun aux deux modes."""
+    """[N, ctx] -> fan [N, horizon, 9]. The core shared by both modes."""
     n = series.shape[0]
     fans = np.empty((n, horizon, 9), dtype=np.float32)
     with torch.no_grad():
@@ -189,7 +185,7 @@ def forecast_series(model, series: np.ndarray, horizon: int,
             x = torch.from_numpy(series[i:i + chunk, :, None]).float().to(device)
             q = model.forecast(x, n=horizon)["quantiles_denorm"]
             if tta_flip:
-                # q_tau(x) <- (q_tau(x) - q_{1-tau}(-x)) / 2  (E19b, officiel)
+                # q_tau(x) <- (q_tau(x) - q_{1-tau}(-x)) / 2  (E19b, official)
                 q_neg = model.forecast(-x, n=horizon)["quantiles_denorm"]
                 q = 0.5 * (q - torch.flip(q_neg, dims=[-1]))
             fans[i:i + chunk] = q.cpu().numpy()
@@ -198,15 +194,15 @@ def forecast_series(model, series: np.ndarray, horizon: int,
 
 def forecast_pixels(model, video: np.ndarray, ctx_len: int, horizon: int,
                     device, chunk: int, tta_flip: bool):
-    """Mode pixel : chaque pixel = une série. -> (med, q10, q90, mean) [h,H,W]."""
+    """Pixel mode: each pixel = one series. -> (med, q10, q90, mean) [h,H,W]."""
     t_all, h, w = video.shape
-    assert t_all >= ctx_len + horizon, "vidéo trop courte pour contexte+horizon"
+    assert t_all >= ctx_len + horizon, "video too short for context+horizon"
     ctx = video[t_all - horizon - ctx_len: t_all - horizon]      # [ctx, H, W]
     q = forecast_series(model, ctx.reshape(ctx_len, h * w).T,
                         horizon, device, chunk, tta_flip)         # [P, h, 9]
     shape = (horizon, h, w)
-    # Moyenne du fan ≈ E[x] : pour un pixel quasi binaire c'est la probabilité
-    # de présence — la « balle fantôme », le pane de com.
+    # Fan mean ~ E[x]: for a near-binary pixel this is the presence
+    # probability - the "ghost ball", the communication pane.
     return (q[..., 4].T.reshape(shape), q[..., 0].T.reshape(shape),
             q[..., 8].T.reshape(shape), q.mean(-1).T.reshape(shape))
 
@@ -214,21 +210,21 @@ def forecast_pixels(model, video: np.ndarray, ctx_len: int, horizon: int,
 def forecast_pca(model, video: np.ndarray, ctx_len: int, horizon: int,
                  device, chunk: int, tta_flip: bool,
                  n_modes: int, mc_samples: int, seed: int = 0):
-    """Mode POD/PCA : forecaster les COEFFICIENTS MODAUX, pas les pixels.
+    """POD/PCA mode: forecast the MODAL COEFFICIENTS, not the pixels.
 
-    La scène a peu de degrés de liberté (le pendule : ~1, l'allée de vortex :
-    une onde progressive, ~2 modes en quadrature) ; pixel par pixel, on pose
-    1600 questions intermittentes là où la scène n'en pose que k. PCA sur les
-    frames du CONTEXTE SEUL (les modes ne voient jamais le futur — zéro
-    fuite) : vidéo ≈ mu + Σ a_j(t)·mode_j. Chaque a_j est une série LISSE et
-    périodique — le régime nominal du modèle — et on forecast k séries au
-    lieu de H·W. C'est la philosophie du papier appliquée à la démo :
-    prédire dans un espace de représentation, décoder pour l'affichage.
+    The scene has few degrees of freedom (pendulum: ~1, vortex street: a
+    traveling wave, ~2 modes in quadrature); pixel by pixel we ask 1600
+    intermittent questions where the scene only asks k. PCA on the CONTEXT
+    frames ONLY (modes never see the future - zero leakage): video ~ mu +
+    sum a_j(t)*mode_j. Each a_j is a SMOOTH, periodic series - the model's
+    nominal regime - and we forecast k series instead of H*W. The paper's
+    philosophy applied to the demo: predict in a representation space,
+    decode for display.
 
-    Incertitude pixel par Monte-Carlo : un niveau de quantile tiré PAR MODE
-    (indépendance inter-modes — la PCA décorrèle sur le contexte, hypothèse
-    déclarée), la trajectoire entière de ce niveau étant gardée (cohérence
-    temporelle intra-mode, même logique que le rollout comonotone du fan).
+    Pixel uncertainty via Monte Carlo: one quantile level drawn PER MODE
+    (inter-mode independence - PCA decorrelates on the context, stated
+    assumption), keeping that level's whole trajectory (intra-mode temporal
+    coherence, same logic as the comonotone fan rollout).
     """
     t_all, h, w = video.shape
     ctx = video[t_all - horizon - ctx_len: t_all - horizon].reshape(ctx_len, -1)
@@ -239,7 +235,7 @@ def forecast_pca(model, video: np.ndarray, ctx_len: int, horizon: int,
     modes = vt[:k]                                               # [k, P]
     coeffs = x0 @ modes.T                                        # [ctx, k]
     evr = float((s[:k] ** 2).sum() / max((s ** 2).sum(), 1e-12))
-    print(f"PCA : {k} modes, variance du contexte expliquée {evr:.1%}")
+    print(f"PCA: {k} modes, context variance explained {evr:.1%}")
 
     q = forecast_series(model, coeffs.T.astype(np.float32),
                         horizon, device, chunk, tta_flip)        # [k, h, 9]
@@ -262,7 +258,7 @@ def forecast_pca(model, video: np.ndarray, ctx_len: int, horizon: int,
             mean.reshape(shape).astype(np.float32))
 
 
-# ---------------------------------------------------------------- rendu
+# ---------------------------------------------------------------- rendering
 
 PANE_LABELS = ("ground truth", "TimeJEPA median", "TimeJEPA mean",
                "uncertainty q90-q10")
@@ -270,10 +266,10 @@ PANE_LABELS = ("ground truth", "TimeJEPA median", "TimeJEPA mean",
 
 def to_gif(path: Path, truth: np.ndarray, med: np.ndarray, mean: np.ndarray,
            width: np.ndarray, ctx_tail: np.ndarray, upscale: int, fps: int):
-    """GIF en GRILLE 2x2 étiquetée (format post) :
-        [ vérité | médiane ]      contexte d'abord, puis horizon
-        [ moyenne | incertitude ] (liseré rouge en haut = on forecast).
-    Bug corrigé 2026-08-31 : la v1 en bande n'assemblait que 3 panes sur 4."""
+    """Labeled 2x2 GRID GIF (post format):
+        [ truth | median ]       context first, then horizon
+        [ mean  | uncertainty ]  (red border = we are forecasting).
+    Bug fixed 2026-08-31: the strip v1 only assembled 3 of the 4 panes."""
     from PIL import Image, ImageDraw
     from matplotlib import colormaps
     magma = colormaps["magma"]
@@ -288,9 +284,9 @@ def to_gif(path: Path, truth: np.ndarray, med: np.ndarray, mean: np.ndarray,
     grid_h = 2 * (cap_h + pane_h) + gap
     caption_rows = None
     for t in range(n_tail + len(truth)):
-        if t < n_tail:                                   # phase contexte : la
-            g = np.clip(ctx_tail[t], 0, 1)               # même vidéo partout,
-            panes = [g, g, g, np.zeros_like(g)]          # incertitude nulle
+        if t < n_tail:                                   # context phase: same
+            g = np.clip(ctx_tail[t], 0, 1)               # video in every pane,
+            panes = [g, g, g, np.zeros_like(g)]          # zero uncertainty
         else:
             k = t - n_tail
             panes = [np.clip(truth[k], 0, 1), np.clip(med[k], 0, 1),
@@ -302,7 +298,7 @@ def to_gif(path: Path, truth: np.ndarray, med: np.ndarray, mean: np.ndarray,
             a = (rgb * 255).astype(np.uint8)
             a = np.repeat(np.repeat(a, upscale, axis=0), upscale, axis=1)
             cells.append(Image.fromarray(a))
-        if caption_rows is None:                         # bandeaux rendus 1 fois
+        if caption_rows is None:                         # captions rendered once
             caption_rows = []
             for row in (PANE_LABELS[:2], PANE_LABELS[2:]):
                 strip = Image.new("RGB", (grid_w, cap_h), (28, 28, 28))
@@ -319,7 +315,7 @@ def to_gif(path: Path, truth: np.ndarray, med: np.ndarray, mean: np.ndarray,
             cy = (j // 2) * (cap_h + pane_h + gap)
             full.paste(caption_rows[j // 2], (0, cy)) if j % 2 == 0 else None
             full.paste(cell, (cx, cy + cap_h))
-        if t >= n_tail:                                  # cadre rouge : on forecast
+        if t >= n_tail:                                  # red frame: forecasting
             d = ImageDraw.Draw(full)
             d.rectangle([0, 0, grid_w - 1, grid_h - 1],
                         outline=(255, 60, 60), width=2)
@@ -337,19 +333,19 @@ def main():
     ap.add_argument("--width", type=int, default=48)
     ap.add_argument("--context", type=int, default=1024)
     ap.add_argument("--horizon", type=int, default=256)
-    ap.add_argument("--chunk", type=int, default=1024, help="séries par forward")
+    ap.add_argument("--chunk", type=int, default=1024, help="series per forward")
     ap.add_argument("--mode", choices=["pixel", "pca"], default="pixel",
-                    help="pixel = 1 série par pixel ; pca = forecast des "
-                         "coefficients modaux (POD), la démo « prédire dans "
-                         "une représentation »")
+                    help="pixel = 1 series per pixel; pca = forecast the modal "
+                         "coefficients (POD), the \"predict in a "
+                         "representation\" demo")
     ap.add_argument("--n-modes", type=int, default=8)
     ap.add_argument("--mc-samples", type=int, default=128,
-                    help="échantillons MC pour l'incertitude pixel (mode pca)")
+                    help="MC samples for pixel uncertainty (pca mode)")
     ap.add_argument("--tta-flip", action="store_true")
     ap.add_argument("--upscale", type=int, default=6)
     ap.add_argument("--fps", type=int, default=25)
     ap.add_argument("--tail", type=int, default=96,
-                    help="frames de contexte montrées avant le liseré rouge")
+                    help="context frames shown before the red border")
     ap.add_argument("--out", default="evaluation/video_forecast")
     args = ap.parse_args()
 
@@ -357,25 +353,25 @@ def main():
     if args.scene == "pendulum":
         video = scene_pendulum(n_frames, args.height, args.width)
     else:
-        # v2 dans le nom : la calibration du solveur fait partie de l'identité
-        # du cache (la v1 non périodique a la même forme de tableau).
+        # v2 in the name: the solver calibration is part of the cache
+        # identity (the non-periodic v1 has the same array shape).
         cache = Path(args.out) / f"vortex_v2_{args.height}x{args.width}_{n_frames}.npy"
         video = scene_vortex(n_frames, args.height, args.width, cache)
 
-    # Garde-fou (mesuré 2026-08-31, une soirée perdue) : un checkpoint de
-    # PRETRAIN porte un décodeur présent mais JAMAIS entraîné (le JEPA ne lui
-    # donne aucun gradient), et le contrat P3.2 ne couvre que le cœur — le
-    # chargement passe, les sorties sont du bruit plausible (corr 0.00 sur une
-    # sinusoïde nue, contre 1.00 pour le finetuné). Discriminant fiable : les
-    # hyper_parameters Lightning du module d'entraînement.
+    # Guard (measured 2026-08-31, one evening lost): a PRETRAIN checkpoint
+    # carries a decoder that exists but was NEVER trained (JEPA gives it no
+    # gradient), and the P3.2 contract only covers the core - loading
+    # succeeds, outputs are plausible noise (corr 0.00 on a bare sinusoid,
+    # vs 1.00 for the finetuned one). Reliable discriminant: the Lightning
+    # hyper_parameters of the training module.
     hp = torch.load(args.checkpoint, map_location="cpu",
                     weights_only=False).get("hyper_parameters", {})
     if "finetune_mode" not in hp and "contextualized_targets" in hp:
         raise SystemExit(
-            f"REFUS : {args.checkpoint} est un checkpoint de PRETRAIN "
-            "(hyper_parameters JEPA, pas de finetune_mode) — sa tête quantile "
-            "est à l'initialisation. La démo vidéo exige un checkpoint "
-            "FINETUNÉ (répertoires *_zs/pretrain_False ou champions/).")
+            f"REFUSED: {args.checkpoint} is a PRETRAIN checkpoint "
+            "(JEPA hyper_parameters, no finetune_mode) - its quantile head "
+            "is at initialization. The video demo requires a FINETUNED "
+            "checkpoint (*_zs/pretrain_False or champions/ directories).")
 
     config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
     with initialize_config_dir(version_base=None, config_dir=config_dir):
@@ -399,9 +395,9 @@ def main():
     mae_model = float(np.abs(med - truth).mean())
     mae_persist = float(np.abs(persist - truth).mean())
     cov80 = float(((truth >= q10) & (truth <= q90)).mean())
-    print(f"MAE modèle      : {mae_model:.4f}")
-    print(f"MAE persistance : {mae_persist:.4f}  (ratio {mae_model / mae_persist:.3f})")
-    print(f"couverture 80%  : {cov80:.3f} (nominal 0.800)")
+    print(f"model MAE       : {mae_model:.4f}")
+    print(f"persistence MAE : {mae_persist:.4f}  (ratio {mae_model / mae_persist:.3f})")
+    print(f"80% coverage    : {cov80:.3f} (nominal 0.800)")
 
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     tag = f"{args.scene}_{Path(args.checkpoint).stem}" \
@@ -416,7 +412,7 @@ def main():
         Image.fromarray((np.clip(row, 0, 1) * 255).astype(np.uint8)) \
              .resize((row.shape[1] * args.upscale, row.shape[0] * args.upscale),
                      Image.NEAREST).save(out / f"{tag}_frame{k:03d}.png")
-    print(f"Sorties : {out}/{tag}.gif")
+    print(f"Outputs: {out}/{tag}.gif")
 
 
 if __name__ == "__main__":

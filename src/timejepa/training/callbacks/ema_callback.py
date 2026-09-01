@@ -1,4 +1,3 @@
-# src/timejepa/training/callbacks/ema_callback.py
 """
 PyTorch Lightning callback for EMA (Exponential Moving Average) updates.
 

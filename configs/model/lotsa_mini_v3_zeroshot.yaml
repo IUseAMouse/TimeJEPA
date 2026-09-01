@@ -1,17 +1,17 @@
 # @package _global_
-# Finetune zero-shot du mini-v3 — protocole G7.3c gelé (1 époque cosinus,
-# sélection par éval GIFT, tous les checkpoints conservés).
+# Zero-shot finetune of mini-v3 - frozen G7.3c protocol (1 cosine epoch,
+# selection by GIFT eval, all checkpoints kept).
 #
 #   python scripts/train.py --config-name lotsa_mini_v3_zeroshot \
-#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/<dernier ckpt nommé>"'
-#   # JAMAIS last.ckpt (piège Lightning 2.6.5, §5 du registre) : pointer le
-#   # checkpoint NOMMÉ le plus tardif.
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/<latest named ckpt>"'
+#   # NEVER last.ckpt (Lightning 2.6.5 trap, section 5 of the registry):
+#   # point to the latest NAMED checkpoint.
 #
-# Rationnement et augmentations hérités de lotsa_mini_v3 (mêmes règles que le
-# couple tiny-v3 : TiRex au pretrain seulement, ration des deux côtés).
-# Lecture du verdict : la trajectoire d'évals 5 %-en-5 % contre celle de
-# tiny-v3 (10 % 0.6042 / 50 % 0.5983 / plateau 0.598-0.601 ×flip) — le duel
-# se lit par checkpoints appariés en % d'époque, pas seulement au champion.
+# Rationing and augmentations inherited from lotsa_mini_v3 (same rules as the
+# tiny-v3 pair: TiRex at pretrain only, rationing on both sides).
+# Reading the verdict: the 5%-by-5% eval trajectory against tiny-v3's
+# (10% 0.6042 / 50% 0.5983 / plateau 0.598-0.601 xflip) - the duel is read on
+# checkpoints paired by % of epoch, not only at the champion.
 defaults:
   - lotsa_mini_v3
   - _self_

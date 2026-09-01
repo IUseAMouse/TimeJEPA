@@ -1,50 +1,46 @@
-#!/usr/bin/env python
 """
-Sonde « lecture par énergie » du JEPA — le veto avant toute construction.
+JEPA "energy readout" probe - the veto before building anything.
 
     python scripts/probe_energy.py \\
         --checkpoint checkpoints/timejepa_lotsa_tiny_full_zs/pretrain_False/last.ckpt
 
-Hypothèse testée
-----------------
-Un JEPA pré-entraîné est une fonction d'ÉNERGIE entraînée : le pretrain minimise
-distance(pred(ctx), enc(futur_vrai)) pendant que SIGReg maintient les encodages
-des autres futurs dispersés. Si cette énergie discrimine, on peut lire le modèle
-SANS décodeur : proposer K futurs candidats réalistes (block-bootstrap de
-l'historique de la série — vraies queues, vrais zéros, vraies rafales), les
-encoder, et les classer par distance latente au futur prédit. Intervalle de
-confiance = quantiles pondérés par softmax(-E/T). Aucun entraînement.
+Hypothesis: a pretrained JEPA is a trained ENERGY function - pretraining
+minimizes distance(pred(ctx), enc(true_future)) while SIGReg keeps the
+encodings of other futures dispersed. If this energy discriminates, the model
+can be read WITHOUT a decoder: propose K realistic candidate futures
+(block-bootstrap of the series history - real tails, real zeros, real bursts),
+encode them, rank them by latent distance to the predicted future. Confidence
+interval = quantiles weighted by softmax(-E/T). No training.
 
-Le test (une après-midi, CPU) : pour des instances GIFT, générer K candidats
-bootstrap + le seasonal naive + LE FUTUR VRAI, et mesurer le RANG du vrai dans
-le classement d'énergie.
-  * rang normalisé ~0.5 = l'énergie classe au hasard -> dossier clos, un jour.
-  * rang systématiquement bas = le latent JEPA « sait » des choses que le
-    décodeur ne lit pas -> l'édifice (re-notation, intervalles) mérite d'être
-    construit. C'est aussi l'argument central du papier, mesuré.
-Second témoin : Spearman(énergie, MAE(candidat, vérité)) parmi les bootstraps —
-l'énergie doit être corrélée à la proximité réelle, pas seulement repérer le
-vrai par un artefact.
+The test (one afternoon, CPU): for GIFT instances, generate K bootstrap
+candidates + the seasonal naive + THE TRUE FUTURE, and measure the true one's
+RANK in the energy ordering.
+  * normalized rank ~0.5 = the energy ranks at random -> case closed.
+  * systematically low rank = the JEPA latent "knows" things the decoder does
+    not read -> the edifice (re-scoring, intervals) is worth building. Also
+    the paper's central argument, measured.
+Second witness: Spearman(energy, MAE(candidate, truth)) among bootstraps -
+the energy must correlate with real proximity, not just spot the true future
+through an artifact.
 
-Protocole d'encodage — répliqué du pretrain, pas réinventé
-----------------------------------------------------------
-Les cibles du pretrain (lignée tiny-full : contextualized_targets=true) sont
-encodées comme [ctx‖cible] normalisés AUX STATS DU CONTEXTE puis tranchées
-(jepa_tst.forward_pretrain). La sonde fait exactement pareil pour chaque
-candidat, robust_scale compris quand le checkpoint le porte. L'énergie est
-mesurée sur les n premiers patches (l'horizon GIFT est plus court que les 256
-pas du prédicteur — même troncature que forecast()).
+Encoding protocol - replicated from pretrain, not reinvented: pretrain targets
+(tiny-full lineage: contextualized_targets=true) are encoded as [ctx||target]
+normalized WITH THE CONTEXT STATS then sliced (jepa_tst.forward_pretrain). The
+probe does exactly the same for each candidate, robust_scale included when the
+checkpoint carries it. Energy is measured on the first n patches (the GIFT
+horizon is shorter than the predictor's 256 steps - same truncation as
+forecast()).
 
-Deux approximations, dites plutôt que cachées :
-  * l'encodeur ONLINE remplace le target encoder (le chargeur d'éval saute
-    l'EMA) — en fin de pretrain les deux sont proches ;
-  * sur un checkpoint de FINETUNE, plus rien n'ancre pred(ctx) ~ enc(futur)
-    (la pinball seule entraîne) : un rang dégradé pretrain -> finetune mesure
-    le DRIFT du full finetune, pas un échec du pretrain. Comparer les deux
-    checkpoints est le sous-résultat le plus intéressant de la sonde.
+Two approximations, stated rather than hidden:
+  * the ONLINE encoder stands in for the target encoder (the eval loader
+    skips the EMA) - at end of pretrain the two are close;
+  * on a FINETUNE checkpoint nothing anchors pred(ctx) ~ enc(future) anymore
+    (pinball alone trains): a degraded rank pretrain -> finetune measures the
+    full-finetune DRIFT, not a pretrain failure. Comparing both checkpoints
+    is the probe's most interesting sub-result.
 
-Sorties : tableau console + JSON sous evaluation/probe_energy/.
-Ne modifie rien : aucun code d'entraînement touché, lecture seule.
+Outputs: console table + JSON under evaluation/probe_energy/.
+Modifies nothing: no training code touched, read-only.
 """
 
 import argparse
@@ -68,9 +64,9 @@ from evaluate_gift import prepare_context                          # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("probe_energy")
 
-# Trois configs de la queue E18 (l'énergie doit-elle reconnaître les
-# morphologies que le décodeur ne sait pas produire ?) + trois où le modèle
-# est bon (l'énergie doit y être franchement discriminante, sinon rien à lire).
+# Three configs from the E18 tail (must the energy recognize morphologies the
+# decoder cannot produce?) + three where the model is good (the energy should
+# be clearly discriminant there, otherwise nothing to read).
 DEFAULT_CONFIGS = [
     "solar/10T/short",
     "bizitobs_l2c/5T/short",
@@ -83,7 +79,7 @@ DEFAULT_CONFIGS = [
 
 def block_bootstrap(history: np.ndarray, h: int, block: int,
                     rng: np.random.Generator) -> np.ndarray:
-    """Un futur candidat : blocs contigus de l'historique, recollés jusqu'à h."""
+    """One candidate future: contiguous history blocks, glued up to length h."""
     finite = history[np.isfinite(history)]
     if len(finite) < block + 1:
         finite = np.resize(finite, block + 1)
@@ -101,14 +97,14 @@ def block_bootstrap(history: np.ndarray, h: int, block: int,
 def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
                    standalone: bool = False):
     """
-    ctx        [L]        contexte préparé (même chemin que l'éval GIFT)
-    candidates [Nc, h]    futurs candidats, le VRAI en position 0
-    standalone : encoder le candidat SEUL (convention des lignées
-                 contextualized_targets=false — mix/xres) au lieu de la
-                 tranche de [ctx‖cand]. Utiliser la convention du pretrain
-                 du checkpoint sondé, sinon l'énergie est interrogée hors
-                 de son régime d'entraînement.
-    Retourne (energies_mse, energies_cos) [Nc].
+    ctx        [L]        prepared context (same path as the GIFT eval)
+    candidates [Nc, h]    candidate futures, the TRUE one at position 0
+    standalone: encode the candidate ALONE (convention of the
+                contextualized_targets=false lineages - mix/xres) instead of
+                the [ctx||cand] slice. Use the probed checkpoint's pretrain
+                convention, otherwise the energy is queried outside its
+                training regime.
+    Returns (energies_mse, energies_cos) [Nc].
     """
     h = candidates.shape[1]
     n_tgt = (h - model.patching.patch_size) // model.patching.stride + 1
@@ -116,21 +112,21 @@ def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
     x_ctx = torch.from_numpy(ctx).reshape(1, -1, 1).to(device)
     cands = torch.from_numpy(candidates).unsqueeze(-1).to(device)   # [Nc, h, 1]
 
-    # G8.4 — mêmes stats (celles du contexte) pour le contexte ET les candidats.
+    # G8.4 - same stats (the context's) for the context AND the candidates.
     if model.robust_scaler is not None:
         model.robust_scaler.fit(x_ctx)
         x_ctx = model.robust_scaler.transform(x_ctx)
         cands = model.robust_scaler.transform(cands)
 
-    # RevIN : stats du contexte, appliquées aux candidats — la convention
-    # exacte de forward_pretrain (cible normalisée aux stats du contexte).
+    # RevIN: context stats applied to the candidates - the exact
+    # forward_pretrain convention (target normalized with context stats).
     ctx_norm = model.revin(x_ctx, mode='norm') if model.revin is not None else x_ctx
     if model.revin is not None:
         cands_norm = (cands - model.revin.mean) / model.revin.std
     else:
         cands_norm = cands
 
-    # z_pred : le chemin de forward_finetune, tronqué à l'horizon du candidat.
+    # z_pred: the forward_finetune path, truncated to the candidate horizon.
     ctx_emb = model.online_encoder(model.patching(ctx_norm))
     z_pred = model.predictor.forward_simple(
         context_embeddings=ctx_emb,
@@ -139,7 +135,7 @@ def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
            if hasattr(model.predictor, 'w_film') else None),
     )[:, :n_tgt, :]                                                  # [1, n, D]
 
-    # z_cand : selon la convention de cible du pretrain sondé.
+    # z_cand: per the probed pretrain's target convention.
     if standalone:
         z_cand = model.online_encoder(model.patching(cands_norm))
     else:
@@ -155,7 +151,7 @@ def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
 
 
 def normalized_rank(energies: np.ndarray) -> float:
-    """Rang du vrai (position 0) dans le classement, dans [0, 1] ; 0 = meilleur."""
+    """Rank of the true future (position 0) in the ordering, in [0, 1]; 0 = best."""
     return float((energies < energies[0]).sum()) / (len(energies) - 1)
 
 
@@ -171,13 +167,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--configs", default=",".join(DEFAULT_CONFIGS),
-                    help="configs GIFT, séparées par des virgules")
-    ap.add_argument("--instances", type=int, default=100, help="max par config")
-    ap.add_argument("--candidates", type=int, default=32, help="bootstraps par instance")
+                    help="GIFT configs, comma-separated")
+    ap.add_argument("--instances", type=int, default=100, help="max per config")
+    ap.add_argument("--candidates", type=int, default=32, help="bootstraps per instance")
     ap.add_argument("--gift-root", default="data/gift_eval")
     ap.add_argument("--model-config", default="lotsa_tiny_eval")
     ap.add_argument("--standalone-targets", action="store_true",
-                    help="convention des lignées contextualized_targets=false (mix/xres)")
+                    help="convention of the contextualized_targets=false lineages (mix/xres)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -225,7 +221,7 @@ def main():
                                           standalone=args.standalone_targets)
             ranks_mse.append(normalized_rank(e_mse))
             ranks_cos.append(normalized_rank(e_cos))
-            # L'énergie suit-elle la proximité réelle ? (bootstraps seulement)
+            # Does the energy track real proximity? (bootstraps only)
             mae = np.abs(cands[2:] - cands[0]).mean(axis=1)
             spears.append(spearman(e_cos[2:], mae))
 
@@ -240,15 +236,15 @@ def main():
         }
         r = results[config]
         logger.info(
-            f"{config:28s} n={r['n_instances']:3d} | rang vrai (cos) "
-            f"moy {r['mean_rank_cos']:.3f} méd {r['median_rank_cos']:.3f} "
+            f"{config:28s} n={r['n_instances']:3d} | true rank (cos) "
+            f"mean {r['mean_rank_cos']:.3f} med {r['median_rank_cos']:.3f} "
             f"top20% {r['frac_truth_top20pct_cos']:.2f} | mse {r['mean_rank_mse']:.3f} "
-            f"| rho(E,MAE) {r['spearman_energy_vs_mae']:.3f}   [hasard: 0.50 / 0.20 / 0.00]")
+            f"| rho(E,MAE) {r['spearman_energy_vs_mae']:.3f}   [chance: 0.50 / 0.20 / 0.00]")
 
     agg = {k: float(np.mean([r[k] for r in results.values()]))
            for k in ("mean_rank_cos", "mean_rank_mse",
                      "frac_truth_top20pct_cos", "spearman_energy_vs_mae")}
-    logger.info(f"\nAGRÉGAT {len(results)} configs : rang vrai (cos) "
+    logger.info(f"\nAGGREGATE {len(results)} configs: true rank (cos) "
                 f"{agg['mean_rank_cos']:.3f} | top20% {agg['frac_truth_top20pct_cos']:.2f} "
                 f"| rho(E,MAE) {agg['spearman_energy_vs_mae']:.3f}")
 
@@ -259,7 +255,7 @@ def main():
     out.write_text(json.dumps(
         {"checkpoint": args.checkpoint, "candidates": args.candidates,
          "per_config": results, "aggregate": agg}, indent=2))
-    logger.info(f"JSON : {out}")
+    logger.info(f"JSON: {out}")
 
 
 if __name__ == "__main__":

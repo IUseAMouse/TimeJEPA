@@ -1,9 +1,10 @@
+# ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
 Is forecast uncertainty already encoded in the representations?
 
 The question decides where a probabilistic head can live. The predictor is
 trained under MSE against the target latent, so it converges to
-E[z_target | z_context] — a conditional MEAN by construction (measured:
+E[z_target | z_context] - a conditional MEAN by construction (measured:
 pred_var 0.6 against target_var 0.95). The spread lives in the residual between
 predicted and actual target latent, which the model never sees at inference.
 
@@ -19,17 +20,17 @@ answering a different design question:
                 encoder contributes nothing and a hand-crafted feature suffices.
 
     z_pred      the predicted target latents (mean+std pooled).
-                This is exactly what a DECODER-ONLY head (option A) sees.
+                This is exactly what a latent-only decoder head sees.
 
     z_ctx       the context embeddings (mean+std pooled).
-                This is what option B adds by wiring the context into the head.
+                This is what wiring the context into the head adds.
 
-    z_ctx+z_pred    both — the full option B input.
+    z_ctx+z_pred    both - the full context-fed input.
 
 Read it as: if z_ctx clearly beats z_pred, wiring the context into the decoder
-is worth it (option B over A). If neither beats ctx_std by much, the encoder is
+is worth it (context-fed over latent-only). If neither beats ctx_std by much, the encoder is
 not representing volatility and a decoder-side head will be limited whatever we
-feed it — which is the case for revisiting the pretraining objective (option C).
+feed it - which is the case for revisiting the pretraining objective (option C).
 
 Usage:
     python scripts/probe_uncertainty.py +checkpoint_path=path/to/finetuned.ckpt
@@ -113,8 +114,8 @@ def collect(model, loader, horizon: int, device, max_windows: int) -> Dict[str, 
     """
     Run the model and record, per window, the features and the realised error.
 
-    The error is measured in the NORMALIZED space — the same space the finetune
-    loss uses — so that windows of wildly different scale stay comparable.
+    The error is measured in the NORMALIZED space - the same space the finetune
+    loss uses - so that windows of wildly different scale stay comparable.
     """
     feats = {"ctx_std": [], "z_ctx": [], "z_pred": []}
     errors = []
@@ -200,7 +201,7 @@ def main(cfg: DictConfig):
     all_rows: List[Dict] = []
 
     print("\n" + "=" * 84)
-    print("UNCERTAINTY PROBE — can the realised forecast error be predicted from")
+    print("UNCERTAINTY PROBE - can the realised forecast error be predicted from")
     print("the representations the decoder already receives?")
     print("=" * 84)
     print(f"context={cfg.model.seq_length}  horizon={horizon}  ridge alpha={alpha}")
@@ -229,9 +230,9 @@ def main(cfg: DictConfig):
             data = collect(model, dm.test_dataloader(), horizon, device, max_windows)
             res = probe_dataset(data, alpha)
 
-            print(f"\n── {name}   ({len(data['err'])} fenêtres, "
-                  f"erreur médiane {np.median(data['err']):.3f})")
-            print(f"   {'features':<16}{'dim':>6}{'R² hors-échantillon':>22}{'corr':>9}")
+            print(f"\n-- {name}   ({len(data['err'])} windows, "
+                  f"median error {np.median(data['err']):.3f})")
+            print(f"   {'features':<16}{'dim':>6}{'out-of-sample R2':>22}{'corr':>9}")
             print("   " + "-" * 51)
             base = res["ctx_std"]["r2"]
             for k, v in res.items():
@@ -247,7 +248,7 @@ def main(cfg: DictConfig):
         return
 
     print("\n" + "=" * 84)
-    print("SYNTHÈSE — R² hors-échantillon sur log|erreur|")
+    print("SUMMARY - out-of-sample R2 on log|error|")
     print("=" * 84)
     keys = ["ctx_std", "z_pred", "z_ctx", "z_ctx+z_pred"]
     print(f"{'dataset':<14}" + "".join(f"{k:>16}" for k in keys))
@@ -256,26 +257,26 @@ def main(cfg: DictConfig):
         print(f"{r['dataset']:<14}" + "".join(f"{r[k]:>16.3f}" for k in keys))
     means = {k: float(np.mean([r[k] for r in all_rows])) for k in keys}
     print("-" * 78)
-    print(f"{'moyenne':<14}" + "".join(f"{means[k]:>16.3f}" for k in keys))
+    print(f"{'mean':<14}" + "".join(f"{means[k]:>16.3f}" for k in keys))
 
-    print("\nLecture :")
+    print("\nReading:")
     d_ctx = means["z_ctx"] - means["z_pred"]
     d_free = means["z_ctx+z_pred"] - means["ctx_std"]
     if means["z_ctx+z_pred"] < 0.05:
-        print("  Aucun jeu de features ne prédit l'erreur. L'incertitude n'est PAS")
-        print("  encodée : une tête côté décodeur sera limitée quoi qu'on lui donne.")
-        print("  → c'est le cas où l'option C (prédicteur probabiliste) se justifie.")
+        print("  No feature set predicts the error. Uncertainty is NOT encoded:")
+        print("  a decoder-side head will be limited whatever it is fed.")
+        print("  -> the case where option C (probabilistic predictor) is justified.")
     else:
         if d_free < 0.03:
-            print(f"  Les représentations n'apportent presque rien sur ctx_std ({d_free:+.3f}).")
-            print("  L'encodeur ne représente pas la volatilité au-delà d'une statistique triviale.")
+            print(f"  Representations add almost nothing over ctx_std ({d_free:+.3f}).")
+            print("  The encoder does not represent volatility beyond a trivial statistic.")
         else:
-            print(f"  Les représentations battent ctx_std de {d_free:+.3f} R² : l'incertitude EST encodée.")
+            print(f"  Representations beat ctx_std by {d_free:+.3f} R2: uncertainty IS encoded.")
         if d_ctx > 0.03:
-            print(f"  z_ctx dépasse z_pred de {d_ctx:+.3f} : câbler le contexte dans le décodeur")
-            print("  apporte de l'information que le latent prédit a perdu → option B.")
+            print(f"  z_ctx exceeds z_pred by {d_ctx:+.3f}: wiring the context into the decoder")
+            print("  adds information the predicted latent lost -> feed the context.")
         else:
-            print(f"  z_ctx n'apporte que {d_ctx:+.3f} sur z_pred : le latent prédit suffit → option A.")
+            print(f"  z_ctx only adds {d_ctx:+.3f} over z_pred: the predicted latent suffices.")
 
 
 if __name__ == "__main__":

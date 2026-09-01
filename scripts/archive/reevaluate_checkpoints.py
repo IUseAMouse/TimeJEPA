@@ -1,3 +1,4 @@
+# ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
 Re-evaluate existing checkpoints under the corrected protocol (P0.7).
 
@@ -7,7 +8,7 @@ Every number in ../TimeJEPA_2ndbatch_results/ was produced with `skip_revin=True
 on the Nixtla long-horizon benchmarks. Those datasets are z-scored GLOBALLY with
 train statistics, which is NOT the per-window instance normalization the model
 was trained under. The encoder therefore saw out-of-distribution inputs and its
-output was scored in the wrong space — visible as a constant level offset in the
+output was scored in the wrong space - visible as a constant level offset in the
 h96 forecast plots.
 
 This script re-runs the same checkpoints on the same data in BOTH modes:
@@ -217,7 +218,7 @@ def main():
         pairs = [p for p in pairs if args.only in p["ckpt_name"] or args.only in p["model_name"]]
 
     print("=" * 100)
-    print(f"RE-EVALUATION — {len(pairs)} checkpoint(s), device={device}")
+    print(f"RE-EVALUATION - {len(pairs)} checkpoint(s), device={device}")
     print("=" * 100)
     for p in pairs:
         print(f"  • {p['model_name']:<14} {p['ckpt_name']}")
@@ -248,7 +249,7 @@ def main():
             model = build_model(cfg, device)
             info = load_weights(model, pair["ckpt_path"], device)
             if info["missing_critical"]:
-                print(f"  ⚠️  {name}: missing keys {info['missing_critical'][:6]}")
+                print(f"  {name}: missing keys {info['missing_critical'][:6]}")
             models.append({
                 "name": name,
                 "model": model,
@@ -256,11 +257,11 @@ def main():
                 "native_h": int(cfg.model.prediction_length),
                 "decoder": str(cfg.model.decoder.type),
             })
-            print(f"  ✓ {name:<62} ctx={cfg.model.seq_length} "
+            print(f"  {name:<62} ctx={cfg.model.seq_length} "
                   f"native_h={cfg.model.prediction_length} dec={cfg.model.decoder.type}",
                   flush=True)
         except Exception as e:
-            print(f"  ❌ {name}: could not build/load: {e}")
+            print(f"  {name}: could not build/load: {e}")
             traceback.print_exc()
 
     if not models:
@@ -291,7 +292,7 @@ def main():
                 pass
         all_out[entry["name"]] = {}
     if resumed:
-        print(f"  ↻ resumed {resumed} already-computed (dataset, horizon) cells\n", flush=True)
+        print(f"  resumed {resumed} already-computed (dataset, horizon) cells\n", flush=True)
 
     def already_done(name: str, ds: str, h: int) -> bool:
         return "fixed" in all_out.get(name, {}).get(ds, {}).get(str(h), {})
@@ -306,9 +307,9 @@ def main():
 
     for ds, path in data_paths.items():
         season = get_seasonality(ds)
-        flag = "  [univariate OT only — NOT comparable to published tables]" if ds in UNIVARIATE_ONLY else ""
+        flag = "  [univariate OT only - NOT comparable to published tables]" if ds in UNIVARIATE_ONLY else ""
         print("\n" + "=" * 100)
-        print(f"▶ {ds}  (m={season}){flag}", flush=True)
+        print(f"{ds}  (m={season}){flag}", flush=True)
         print("=" * 100)
 
         for h in args.horizons:
@@ -336,7 +337,7 @@ def main():
                     dm.setup("fit")
                     loader = dm.test_dataloader()
                 except Exception as e:
-                    print(f"  h={h:<4} ctx={ctx_len} ❌ dataloader: {e}", flush=True)
+                    print(f"  h={h:<4} ctx={ctx_len} dataloader: {e}", flush=True)
                     for entry in group:
                         all_out[entry["name"]].setdefault(ds, {})[str(h)] = {"error": str(e)}
                     continue
@@ -362,8 +363,8 @@ def main():
                         bl = row["baselines"]["seasonal_naive"]
                         print(
                             f"  h={h:<4} {name.split('/')[-1][:44]:<44} "
-                            f"MSE {lg['mse']:7.3f} → {fx['mse']:7.3f}  "
-                            f"MASE {lg.get('mase', float('nan')):6.2f} → {fx.get('mase', float('nan')):6.2f}  "
+                            f"MSE {lg['mse']:7.3f} -> {fx['mse']:7.3f}  "
+                            f"MASE {lg.get('mase', float('nan')):6.2f} -> {fx.get('mase', float('nan')):6.2f}  "
                             f"| SN {bl.get('mase', float('nan')):5.2f}  "
                             f"skill {fx.get('skill_vs_seasonal_naive', float('nan')):+6.1%}",
                             flush=True,
@@ -371,7 +372,7 @@ def main():
                         all_out[name].setdefault(ds, {})[str(h)] = row
 
                     except Exception as e:
-                        print(f"  h={h:<4} {name} ❌ {e}", flush=True)
+                        print(f"  h={h:<4} {name} {e}", flush=True)
                         all_out[name].setdefault(ds, {})[str(h)] = {"error": str(e)}
 
                 del dm, loader
@@ -382,7 +383,7 @@ def main():
 
     flush_results()
     print("\n" + "=" * 100)
-    print(f"✅ Done. Results → {out_root}")
+    print(f"Done. Results -> {out_root}")
     print("=" * 100)
 
 

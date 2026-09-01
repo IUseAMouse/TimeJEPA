@@ -1,7 +1,7 @@
 """
 Normalizers for time series data with reversible transformations.
 
-⚠️ IMPORTANT: Remember to specify IdentityNormalizer for RevIN usage
+IMPORTANT: Remember to specify IdentityNormalizer for RevIN usage
 
 RevIN is designed to receive raw data and handles normalization
 internally with instance-level statistics computed during the forward pass.
@@ -26,8 +26,9 @@ from loguru import logger
 DataType = Union[np.ndarray, list[np.ndarray]]
 
 
+# No external call sites; kept per the no-delete policy.
 def robust_clip(
-    series: np.ndarray, 
+    series: np.ndarray,
     n_sigma: float = 5.0,
     use_mad: bool = True
 ) -> np.ndarray:
@@ -64,6 +65,7 @@ def robust_clip(
     return np.clip(series, lower, upper)
 
 
+# No external call sites; kept per the no-delete policy.
 def robust_clip_dataset(
     data: DataType,
     n_sigma: float = 5.0,
@@ -180,14 +182,14 @@ class IdentityNormalizer(Normalizer):
 
 class StandardScaler(Normalizer):
     """
-    Standardization: (x - μ) / σ
-    
+    Standardization: (x - mean) / std
+
     Normalizes each time series to zero mean and unit variance.
     Can operate per-series or globally across all series.
-    
+
     Supports both fixed-length arrays and variable-length lists.
-    
-    ⚠️ WARNING: Do not use with RevIN-based models (use IdentityNormalizer instead).
+
+    WARNING: Do not use with RevIN-based models (use IdentityNormalizer instead).
     """
     
     def __init__(
@@ -340,16 +342,17 @@ class StandardScaler(Normalizer):
         return result
 
 
+# No external call sites; kept per the no-delete policy.
 class MinMaxScaler(Normalizer):
     """
-    Min-Max scaling: (x - min) / (max - min) → [0, 1]
-    
+    Min-Max scaling: (x - min) / (max - min) -> [0, 1]
+
     Scales each time series to [0, 1] range.
     Can operate per-series or globally.
-    
+
     Supports both fixed-length arrays and variable-length lists.
-    
-    ⚠️ WARNING: Do not use with RevIN-based models (use IdentityNormalizer instead).
+
+    WARNING: Do not use with RevIN-based models (use IdentityNormalizer instead).
     """
     
     def __init__(

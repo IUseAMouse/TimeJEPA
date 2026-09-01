@@ -106,7 +106,7 @@ def plot_forecasts(
     Plot sample forecasts in a grid.
 
     When a quantile fan is supplied, the prediction interval is shaded around
-    the median — nested bands, darkest at the centre. A probabilistic forecast
+    the median - nested bands, darkest at the centre. A probabilistic forecast
     judged only on its median tells you nothing about whether its intervals are
     calibrated, which is the whole point of having them.
     """
@@ -115,13 +115,13 @@ def plot_forecasts(
     
     n = min(num_samples, len(predictions))
     
-    # Sélectionner des exemples variés (bons et mauvais)
+    # Select varied examples (good and bad)
     errors = torch.mean((predictions - targets) ** 2, dim=-1)
     if errors.ndim > 1:
         errors = errors.mean(dim=-1)
     errors = errors.numpy()
     
-    # Mix: quelques bons, quelques moyens, quelques mauvais
+    # Mix: some good, some average, some bad
     sorted_idx = np.argsort(errors)
     n_per_group = max(1, n // 3)
     good_idx = sorted_idx[:n_per_group]
@@ -129,7 +129,7 @@ def plot_forecasts(
     mid_start = len(sorted_idx) // 2 - n_per_group // 2
     mid_idx = sorted_idx[mid_start:mid_start + n_per_group]
     
-    # Combiner et mélanger
+    # Combine and shuffle
     selected_indices = np.concatenate([good_idx, mid_idx, bad_idx])
     np.random.shuffle(selected_indices)
     indices = selected_indices[:n]
@@ -180,7 +180,7 @@ def plot_forecasts(
                 ax.fill_between(
                     t_pred, q[:, lo], q[:, hi],
                     color='orange', alpha=0.13,
-                    label=f'{lvl_lo:.0%}–{lvl_hi:.0%}' if lo == 0 else None,
+                    label=f'{lvl_lo:.0%}-{lvl_hi:.0%}' if lo == 0 else None,
                 )
         else:
             ax.fill_between(t_pred, pred, targ, alpha=0.2, color='red')
@@ -205,7 +205,7 @@ def plot_forecasts(
     
     # Hide unused subplots. Uses len(indices), not n: the good/mid/bad selection
     # yields 3 * max(1, n//3) indices, which is fewer than n for most values of
-    # n — leaving a blank axes frame in the grid.
+    # n - leaving a blank axes frame in the grid.
     for i in range(len(indices), len(axes)):
         axes[i].set_visible(False)
     
@@ -216,7 +216,7 @@ def plot_forecasts(
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    logger.info(f"  📊 Saved forecast plots to {save_path}")
+    logger.info(f"  Saved forecast plots to {save_path}")
 
 
 def plot_error_analysis(
@@ -345,7 +345,7 @@ def plot_error_analysis(
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    logger.info(f"  📊 Saved error analysis to {save_path}")
+    logger.info(f"  Saved error analysis to {save_path}")
 
 
 def plot_summary_comparison(
@@ -388,7 +388,7 @@ def plot_summary_comparison(
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    logger.info(f"📊 Saved summary comparison to {save_path}")
+    logger.info(f"Saved summary comparison to {save_path}")
 
 
 @torch.no_grad()
@@ -484,7 +484,7 @@ def evaluate_dataset_horizon(
     -------------
     `skip_revin=False` is the correct default and the regime the model was
     trained in. The previous code used `skip_revin=True` with the rationale
-    "nixtla long horizon datasets are already normalized" — but those datasets
+    "nixtla long horizon datasets are already normalized" - but those datasets
     are z-scored GLOBALLY with train statistics, which is a completely different
     thing from RevIN's per-window instance normalization. Passing them with
     skip_revin=True fed the encoder inputs whose mean was far from 0 (ETTh1 test:
@@ -494,7 +494,7 @@ def evaluate_dataset_horizon(
 
     With skip_revin=False the model instance-normalizes each context, predicts in
     that frame, and denormalizes back into the globally z-scored space where the
-    targets live — exactly what PatchTST / iTransformer / TimesNet do.
+    targets live - exactly what PatchTST / iTransformer / TimesNet do.
 
     Args:
         model: Model in eval mode
@@ -537,7 +537,7 @@ def evaluate_dataset_horizon(
 
         # Keep the quantile fan when the head is probabilistic. Without it the
         # reported WQL is computed from the point forecast, where it collapses
-        # to ND — the score a deterministic model earns — and none of the
+        # to ND - the score a deterministic model earns - and none of the
         # quantile head's benefit would ever appear in the numbers.
         if 'quantiles_denorm' in output:
             q = output['quantiles_denorm']
@@ -595,7 +595,7 @@ def evaluate_with_baselines(
 
     # With a probabilistic head, recompute WQL over the actual quantile fan.
     # compute_forecasting_metrics_extended derives it from the point forecast,
-    # where WQL collapses to ND by construction — the score a deterministic
+    # where WQL collapses to ND by construction - the score a deterministic
     # model earns, which would hide the entire benefit of the head.
     # The baselines stay point forecasts, and that is correct: seasonal naive IS
     # deterministic, so its CRPS is its ND. That is also how GIFT-Eval
@@ -683,10 +683,10 @@ def evaluate_nixtla_dataset(
 
     if dataset_name.lower() in ('etth1', 'etth2'):
         logger.warning(
-            f"  ⚠️  {dataset_name}: datasetsforecast.LongHorizon ships only ONE series "
+            f"  {dataset_name}: datasetsforecast.LongHorizon ships only ONE series "
             f"('OT') for this group, whereas the published benchmark tables average "
             f"over all 7 ETT channels. These numbers are NOT comparable to the "
-            f"literature — treat them as a univariate OT-only task."
+            f"literature - treat them as a univariate OT-only task."
         )
 
     results = {}
@@ -705,12 +705,12 @@ def evaluate_nixtla_dataset(
     for horizon in horizons:
         # Determine forecast mode
         if horizon <= native_horizon:
-            mode_str = f"truncate {native_horizon}→{horizon}"
+            mode_str = f"truncate {native_horizon}->{horizon}"
         else:
             n_rolls = (horizon + native_horizon - 1) // native_horizon
             mode_str = f"rolling: {n_rolls}×{native_horizon}"
         
-        logger.info(f"\n  📏 Horizon {horizon} ({mode_str})")
+        logger.info(f"\n  Horizon {horizon} ({mode_str})")
         
         # DataModule for this horizon
         # We need target of length=horizon for evaluation
@@ -843,28 +843,28 @@ def create_nixtla_benchmark_table(
 
     # Print tables
     print("\n" + "=" * 70)
-    print("📊 NIXTLA BENCHMARK RESULTS - MSE")
+    print("NIXTLA BENCHMARK RESULTS - MSE")
     print("=" * 70)
     print(mse_pivot.round(4).to_string())
 
     print("\n" + "=" * 70)
-    print("📊 NIXTLA BENCHMARK RESULTS - MAE")
+    print("NIXTLA BENCHMARK RESULTS - MAE")
     print("=" * 70)
     print(mae_pivot.round(4).to_string())
 
     print("\n" + "=" * 70)
-    print("📊 MASE  (scale-free — 1.0 == seasonal naive, lower is better)")
+    print("MASE  (scale-free - 1.0 == seasonal naive, lower is better)")
     print("=" * 70)
     print(mase_pivot.round(4).to_string())
 
     print("\n" + "=" * 70)
-    print("🎯 SKILL vs SEASONAL NAIVE  (>0 = TimeJEPA wins, <0 = it loses)")
+    print("SKILL vs SEASONAL NAIVE  (>0 = TimeJEPA wins, <0 = it loses)")
     print("=" * 70)
     print((skill_pivot * 100).round(1).to_string())
 
     # Head-to-head summary against every baseline
     print("\n" + "=" * 70)
-    print("📋 HEAD-TO-HEAD  (mean MASE across all horizons)")
+    print("HEAD-TO-HEAD  (mean MASE across all horizons)")
     print("=" * 70)
     summary = df.groupby('Dataset')[
         ['MASE', 'MASE_seasonal_naive', 'MASE_naive_last', 'MASE_context_mean']
@@ -885,7 +885,7 @@ def main(cfg: DictConfig):
     """Main evaluation function."""
     
     print("=" * 80)
-    print("🔍 TIMEJEPA EVALUATION")
+    print("TIMEJEPA EVALUATION")
     print("=" * 80)
     
     # Get checkpoint path
@@ -921,7 +921,7 @@ def main(cfg: DictConfig):
     
     native_horizon = cfg.model.prediction_length
     context_length = cfg.model.seq_length
-    logger.info(f"  ✓ Model: context={context_length}, prediction_length={native_horizon}")
+    logger.info(f"  Model: context={context_length}, prediction_length={native_horizon}")
     
     # =========================================================================
     # NIXTLA LONG-HORIZON BENCHMARKS
@@ -933,7 +933,7 @@ def main(cfg: DictConfig):
     if nixtla_datasets:
         if not NIXTLA_AVAILABLE:
             logger.error(
-                "❌ Nixtla evaluation requested but datasetsforecast not installed.\n"
+                "Nixtla evaluation requested but datasetsforecast not installed.\n"
                 "   Install with: pip install datasetsforecast"
             )
         else:
@@ -941,7 +941,7 @@ def main(cfg: DictConfig):
             if isinstance(nixtla_datasets, ListConfig):
                 nixtla_datasets = list(nixtla_datasets)
             
-            logger.info(f"\n📦 Nixtla Long-Horizon Benchmarks: {nixtla_datasets}")
+            logger.info(f"\nNixtla Long-Horizon Benchmarks: {nixtla_datasets}")
             
             # Get horizons (from config or default)
             horizons = cfg.get('horizons', None)
@@ -955,7 +955,7 @@ def main(cfg: DictConfig):
             
             for name in nixtla_datasets:
                 print("\n" + "=" * 60)
-                print(f"📈 {name.upper()}")
+                print(f"{name.upper()}")
                 print("=" * 60)
                 
                 # Validate dataset name
@@ -1015,18 +1015,18 @@ def main(cfg: DictConfig):
     all_horizon_metrics = {}
     
     if datasets_eval:
-        logger.info(f"\n📦 Local datasets: {datasets_eval}")
+        logger.info(f"\nLocal datasets: {datasets_eval}")
         
         # Evaluate each dataset
         for dataset_name in datasets_eval:
             print("\n" + "=" * 60)
-            print(f"📈 Evaluating: {dataset_name}")
+            print(f"Evaluating: {dataset_name}")
             print("=" * 60)
             
             data_path = Path(cfg.data.data_dir) / f"{dataset_name}.npy"
             
             if not data_path.exists():
-                logger.warning(f"  ⚠️ Dataset not found: {data_path}, skipping...")
+                logger.warning(f"  Dataset not found: {data_path}, skipping...")
                 continue
             
             try:
@@ -1079,7 +1079,7 @@ def main(cfg: DictConfig):
                 all_horizon_metrics[dataset_name] = horizon_metrics
                 
                 # Print metrics
-                print(f"\n  📊 Results (seasonality m={season_length}):")
+                print(f"\n  Results (seasonality m={season_length}):")
                 print(f"     RMSE:        {metrics['rmse']:.4f}")
                 print(f"     MAE:         {metrics['mae']:.4f}")
                 print(f"     SMAPE:       {metrics['smape']:.2f}%")
@@ -1087,11 +1087,11 @@ def main(cfg: DictConfig):
                 print(f"     WQL/ND:      {metrics['wql']:.4f}")
                 print(f"     R²:          {metrics['r2']:.4f}")
                 print(f"     Correlation: {metrics['correlation']:.4f}")
-                print(f"  🎯 vs baselines (MASE):")
+                print(f"  vs baselines (MASE):")
                 for bname, bm in metrics['_baselines'].items():
                     marker = ""
                     if metrics.get('mase') is not None and bm.get('mase') is not None:
-                        marker = " ← beats us" if bm['mase'] < metrics['mase'] else ""
+                        marker = " <- beats us" if bm['mase'] < metrics['mase'] else ""
                     print(f"     {bname:<16} {bm.get('mase', float('nan')):.4f}{marker}")
                 
                 # Generate plots
@@ -1116,14 +1116,14 @@ def main(cfg: DictConfig):
                 )
                 
             except Exception as e:
-                logger.error(f"  ❌ Error evaluating {dataset_name}: {e}")
+                logger.error(f"  Error evaluating {dataset_name}: {e}")
                 import traceback
                 traceback.print_exc()
                 continue
 
     
     print("\n" + "=" * 80)
-    print("📋 EVALUATION SUMMARY")
+    print("EVALUATION SUMMARY")
     print("=" * 80)
     
     # Local dataset summary
@@ -1136,7 +1136,7 @@ def main(cfg: DictConfig):
         df = pd.DataFrame(flat).T
         df.index.name = 'Dataset'
 
-        print("\n📊 Local Datasets:")
+        print("\nLocal Datasets:")
         print(df.to_string())
 
         # Head-to-head against baselines (MASE)
@@ -1149,7 +1149,7 @@ def main(cfg: DictConfig):
         h2h = pd.DataFrame(h2h_rows).T
         if not h2h.empty and h2h.notna().any().any():
             h2h['winner'] = h2h.idxmin(axis=1)
-            print("\n🎯 Head-to-head (MASE, lower is better):")
+            print("\nHead-to-head (MASE, lower is better):")
             print(h2h.round(4).to_string())
             n_wins = int((h2h['winner'] == 'TimeJEPA').sum())
             print(f"\n  TimeJEPA is best on {n_wins}/{len(h2h)} local datasets.")
@@ -1187,7 +1187,7 @@ def main(cfg: DictConfig):
     
     # Nixtla summary (already printed in create_nixtla_benchmark_table)
     if nixtla_results:
-        print(f"\n📊 Nixtla benchmark results saved to:")
+        print(f"\nNixtla benchmark results saved to:")
         print(f"   - {output_dir / 'nixtla_mse.csv'}")
         print(f"   - {output_dir / 'nixtla_mae.csv'}")
     
@@ -1201,9 +1201,9 @@ def main(cfg: DictConfig):
         OmegaConf.save(cfg, f)
     
     print("\n" + "=" * 80)
-    print("✅ EVALUATION COMPLETE")
+    print("EVALUATION COMPLETE")
     print("=" * 80)
-    print(f"  📁 Results saved to: {output_dir}")
+    print(f"  Results saved to: {output_dir}")
     if all_results:
         print(f"     - local_results.json / local_results.csv")
         print(f"     - horizon_metrics.json")

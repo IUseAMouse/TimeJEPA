@@ -1,99 +1,98 @@
 # @package _global_
 #
-# G9.2 — ARM JEPA INTER-RÉSOLUTION : l'équivariance d'échelle par l'OBJECTIF.
+# G9.2 - CROSS-RESOLUTION JEPA ARM: scale equivariance through the OBJECTIVE.
 #
-#   # 0. corpus mixte (les morceaux 8192 sont indispensables, voir plus bas)
-#   # ⚠️ audit T1/T4 : morceaux 8192 obligatoires — la matière k1>1 de l'arm
-#   # inter-résolution vit dans ces fichiers. Part de batch visée ~9 % :
-#   # MESURÉ le 2026-08-21 (poids sampler taille**0.5) : 100k morceaux/famille
-#   # donnaient 19,3 % — 20k/famille donnent ~9,5 %. Mon estimation initiale
-#   # (« x4 => 8-9 % ») était fausse d'un facteur 2 ; c'est l'audit d'équilibre
-#   # qui tranche, jamais l'estimation.
+#   # 0. mixed corpus (the 8192 chunks are essential, see below)
+#   # WARNING (T1/T4 audit): 8192 chunks required - the k1>1 material of the
+#   # cross-resolution arm lives in those files. Target batch share ~9%:
+#   # MEASURED on 2026-08-21 (sampler weight size**0.5): 100k chunks/family
+#   # gave 19.3% - 20k/family give ~9.5%. My initial estimate ("x4 => 8-9%")
+#   # was off by a factor of 2; the balance audit decides, never the estimate.
 #   python scripts/generate_synthetic.py --out data/processed/synthetic \
 #       --chunks-per-family 20000
 #   python scripts/prepare_chronos.py --out data/processed/chronos_extras
 #   mkdir -p data/processed/lotsa_xres
-#   # ⚠️ BASE = le corpus GAGNANT du point de contrôle G7.3b : lotsa_full (10 Md)
-#   # si tiny-full a battu tiny-plafonné, sinon lotsa. Exemple avec lotsa_full :
+#   # WARNING: BASE = the WINNING corpus of checkpoint G7.3b: lotsa_full (10B)
+#   # if tiny-full beat tiny-capped, otherwise lotsa. Example with lotsa_full:
 #   ln -s $(pwd)/data/processed/lotsa_full/*.npy data/processed/lotsa_xres/
 #   ln -s $(pwd)/data/processed/synthetic/*.npy data/processed/lotsa_xres/
 #   ln -s $(pwd)/data/processed/chronos_extras/*.npy data/processed/lotsa_xres/
 #
-#   # 1. CONTRÔLE corpus (une variable à la fois) : baseline lotsa_tiny sur le
-#   #    MÊME répertoire mixte — override CLI, pas de config supplémentaire
+#   # 1. corpus CONTROL (one variable at a time): lotsa_tiny baseline on the
+#   #    SAME mixed directory - CLI override, no extra config
 #   python scripts/train.py --config-name lotsa_tiny \
 #       data.data_dir=data/processed/lotsa_xres wandb.run_name=xres-control
 #
-#   # 2. l'arm
+#   # 2. the arm
 #   python scripts/train.py --config-name lotsa_tiny_xres wandb.run_name=xres-pretrain
 #
-#   # 3. finetune zero-shot + évals : protocole standard (lotsa_tiny_zeroshot
-#   #    avec pretrained_encoder_path vers CE pretrain ; noter que le w_film,
-#   #    zéro-init côté requêtes, voyage dans le checkpoint et vaut identité
-#   #    à w=1 — le finetune ne passe jamais w).
+#   # 3. zero-shot finetune + evals: standard protocol (lotsa_tiny_zeroshot
+#   #    with pretrained_encoder_path to THIS pretrain; note that w_film,
+#   #    zero-init on the query side, travels in the checkpoint and equals
+#   #    identity at w=1 - the finetune never passes w).
 #
-# Le mécanisme
+# The mechanism
 # ------------
-# Contexte lu décimé à k1, cible (le futur PHYSIQUEMENT contigu) décimée à k2,
-# k1 et k2 tirés indépendamment dans multi_resolution_factors ; le prédicteur
-# reçoit w = k2/k1 par item via un FiLM résiduel zéro-init sur ses requêtes
-# futures. L'objectif force donc l'espace latent à être TRANSPOSABLE entre
-# échelles — ce que FlowState obtient par construction (SSM, Δ̄ = s·Δ,
-# arXiv:2508.05287) mais en devant recevoir la saisonnalité de l'extérieur.
-# Ici l'équivariance est APPRISE, et c'est faisable uniquement parce que la
-# cible est un latent : deux résolutions n'ont pas les mêmes valeurs, une loss
-# de reconstruction n'a pas de cible commune à leur donner. C'est LA
-# justification architecturale du choix JEPA (G9 du plan).
+# Context read decimated at k1, target (the PHYSICALLY contiguous future)
+# decimated at k2, k1 and k2 drawn independently from
+# multi_resolution_factors; the predictor receives w = k2/k1 per item via a
+# zero-init residual FiLM on its future queries. The objective thus forces the
+# latent space to be TRANSPOSABLE across scales - what FlowState gets by
+# construction (SSM, delta_bar = s*delta, arXiv:2508.05287) but at the cost of
+# receiving seasonality from outside. Here the equivariance is LEARNED, and it
+# is only feasible because the target is a latent: two resolutions do not have
+# the same values, a reconstruction loss has no common target to give them.
+# This is THE architectural justification of the JEPA choice (G9 in the plan).
 #
-# ÉQUIVARIANCE, pas invariance : une série à 5 min et sa décimation horaire
-# diffèrent réellement — exiger le même latent détruirait de l'information.
-# D'où le conditionnement w plutôt qu'une contrainte d'égalité.
+# EQUIVARIANCE, not invariance: a 5-min series and its hourly decimation
+# really differ - demanding the same latent would destroy information. Hence
+# conditioning on w rather than an equality constraint.
 #
-# Audit 2026-08-20 : le contrôle (lotsa_tiny_mix) adopte AUSSI les cibles
-# standalone — xres-vs-mix ne porte donc bien qu'UNE variable, l'objectif.
+# Audit 2026-08-20: the control (lotsa_tiny_mix) ALSO adopts standalone
+# targets - so xres-vs-mix carries only ONE variable, the objective.
 #
-# Les écarts délibérés à lotsa_tiny (dits, pas cachés)
+# Deliberate deviations from lotsa_tiny (stated, not hidden)
 # ---------------------------------------------------------
-# 1. contextualized_targets: false — OBLIGATOIRE : la cible contextualisée
-#    concatène [contexte‖cible] en pas d'échantillon, physiquement faux quand
-#    les deux grilles diffèrent. Gardé par ValueError dans le module.
-# 2. Le corpus mixte (lotsa + synthétique + chronos_extras). Les morceaux
-#    LOTSA font 2048 pas : ctx·k1 + pred·k2 ≤ 2048 n'autorise QUE les paires
-#    k1=1 (1024 + 256·k2 ≤ 2048 → k2 ≤ 4) ; l'espace complet (k1>1) exige les
-#    morceaux 8192. Sans eux l'arm est à moitié stérile — la ligne
-#    `aug/w_neq1_frac` de wandb est LE témoin : si elle reste à 0, le run ne
-#    mesure rien.
-#    ⚠️ Conséquence : la comparaison à lotsa_tiny nu change DEUX variables
-#    (objectif + corpus). Le run de CONTRÔLE (commande 1) rétablit la
-#    comparaison à une variable : xres vs contrôle = l'objectif seul.
+# 1. contextualized_targets: false - REQUIRED: the contextualized target
+#    concatenates [context||target] in sample steps, physically wrong when the
+#    two grids differ. Guarded by a ValueError in the module.
+# 2. The mixed corpus (lotsa + synthetic + chronos_extras). LOTSA chunks are
+#    2048 steps: ctx*k1 + pred*k2 <= 2048 only allows k1=1 pairs
+#    (1024 + 256*k2 <= 2048 -> k2 <= 4); the full space (k1>1) requires the
+#    8192 chunks. Without them the arm is half sterile - the wandb line
+#    `aug/w_neq1_frac` is THE witness: if it stays at 0, the run measures
+#    nothing.
+#    WARNING: consequence - comparing to bare lotsa_tiny changes TWO variables
+#    (objective + corpus). The CONTROL run (command 1) restores the
+#    one-variable comparison: xres vs control = the objective alone.
 defaults:
   - lotsa_tiny
   - _self_
 
 model:
   name: "timejepa_lotsa_tiny_xres"
-  # Une seule clé pilote modèle (FiLM), module (lecture de w) et datamodule
-  # (paires k1/k2) — câblée ainsi dans train.py pour qu'ils ne divergent pas.
+  # A single key drives model (FiLM), module (reading w) and datamodule
+  # (k1/k2 pairs) - wired that way in train.py so they cannot diverge.
   cross_resolution: true
-  # G8.4 — MÊME scaler que le contrôle (lotsa_tiny_mix), sinon xres-vs-mix
-  # comparerait deux variables. Décision de bundling du 2026-08-20.
+  # G8.4 - SAME scaler as the control (lotsa_tiny_mix), otherwise xres-vs-mix
+  # would compare two variables. Bundling decision of 2026-08-20.
   robust_scale: true
 
 training:
-  # Plafond LR 3e-4 (décision utilisateur 2026-08-21, hérité : 7.5e-4 de
-  # tiny.yaml). Deux appuis : (a) mécanistique — à LR élevé l'encodeur online
-  # distance le teacher EMA et les cibles latentes dérivent en permanence, on
-  # paie l'objectif difficile deux fois ; (b) le pretrain tiny-full a montré
-  # une contraction tardive du rang effectif (47 -> 37 sur le dernier quart), à
-  # surveiller ici. Pas d'ablation (1 j/run) : partagé par mix ET xres, donc
-  # leur duel reste propre ; item de bundle de plus vs tiny-full (E18+).
+  # LR cap 3e-4 (decision 2026-08-21, inherited: 7.5e-4 from tiny.yaml).
+  # Two supports: (a) mechanistic - at high LR the online encoder outruns the
+  # EMA teacher and the latent targets drift constantly, the hard objective is
+  # paid twice; (b) the tiny-full pretrain showed a late contraction of
+  # effective rank (47 -> 37 over the last quarter), to watch here. No
+  # ablation (1 day/run): shared by mix AND xres, so their duel stays clean;
+  # one more bundle item vs tiny-full (E18+).
   optimizer:
     learning_rate: 3.0e-4
   contextualized_targets: false
-  # 2 époques (décision utilisateur 2026-08-21), aligné sur le contrôle mix —
-  # budget-plafond, coupé à la main si la seconde époque n'apporte rien. Même
-  # avertissement que mix : le cosinus vise 2 époques, un arrêt à l'époque 1
-  # laisse le LR à ~50 % du max (non recuit).
+  # 2 epochs (decision 2026-08-21), aligned with the mix control -
+  # budget cap, cut by hand if the second epoch brings nothing. Same warning
+  # as mix: the cosine targets 2 epochs, stopping at epoch 1 leaves the LR at
+  # ~50% of max (not annealed).
   max_epochs: 2
 
 trainer:
@@ -103,8 +102,8 @@ early_stopping:
   enabled: false
 
 data:
-  # Réactivés pour cet arm (coupés dans lotsa_tiny au motif — invalidé par
-  # E17 — que LOTSA couvrait nativement les fréquences).
+  # Re-enabled for this arm (cut in lotsa_tiny on the grounds - invalidated by
+  # E17 - that LOTSA covered frequencies natively).
   multi_resolution_factors: [1, 2, 4]
   p_multi_resolution: 0.3
   data_dir: "data/processed/lotsa_xres"

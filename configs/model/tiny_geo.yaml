@@ -1,17 +1,17 @@
 # @package _global_
 #
-# ROUND GÉOMÉTRIE — contexte étendu à 1024, horizon natif étendu à 256,
-# retour au patch 16/8, et randomisation du contexte AUSSI au finetune.
+# GEOMETRY ROUND - context extended to 1024, native horizon extended to 256,
+# back to patch 16/8, and context randomization ALSO at finetune.
 #
-# Cette config porte les DEFAUTS du round : loss sigreg, decodeur quantile,
-# finetune sur les 24 datasets. Plus aucun override necessaire — les commandes
-# a rallonge etaient devenues le premier vecteur d'erreurs (decodeur mlp
-# silencieux, geometrie p32 oubliee a l'eval, '=' dans les chemins).
+# This config carries the round's DEFAULTS: sigreg loss, quantile decoder,
+# finetune on all 24 datasets. No override needed anymore - the long commands
+# had become the first source of errors (silent mlp decoder, p32 geometry
+# forgotten at eval, '=' in paths).
 #
 #   # pretrain
 #   python scripts/train.py --config-name tiny_geo wandb.run_name=geo-pretrain
 #
-#   # finetune (quantile par defaut, depuis le checkpoint ci-dessus)
+#   # finetune (quantile by default, from the checkpoint above)
 #   python scripts/train.py --config-name tiny_geo training.mode=finetune \
 #       +training.pretrained_encoder_path=checkpoints/timejepa_tiny_geo/pretrain_True/<ckpt> \
 #       wandb.run_name=geo-quantile
@@ -20,54 +20,53 @@
 #   python scripts/evaluate.py --config-name tiny_geo \
 #       +checkpoint_path=checkpoints/timejepa_tiny_geo/pretrain_False/<ckpt>
 #
-# Les autres arms ont chacun leur config — ne JAMAIS les faire a coups
-# d'override : tiny_geo_p32 (patch 32/16), tiny_geo_vicreg (loss VICReg),
-# tiny_geo_scratch (G4.5, sans pretrain).
+# The other arms each have their own config - NEVER run them via overrides:
+# tiny_geo_p32 (patch 32/16), tiny_geo_vicreg (VICReg loss),
+# tiny_geo_scratch (G4.5, no pretrain).
 #
-# Les quatre changements, et leurs preuves
+# The four changes, and their evidence
 # ----------------------------------------
-# 1. context_lengths -> 1024. Le balayage post-hoc (docs, session du 10/08) :
-#    ETTm gagne +5 à +8 pts de skill à ctx 1024 MALGRÉ un encodeur jamais
-#    entraîné au-delà de 512, et l'optimum (640) coïncide avec la frontière
-#    d'entraînement. Étendre l'entraînement supprime la pénalité hors
-#    distribution partout en dessous. Pas 2048 : coût attention 16.8x vs 4.1x,
-#    pari non mesuré.
+# 1. context_lengths -> 1024. The post-hoc sweep (docs, session of 10/08):
+#    ETTm gains +5 to +8 skill points at ctx 1024 DESPITE an encoder never
+#    trained beyond 512, and the optimum (640) coincides with the training
+#    frontier. Extending training removes the out-of-distribution penalty
+#    everywhere below. Not 2048: attention cost 16.8x vs 4.1x, unmeasured bet.
 #
-# 2. prediction_length 128 -> 256. h=720 passe de 6 rolls à 3, h=336 de 3 à 2,
-#    h=192 devient mono-passe. Chaque roll réinjecte la trajectoire MÉDIANE,
-#    plus lisse que la réalité — c'est le mécanisme mesuré du rétrécissement
-#    des intervalles aux longs horizons (exchange h720 : largeur 0.267 alors
-#    que l'incertitude vraie croît en sqrt(h)). Moins de rolls = moins de
-#    composition de ce biais.
+# 2. prediction_length 128 -> 256. h=720 goes from 6 rolls to 3, h=336 from 3
+#    to 2, h=192 becomes single-pass. Each roll feeds back the MEDIAN
+#    trajectory, smoother than reality - that is the measured mechanism of
+#    interval shrinkage at long horizons (exchange h720: width 0.267 while
+#    true uncertainty grows as sqrt(h)). Fewer rolls = less compounding of
+#    that bias.
 #
-# 3. Retour au patch 16/8 (défaut de tiny.yaml, donc simple non-override).
-#    La motivation de patch32 (positions/cycle) a été renversée par le
-#    balayage : le driver est le nombre de cycles dans la fenêtre, indépendant
-#    du patch. Et le 3e batch (patch32) a fait -9 pts vs le 2e (patch16) à
-#    finetune comparable. Arm patch32 : --config-name tiny_geo_p32
-#    (JAMAIS par override : a l'eval, une geometrie fausse ne fait que WARNER
-#    "re-initialising patching.*" et sort des chiffres silencieusement faux).
+# 3. Back to patch 16/8 (tiny.yaml default, so a simple non-override).
+#    The patch32 motivation (positions/cycle) was overturned by the sweep:
+#    the driver is the number of cycles in the window, independent of patch.
+#    And the 3rd batch (patch32) did -9 pts vs the 2nd (patch16) at comparable
+#    finetune. patch32 arm: --config-name tiny_geo_p32
+#    (NEVER via override: at eval, a wrong geometry only WARNS
+#    "re-initialising patching.*" and outputs silently wrong numbers).
 #
-# 4. p_random_context_finetune. L'encodeur était entraîné sur 128-512 mais le
-#    décodeur ne voyait QUE 512 : à toute autre longueur d'éval, le décodeur
-#    était hors distribution même là où l'encodeur ne l'était pas — le
-#    balayage mélangeait donc deux effets. L'horizon reste FIXE au finetune
-#    (l'éval tronque déjà, le rollout utilise le natif complet par roll).
+# 4. p_random_context_finetune. The encoder was trained on 128-512 but the
+#    decoder ONLY saw 512: at any other eval length the decoder was out of
+#    distribution even where the encoder was not - so the sweep mixed two
+#    effects. The horizon stays FIXED at finetune (eval already truncates,
+#    rollout uses the full native horizon per roll).
 #
-# Coûts à connaître avant de lancer
+# Costs to know before launching
 # ---------------------------------
-# - Fenêtre requise 1024+256 = 1280 pas -> exclus (B17 les loggue) :
-#   wikipedia-weekly, rideshare (déjà exclus), + rain-temperature (725),
-#   nn5-daily (791), m4-hourly (1008). m4-hourly quitte donc aussi le
-#   finetune-8. ~7 % du batch. L'éligibilité multi-résolution recule aussi
-#   (facteur 4 => 5120 pas requis) — lire la ligne "Multi-resolution" du log.
-# - Attention O(N²) : 127 patchs à ctx 1024 vs 63 à 512 (~4x sur les batchs
-#   longs, tirés par batch). batch_size 512->256 et accumulation 3->6 gardent
-#   le batch effectif à 1536 en divisant le pic mémoire par 2. Epoch estimé
-#   2-3x plus long qu'avant ; `+trainer.max_steps=30000` reste le bon outil
-#   pour borner un run de comparaison.
-# - Après CE pretrain, re-balayer le contexte à l'éval : l'optimum mesuré à
-#   640 était celui d'un modèle entraîné jusqu'à 512, il va se déplacer.
+# - Required window 1024+256 = 1280 steps -> excluded (B17 logs them):
+#   wikipedia-weekly, rideshare (already excluded), + rain-temperature (725),
+#   nn5-daily (791), m4-hourly (1008). So m4-hourly also leaves finetune-8.
+#   ~7% of the batch. Multi-resolution eligibility shrinks too
+#   (factor 4 => 5120 steps required) - read the "Multi-resolution" log line.
+# - Attention O(N^2): 127 patches at ctx 1024 vs 63 at 512 (~4x on long
+#   batches, drawn per batch). batch_size 512->256 and accumulation 3->6 keep
+#   the effective batch at 1536 while halving peak memory. Epoch estimated
+#   2-3x longer than before; `+trainer.max_steps=30000` remains the right tool
+#   to bound a comparison run.
+# - After THIS pretrain, re-sweep context at eval: the optimum measured at 640
+#   was that of a model trained up to 512, it will move.
 defaults:
   - tiny
   - _self_
@@ -78,43 +77,43 @@ model:
   prediction_length: 256
 
   decoder:
-    # Quantile par DEFAUT. Le defaut de tiny.yaml est "mlp", et un finetune
-    # geo est parti dessus sans que rien ne le signale : l'eval a sorti des
-    # colonnes "WQL" qui etaient en fait des ND ponctuels (repere au fait que
-    # le log chargeait 110 cles au lieu de 118, et que les lignes WQL
-    # n'avaient plus leur suffixe couverture). Le round se compare en
-    # quantile — donc c'est le defaut, et un point decoder devient l'override
-    # explicite (model.decoder.type=mlp), pas l'inverse.
+    # Quantile by DEFAULT. The tiny.yaml default is "mlp", and a geo finetune
+    # started on it with nothing flagging it: the eval produced "WQL" columns
+    # that were actually point ND (spotted because the log loaded 110 keys
+    # instead of 118, and the WQL lines had lost their coverage suffix). The
+    # round is compared in quantile - so that is the default, and a point
+    # decoder becomes the explicit override (model.decoder.type=mlp), not the
+    # other way around.
     type: "quantile"
 
 training:
-  # Le scheduler cosinus est étalé sur `max_epochs`. Le défaut de tiny.yaml est
-  # 40, mais les pretrains geo se sont arrêtés à 5 par early stopping : le LR n'y
-  # a donc quasiment pas décru, et ces runs ont tourné à LR maximal de bout en
-  # bout. Mesuré sur le pretrain LOTSA, où le défaut valait dix jours de calcul :
-  # 0,000749 → 0,000740 en 400 000 pas (E13a du registre expérimental).
-  # Un modèle à LR constant maximal ne se pose jamais — d'où des val_loss
-  # bruyantes dont le « meilleur » checkpoint est un creux de bruit.
-  # 8 correspond au budget réellement consommé, avec de la marge : le cosinus
-  # décroît alors pour de bon.
-  # ⚠️ Les résultats geo antérieurs (E5, E7, E9) ont été obtenus SANS ce recuit.
-  # Ils restent valides — tous les arms partageaient le handicap, donc les
-  # comparaisons appariées tiennent — mais les niveaux absolus sont ceux de
-  # modèles jamais recuits.
+  # The cosine scheduler is stretched over `max_epochs`. The tiny.yaml default
+  # is 40, but geo pretrains stopped at 5 via early stopping: the LR barely
+  # decayed, and those runs ran at maximal LR end to end. Measured on the
+  # LOTSA pretrain, where the default meant ten days of compute:
+  # 0.000749 -> 0.000740 in 400,000 steps (E13a in the experiment registry).
+  # A model at constant maximal LR never settles - hence noisy val_loss whose
+  # "best" checkpoint is a noise dip.
+  # 8 matches the budget actually consumed, with margin: the cosine then
+  # decays for real.
+  # WARNING: earlier geo results (E5, E7, E9) were obtained WITHOUT this
+  # annealing. They remain valid - all arms shared the handicap, so paired
+  # comparisons hold - but the absolute levels are those of never-annealed
+  # models.
   max_epochs: 8
 
-  # Le defaut de tiny.yaml est "vicreg" : chaque pretrain geo a du le
-  # surcharger a la main. L'arm VICReg a sa propre config (tiny_geo_vicreg).
+  # The tiny.yaml default is "vicreg": every geo pretrain had to override it
+  # by hand. The VICReg arm has its own config (tiny_geo_vicreg).
   loss:
     type: "sigreg"
 
-  # finetune_mode reste "gradual_unfreeze" (defaut de tiny.yaml), mais ATTENTION
-  # a la lecture : jusqu'au fix B20, ce mode n'entrainait QUE le decodeur —
-  # l'optimiseur etait construit a l'epoch 0 en filtrant sur requires_grad, donc
-  # le degel de l'epoch 1 ne touchait aucun poids enregistre. Tous les resultats
-  # historiques (2e batch, 3e batch, reference quantile) sont donc des probes a
-  # encodeur gele. Depuis B20 le degel est reel : les arms geo ne sont PAS
-  # comparables au protocole des anciens runs, mais le sont entre eux.
+  # finetune_mode stays "gradual_unfreeze" (tiny.yaml default), but CAREFUL
+  # with the reading: until fix B20 this mode only trained the decoder - the
+  # optimizer was built at epoch 0 filtering on requires_grad, so the epoch-1
+  # unfreeze touched no registered weight. All historical results (2nd batch,
+  # 3rd batch, quantile reference) are therefore frozen-encoder probes. Since
+  # B20 the unfreeze is real: geo arms are NOT comparable to the old runs'
+  # protocol, but are comparable among themselves.
   context_lengths: [128, 192, 256, 384, 512, 640, 768, 1024]
   p_random_context: 0.5
   horizon_lengths: [64, 96, 128, 192, 256]
@@ -129,7 +128,7 @@ data:
   # exchange (the decoder had never seen a random walk). Interpolated from
   # data.datasets so it cannot drift; too-short datasets are skipped (B17).
   # Caught live: the first geo finetunes ran on the curated list because this
-  # line was missing — those runs double as the ft8-vs-ftall ablation on geo.
+  # line was missing - those runs double as the ft8-vs-ftall ablation on geo.
   datasets_finetune: ${data.datasets}
 
 trainer:

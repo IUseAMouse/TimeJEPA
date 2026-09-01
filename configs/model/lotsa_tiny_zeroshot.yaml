@@ -1,44 +1,44 @@
 # @package _global_
 #
-# G5 — FINETUNE SUR LOTSA, pour une évaluation ZERO-SHOT. **Le protocole principal.**
+# G5 - FINETUNE ON LOTSA, for a ZERO-SHOT evaluation. The main protocol.
 #
 #   python scripts/train.py --config-name lotsa_tiny_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>"' \
 #       wandb.run_name=lotsa-zeroshot
 #
-#   # évaluation : Monash et Nixtla n'ont JAMAIS été vus, ni au pretrain ni ici
+#   # evaluation: Monash and Nixtla were NEVER seen, not at pretrain nor here
 #   python scripts/evaluate.py --config-name tiny_geo \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_zs/pretrain_False/<ckpt>
 #
-# Pourquoi finetuner sur LOTSA et pas sur Monash
+# Why finetune on LOTSA and not on Monash
 # ----------------------------------------------
-# L'architecture impose un finetune : après le pretrain JEPA, le décodeur est
-# encore aléatoire. On ne peut donc pas être zero-shot « gratuitement » comme
-# Chronos ou Moirai, entraînés de bout en bout à prévoir.
+# The architecture requires a finetune: after the JEPA pretrain, the decoder
+# is still random. So we cannot be zero-shot "for free" like Chronos or
+# Moirai, trained end to end to forecast.
 #
-# Mais finetuner sur Monash rouvrirait la contamination, et en pire — avec des
-# cibles SUPERVISÉES sur les séries et la fenêtre temporelle de l'évaluation :
-# `electricity-hourly` EST le benchmark Nixtla `electricity` (5260/26304 = les
-# derniers 20 %), `traffic-hourly` EST `traffic` (3508/17544). Le découpage
-# train/val/test étant séquentiel sur des indices groupés par série,
-# l'entraînement couvre ces séries sur toute leur durée.
+# But finetuning on Monash would reopen the contamination, and worse - with
+# SUPERVISED targets on the evaluation's series and time window:
+# `electricity-hourly` IS the Nixtla benchmark `electricity` (5260/26304 =
+# the last 20%), `traffic-hourly` IS `traffic` (3508/17544). The
+# train/val/test split being sequential on per-series grouped indices,
+# training covers those series over their whole span.
 #
-# Entraîner les DEUX étapes sur LOTSA rend donc corpus d'entraînement et corpus
-# d'évaluation disjoints **par construction**, vérifiable dans le log de la
-# conversion. C'est le protocole de la littérature, et la seule façon de produire
-# des chiffres comparables à Chronos / Moirai / TimesFM / Toto.
+# Training BOTH stages on LOTSA makes training and evaluation corpora
+# disjoint by construction, verifiable in the conversion log. It is the
+# protocol of the literature, and the only way to produce numbers comparable
+# to Chronos / Moirai / TimesFM / Toto.
 #
-# À quoi s'attendre, pour ne pas mal le lire
+# What to expect, to avoid misreading it
 # ------------------------------------------
-# Les chiffres absolus vont BAISSER par rapport aux runs Monash, probablement
-# nettement sur traffic et electricity. **Ce n'est pas une régression** : c'est la
-# disparition d'un artefact de contamination. S'y ajoute un vrai coût, celui de
-# renoncer à l'adaptation au domaine (E3 : +12 points de skill pour un finetune
-# divers). Les deux effets se cumulent et ne se séparent pas dans ce run.
+# Absolute numbers will DROP versus the Monash runs, probably sharply on
+# traffic and electricity. This is not a regression: it is the disappearance
+# of a contamination artifact. On top comes a real cost, giving up domain
+# adaptation (E3: +12 skill points for a diverse finetune). The two effects
+# add up and cannot be separated in this run.
 #
-# L'arm alternatif `lotsa_tiny_finetune` adapte au domaine Monash : meilleurs
-# chiffres absolus, mais contaminés sur electricity et traffic, donc non
-# publiables tels quels. Il reste utile comme borne haute.
+# The alternative arm `lotsa_tiny_finetune` adapts to the Monash domain:
+# better absolute numbers, but contaminated on electricity and traffic, so
+# not publishable as is. It remains useful as an upper bound.
 defaults:
   - lotsa_tiny
   - _self_
@@ -48,12 +48,12 @@ model:
 
 training:
   mode: "finetune"
-  # Même mode que les arms d'E11/E12, pour que les chiffres se comparent.
+  # Same mode as the E11/E12 arms, so the numbers compare.
   finetune_mode: "full_finetune"
 
 data:
-  # null => glob du répertoire LOTSA, exactement comme le pretrain.
-  # C'est la ligne qui fait tout : le décodeur ne voit que du LOTSA.
+  # null => glob of the LOTSA directory, exactly like the pretrain.
+  # This is the line that does everything: the decoder only sees LOTSA.
   datasets_finetune: null
 
 wandb:

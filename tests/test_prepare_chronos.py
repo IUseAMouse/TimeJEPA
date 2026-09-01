@@ -1,9 +1,9 @@
 """
-Tests du convertisseur Chronos (scripts/prepare_chronos.py + convert_subset).
+Tests for the Chronos converter (scripts/prepare_chronos.py + convert_subset).
 
-La zone à risque est la même que pour LOTSA : une erreur de périmètre
-contamine tous les chiffres du projet d'un coup. D'où des tests sur la liste
-blanche elle-même, pas seulement sur la mécanique.
+The risk zone is the same as for LOTSA: a scope mistake contaminates every
+number in the project at once. Hence tests on the allowlist itself, not only
+on the mechanics.
 """
 
 import sys
@@ -22,22 +22,22 @@ from prepare_chronos import (                                             # noqa
 
 
 def test_allowlist_excludes_every_leak():
-    """Aucun nom fuitant ne doit JAMAIS entrer dans la liste blanche."""
+    """No leaking name may EVER enter the allowlist."""
     leaky = {"exchange_rate", "electricity_15min", "wiki_daily_100k",
              "solar", "solar_1h", "m4_daily", "m4_hourly", "m4_monthly",
              "m4_quarterly", "m4_weekly", "m4_yearly", "monash_traffic",
              "monash_weather", "monash_hospital", "training_corpus",
              "taxi_30min", "taxi_1h", "m5", "nn5"}
     assert not set(CHRONOS_ALLOWLIST) & leaky
-    # et la liste d'exclus documente au moins les groupes critiques
+    # and the excluded list documents at least the critical groups
     keys = " ".join(CHRONOS_EXCLUDED)
     for must in ("exchange_rate", "electricity_15min", "training_corpus",
                  "m4_*", "monash_*"):
-        assert must in keys, f"{must} doit rester documenté comme exclu"
+        assert must in keys, f"{must} must stay documented as excluded"
 
 
 def test_convert_subset_writes_dense_f32(tmp_path):
-    """Même contrat que write_dense_npy : dense (N, L) float32, memmappable."""
+    """Same contract as write_dense_npy: dense (N, L) float32, memmappable."""
     rng = np.random.default_rng(0)
     stream = (rng.normal(size=3000).astype(np.float32) for _ in range(10))
     written, stats, eff = convert_subset(
@@ -51,19 +51,19 @@ def test_convert_subset_writes_dense_f32(tmp_path):
 
 
 def test_convert_subset_adapts_chunk_length(tmp_path):
-    """Séries plus courtes que le maximum : longueur adaptée, pas zéro sortie."""
+    """Series shorter than the maximum: adapted length, not zero output."""
     rng = np.random.default_rng(1)
     stream = (rng.normal(size=1500).astype(np.float32) for _ in range(8))
     written, stats, eff = convert_subset(
         stream, tmp_path / "y.npy",
         chunk_length=8192, min_length=1280, max_chunks=100,
     )
-    assert eff is not None and eff < 8192, "le cas BEIJING_SUBWAY : adapter, pas jeter"
+    assert eff is not None and eff < 8192, "the BEIJING_SUBWAY case: adapt, do not drop"
     assert written == 8
 
 
 def test_convert_subset_refuses_too_short(tmp_path):
-    """Médiane < min_length : rien d'écrit, None retourné, PAS de fichier."""
+    """Median < min_length: nothing written, None returned, NO file."""
     stream = (np.ones(300, dtype=np.float32) for _ in range(20))
     written, stats, eff = convert_subset(
         stream, tmp_path / "z.npy",

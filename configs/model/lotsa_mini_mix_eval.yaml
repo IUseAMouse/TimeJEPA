@@ -1,15 +1,15 @@
 # @package _global_
-# Éval des checkpoints mini-mix (GIFT / Nixtla).
+# Eval of the mini-mix checkpoints (GIFT / Nixtla).
 #
 #   python scripts/evaluate_gift.py --config-name lotsa_mini_mix_eval \
 #       '+checkpoint_path="checkpoints/timejepa_lotsa_mini_mix_zs/pretrain_False/<ckpt>"'
 #
-# ⚠️ robust_scale DOIT être porté ici (comme lotsa_tiny_mix_eval) : le flag ne
-# pèse aucun poids, seul le marqueur du checkpoint le trahit — sans lui,
-# loading.py refuse (P3.2) au lieu de sortir des chiffres silencieusement faux.
-# Le nom est surchargé pour que les résultats atterrissent dans
-# evaluation/timejepa_lotsa_mini_mix_zs/ (le piège cosmétique de la lignée
-# tiny, qui écrit dans timejepa_lotsa_tiny_zs/, n'est pas reconduit).
+# WARNING: robust_scale MUST be carried here (like lotsa_tiny_mix_eval): the
+# flag weighs no parameters, only the checkpoint's marker betrays it -
+# without it, loading.py refuses (P3.2) instead of outputting silently wrong
+# numbers. The name is overridden so results land in
+# evaluation/timejepa_lotsa_mini_mix_zs/ (the tiny lineage's cosmetic trap,
+# which writes into timejepa_lotsa_tiny_zs/, is not carried over).
 defaults:
   - lotsa_mini_eval
   - _self_

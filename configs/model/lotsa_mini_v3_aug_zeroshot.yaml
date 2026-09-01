@@ -1,10 +1,10 @@
 # @package _global_
-# Arm G9.0-AUGMENTATION sur MINI — même bundle que lotsa_tiny_v3_aug_zeroshot
-# (voir son en-tête pour le motif mesuré et les prédictions P-aug.1..3),
-# appliqué au pretrain mini. À lancer APRÈS le finetune mini standard
-# (contrôle apparié : même checkpoint pretrain, une seule variable = les
-# deux clés data ci-dessous). Éval via lotsa_mini_v3_eval, architecture
-# inchangée (cross_resolution false, w=1, zéro paramètre nouveau).
+# G9.0-AUGMENTATION arm on MINI - same bundle as lotsa_tiny_v3_aug_zeroshot
+# (see its header for the measured motive and predictions P-aug.1..3),
+# applied to the mini pretrain. Launch AFTER the standard mini finetune
+# (paired control: same pretrain checkpoint, single variable = the two data
+# keys below). Eval via lotsa_mini_v3_eval, architecture unchanged
+# (cross_resolution false, w=1, zero new parameters).
 #
 #   python scripts/train.py --config-name lotsa_mini_v3_aug_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/<ckpt>"'

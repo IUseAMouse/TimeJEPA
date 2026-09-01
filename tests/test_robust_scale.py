@@ -1,15 +1,15 @@
 """
-Tests du scaler robuste arcsinh (G8.4, components/robust_scale.py).
+Tests for the robust arcsinh scaler (G8.4, components/robust_scale.py).
 
-Quatre invariants, par gravité :
-1. Flag off = strictement RIEN (state_dict, chemins de calcul) — protège tous
-   les checkpoints reproduits.
-2. Les checkpoints s'auto-décrivent : un mismatch flag/checkpoint REFUSE au
-   chargement au lieu de produire des chiffres silencieusement faux (le flag
-   ne pèse aucun poids, seul le marqueur le trahit).
-3. Les deux pathologies mesurées sont réparées : plancher epsilon (G6, cibles à
-   10³σ) et spike qui écrase le signal (E17, moitié domaine).
-4. La monotonie : les quantiles dénormalisés restent ordonnés et en échelle brute.
+Four invariants, by severity:
+1. Flag off = strictly NOTHING (state_dict, compute paths) - protects all
+   reproduced checkpoints.
+2. Checkpoints self-describe: a flag/checkpoint mismatch REFUSES at load time
+   instead of producing silently wrong numbers (the flag weighs no
+   parameters, only the marker betrays it).
+3. The two measured pathologies are fixed: epsilon floor (G6, targets at
+   10^3 sigma) and a spike crushing the signal (E17, domain half).
+4. Monotonicity: denormalized quantiles stay ordered and in raw scale.
 """
 
 import sys
@@ -35,7 +35,7 @@ def _model(robust=False, decoder="quantile"):
 
 
 # ---------------------------------------------------------------------------
-# 1. Off = rien
+# 1. Off = nothing
 # ---------------------------------------------------------------------------
 
 def test_flag_off_changes_nothing():
@@ -45,7 +45,7 @@ def test_flag_off_changes_nothing():
 
 
 # ---------------------------------------------------------------------------
-# 2. Auto-description des checkpoints
+# 2. Checkpoint self-description
 # ---------------------------------------------------------------------------
 
 def _save(model, path):
@@ -74,7 +74,7 @@ def test_matching_robust_ckpt_loads(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 3. Les pathologies mesurées
+# 3. The measured pathologies
 # ---------------------------------------------------------------------------
 
 def test_round_trip_identity():
@@ -87,23 +87,23 @@ def test_round_trip_identity():
 
 def test_epsilon_floor_case_is_tamed():
     """
-    G6 : contexte quasi constant + cible qui bouge. Sous RevIN seul, la cible
-    normalisée partait à des MILLIERS de sigma. arcsinh est logarithmique en
-    queue : la même cible devient un nombre ordinaire.
+    G6: near-constant context + moving target. Under RevIN alone, the
+    normalized target went to THOUSANDS of sigma. arcsinh is logarithmic in
+    the tail: the same target becomes an ordinary number.
     """
     rs = RobustScale()
     ctx = torch.full((2, 384, 1), 5.0) + torch.randn(2, 384, 1) * 1e-4
-    tgt = torch.full((2, 96, 1), 25.0)                 # saut de 20 unités
+    tgt = torch.full((2, 96, 1), 25.0)                 # jump of 20 units
     rs.fit(ctx)
     t = rs.transform(tgt)
-    assert t.abs().max() < 20, f"cible transformée à {t.abs().max():.1f} — la queue n'est pas compressée"
+    assert t.abs().max() < 20, f"transformed target at {t.abs().max():.1f} - the tail is not compressed"
 
 
 def test_spike_does_not_crush_the_signal():
     """
-    E17 moitié domaine : un spike ×1000 dans le contexte. Le std le laisse
-    écraser tout le signal vers zéro ; la MAD l'ignore, arcsinh compresse le
-    spike LUI-MÊME. Le corps du signal doit garder une variance de travail.
+    E17 domain half: an x1000 spike in the context. std lets it crush the
+    whole signal toward zero; MAD ignores it, arcsinh compresses the spike
+    ITSELF. The body of the signal must keep a working variance.
     """
     body = torch.sin(torch.linspace(0, 20, 384)).reshape(1, 384, 1)
     spiked = body.clone()
@@ -111,26 +111,26 @@ def test_spike_does_not_crush_the_signal():
     rs = RobustScale()
     rs.fit(spiked)
     t = rs.transform(spiked)
-    body_std = t[0, 200:, 0].std()                     # loin du spike
-    assert body_std > 0.3, f"signal écrasé (std {body_std:.3f}) — la MAD n'a pas joué"
-    assert t[0, 100, 0] < 15, "le spike lui-même doit être compressé, pas propagé"
+    body_std = t[0, 200:, 0].std()                     # far from the spike
+    assert body_std > 0.3, f"signal crushed (std {body_std:.3f}) - MAD did not kick in"
+    assert t[0, 100, 0] < 15, "the spike itself must be compressed, not propagated"
 
 
 # ---------------------------------------------------------------------------
-# 4. Monotonie et bout-en-bout
+# 4. Monotonicity and end-to-end
 # ---------------------------------------------------------------------------
 
 def test_forecast_denorm_lives_in_raw_scale_and_quantiles_stay_sorted():
     m = _model(robust=True).eval()
-    ctx = torch.randn(3, 384, 1) * 4 + 1000            # échelle brute décalée
+    ctx = torch.randn(3, 384, 1) * 4 + 1000            # shifted raw scale
     with torch.no_grad():
         out = m.forecast(ctx, n=96)
     fd, qd = out["forecast_denorm"], out["quantiles_denorm"]
     assert torch.isfinite(fd).all() and torch.isfinite(qd).all()
-    # échelle brute retrouvée (modèle non entraîné : proche du niveau du contexte)
-    assert 500 < fd.mean() < 1500, f"denorm hors échelle brute ({fd.mean():.0f})"
-    # sinh est monotone : le fan reste ordonné niveau à niveau
-    assert (qd[..., 1:] >= qd[..., :-1] - 1e-4).all(), "quantiles désordonnés après inverse"
+    # raw scale recovered (untrained model: close to the context level)
+    assert 500 < fd.mean() < 1500, f"denorm out of raw scale ({fd.mean():.0f})"
+    # sinh is monotone: the fan stays ordered level by level
+    assert (qd[..., 1:] >= qd[..., :-1] - 1e-4).all(), "quantiles unordered after inverse"
 
 
 def test_finetune_loss_path_runs_in_compressed_space():
@@ -139,18 +139,19 @@ def test_finetune_loss_path_runs_in_compressed_space():
     ctx, tgt = torch.randn(2, 384, 1) * 3 + 50, torch.randn(2, 96, 1) * 3 + 50
     loss, results, target = module._forward_and_loss(ctx, tgt)
     assert torch.isfinite(loss)
-    # la cible comparée à la pinball vit bien dans l'espace compressé+RevIN :
-    # ordres de grandeur O(1), pas l'échelle brute ~50
+    # the target compared by the pinball lives in the compressed+RevIN space:
+    # O(1) magnitudes, not the raw scale ~50
     assert target.abs().mean() < 10
 
 
 def test_flat_plus_spikes_context_stays_invertible():
     """
-    Régression (2026-08-22, finetune mix) : une fenêtre « plate + spikes »
-    (VM idle — 29 % des contextes bitbrains_rnd ont MAD exactement 0) donnait
-    une échelle plancher 1e-8, un repère décalé de ln(1e8) ≈ 18, et l'inverse
-    sinh explosait (CRPS 1e10..inf mesurés). Avec le repli 0.1·std, le repère
-    reste borné et l'aller-retour d'un fan raisonnable reste FINI et sensé.
+    Regression (2026-08-22, mix finetune): a "flat + spikes" window
+    (idle VM - 29% of bitbrains_rnd contexts have MAD exactly 0) gave a
+    floor scale of 1e-8, an anchor shifted by ln(1e8) ~ 18, and the sinh
+    inverse exploded (CRPS 1e10..inf measured). With the 0.1*std fallback,
+    the anchor stays bounded and the round trip of a reasonable fan stays
+    FINITE and sane.
     """
     ctx = torch.zeros(1, 384, 1)
     ctx[0, ::40, 0] = 100.0                    # spikes, MAD = 0, std > 0
@@ -158,20 +159,20 @@ def test_flat_plus_spikes_context_stays_invertible():
     rs = RobustScale()
     rs.fit(ctx)
     t = rs.transform(tgt)
-    assert t.abs().max() < 15, f"repère encore dégénéré ({t.abs().max():.1f})"
-    # un fan de largeur 2 autour de la cible doit s'inverser en valeurs finies
-    # et du même ordre de grandeur que la donnée, pas en 1e10
+    assert t.abs().max() < 15, f"anchor still degenerate ({t.abs().max():.1f})"
+    # a fan of width 2 around the target must invert to finite values of the
+    # same order of magnitude as the data, not 1e10
     fan = torch.stack([t - 2, t, t + 2], dim=-1)
     raw = rs.inverse(fan)
     assert torch.isfinite(raw).all()
-    assert raw.abs().max() < 1e5, f"inverse encore explosif ({raw.abs().max():.3g})"
+    assert raw.abs().max() < 1e5, f"inverse still explosive ({raw.abs().max():.3g})"
 
 
 def test_strictly_constant_context_is_log_bounded():
-    """Contexte strictement constant (std=0 aussi) : le plancher eps=1e-3 borne
-    le repère à ~ln(2000·X) au lieu de ln(1e8·X) — plus d'offset +18."""
+    """Strictly constant context (std=0 too): the eps=1e-3 floor bounds the
+    anchor at ~ln(2000*X) instead of ln(1e8*X) - no more +18 offset."""
     ctx = torch.full((1, 384, 1), 5.0)
-    tgt = torch.full((1, 96, 1), 25.0)         # saut de 20
+    tgt = torch.full((1, 96, 1), 25.0)         # jump of 20
     rs = RobustScale()
     rs.fit(ctx)
     t = rs.transform(tgt)
@@ -181,35 +182,35 @@ def test_strictly_constant_context_is_log_bounded():
 
 def test_rogue_tail_quantile_is_capped_by_context_envelope():
     """
-    Régression G8.4b (2026-08-23, run mix_zs_1ep3e4 à 15 %) :
-    bitbrains_fast_storage/H/short — contexte plat + spikes, la tête quantile
-    mi-entraînée émet un quantile de queue z ≈ 15 en espace compressé, et
-    sinh(15)·échelle ≈ 10^6·échelle défigure l'agrégat GIFT (CRPS 1.8e7 mesuré,
-    ×1.19 sur la geomean des 97 configs À LUI SEUL). L'enveloppe de contexte
-    borne l'inverse à [min−K·w, max+K·w] ; le clamp est monotone et inactif
-    sur les valeurs raisonnables.
+    Regression G8.4b (2026-08-23, run mix_zs_1ep3e4 at 15%):
+    bitbrains_fast_storage/H/short - flat + spikes context, the half-trained
+    quantile head emits a tail quantile z ~ 15 in compressed space, and
+    sinh(15)*scale ~ 10^6*scale disfigures the GIFT aggregate (CRPS 1.8e7
+    measured, x1.19 on the geomean of the 97 configs BY ITSELF). The context
+    envelope bounds the inverse to [min-K*w, max+K*w]; the clamp is monotone
+    and inactive on reasonable values.
     """
     ctx = torch.zeros(1, 384, 1)
-    ctx[0, ::40, 0] = 100.0                    # plat + spikes : étendue 100
+    ctx[0, ::40, 0] = 100.0                    # flat + spikes: range 100
     rs = RobustScale()
     rs.fit(ctx)
-    rogue = torch.full((1, 96, 1), 15.0)       # z voyou en espace compressé
+    rogue = torch.full((1, 96, 1), 15.0)       # rogue z in compressed space
     raw = rs.inverse(rogue)
     hi = 100.0 + RobustScale.FORECAST_ENVELOPE * 100.0
     assert torch.isfinite(raw).all()
-    assert raw.max() <= hi + 1e-3, f"quantile voyou non borné ({raw.max():.3g})"
-    # monotonie : un fan encadrant le voyou reste ordonné après clamp
+    assert raw.max() <= hi + 1e-3, f"rogue quantile not bounded ({raw.max():.3g})"
+    # monotonicity: a fan bracketing the rogue stays ordered after the clamp
     fan = torch.stack([rogue - 1, rogue, rogue + 1], dim=-1)
     inv = rs.inverse(fan)
     assert (inv[..., 1:] >= inv[..., :-1]).all()
-    # et les valeurs DANS l'enveloppe restent exactes (aller-retour intact)
+    # and values INSIDE the envelope stay exact (round trip intact)
     torch.testing.assert_close(rs.inverse(rs.transform(ctx)), ctx,
                                rtol=1e-4, atol=1e-4)
 
 
 def test_healthy_windows_unchanged_by_std_fallback():
-    """Sur une fenêtre gaussienne, MAD·1.4826 ≈ std > 0.1·std : le repli est
-    inactif et la transformation reste celle d'avant le correctif."""
+    """On a Gaussian window, MAD*1.4826 ~ std > 0.1*std: the fallback is
+    inactive and the transform stays what it was before the fix."""
     x = torch.randn(4, 384, 1) * 7 + 100
     rs = RobustScale()
     rs.fit(x)

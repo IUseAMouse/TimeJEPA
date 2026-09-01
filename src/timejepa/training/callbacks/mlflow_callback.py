@@ -78,7 +78,7 @@ class WandbCallback(Callback):
         metrics = trainer.callback_metrics
         step = trainer.global_step
         
-        # wandb accepte les '/' dans les noms (contrairement à MLflow)
+        # wandb accepts '/' in metric names (unlike MLflow)
         log_dict = {k: float(v) for k, v in metrics.items() if "train" in k}
         if log_dict:
             wandb.log(log_dict, step=step)

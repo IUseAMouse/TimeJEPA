@@ -1,12 +1,12 @@
 # @package _global_
-# Éval des checkpoints xres-v3 (GIFT / Nixtla).
+# Eval of the xres-v3 checkpoints (GIFT / Nixtla).
 #
 #   python scripts/evaluate_gift.py --config-name lotsa_tiny_xres_v3_eval \
 #       '+checkpoint_path="checkpoints/timejepa_lotsa_tiny_xres_v3_zs/pretrain_False/<ckpt>"' +tta_flip=true
 #
-# cross_resolution DOIT être porté : le FiLM est un poids du prédicteur —
-# sans le flag, loading.py refuse (P3.2). L'éval reste à w=1 (T2) ; la
-# chirurgie P-x.3 et la synergie RateIN×w viendront par flags dédiés.
+# cross_resolution MUST be carried: the FiLM is a predictor weight - without
+# the flag, loading.py refuses (P3.2). The eval stays at w=1 (T2); the P-x.3
+# surgery and the RateIN x w synergy will come via dedicated flags.
 defaults:
   - lotsa_tiny_v3_eval
   - _self_

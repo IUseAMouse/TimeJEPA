@@ -1,25 +1,25 @@
 # @package _global_
 #
-# G4.6 — TRANSFERT VERS DES DONNÉES INÉDITES, arm SCRATCH (le contrôle).
-# Config jumelle : tiny_geo_lowdata (identique, AVEC poids pré-entraînés).
+# G4.6 - TRANSFER TO UNSEEN DATA, SCRATCH arm (the control).
+# Twin config: tiny_geo_lowdata (identical, WITH pretrained weights).
 #
 #   python scripts/train.py --config-name tiny_geo_scratch_lowdata \
 #       wandb.run_name=lowdata-scratch
 #
-# ⚠️ AUCUN `+training.pretrained_encoder_path` — c'est tout l'objet de la config.
-# Sans ce flag, l'encodeur part d'une initialisation aléatoire.
+# WARNING: NO `+training.pretrained_encoder_path` - that is the whole point
+# of this config. Without the flag, the encoder starts from random init.
 #
-# Cette config hérite de tiny_geo_lowdata et n'en change QUE le nom du modèle.
-# Tout le reste — architecture, géométrie, epochs, mode de finetune, décodeur,
-# datasets, seed — est donc identique par construction, et le restera si l'un des
-# deux est modifié. C'est la garantie que l'expérience porte sur une seule
-# variable : la présence ou non de poids pré-entraînés.
+# This config inherits from tiny_geo_lowdata and ONLY changes the model name.
+# Everything else - architecture, geometry, epochs, finetune mode, decoder,
+# datasets, seed - is therefore identical by construction, and stays so if
+# either one is modified. That guarantees the experiment carries a single
+# variable: the presence or absence of pretrained weights.
 #
-# Note sur l'asymétrie du corpus : m4-hourly et nn5-daily n'ont jamais été vus
-# par le PRETRAIN (écartés par le filtre de longueur à fenêtre 1280). Pour cet
-# arm-ci la question ne se pose pas — il n'a rien vu du tout.
+# Note on the corpus asymmetry: m4-hourly and nn5-daily were never seen by
+# the PRETRAIN (dropped by the length filter at window 1280). For this arm
+# the question does not arise - it saw nothing at all.
 #
-# Voir tiny_geo_lowdata pour le protocole complet et le raisonnement.
+# See tiny_geo_lowdata for the full protocol and reasoning.
 defaults:
   - tiny_geo_lowdata
   - _self_

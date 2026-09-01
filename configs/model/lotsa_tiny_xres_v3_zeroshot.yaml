@@ -1,18 +1,20 @@
 # @package _global_
-# Finetune zero-shot xres-v3 — LE cœur de G9.3 : les paires (k1,k2) restent
-# ACTIVES au finetune (w≠1 traverse le FiLM et la tête quantile — la pinball
-# supervise un fan au taux k2 sur une cible au taux k2) et l'ancre
-# d'invariance λ·MSE(ẑ, z_tgt) préserve juge et cohérence de taux (E18b).
+# xres-v3 zero-shot finetune - THE core of G9.3: the (k1,k2) pairs stay
+# ACTIVE at finetune (w!=1 traverses the FiLM and the quantile head - the
+# pinball supervises a fan at rate k2 against a target at rate k2) and the
+# invariance anchor lambda*MSE(z_hat, z_tgt) preserves the judge and rate
+# coherence (E18b).
 #
 #   python scripts/train.py --config-name lotsa_tiny_xres_v3_zeroshot \
-#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_xres_v3/pretrain_True/<dernier ckpt nommé>"'
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_xres_v3/pretrain_True/<latest named ckpt>"'
 #
-# Témoins à vérifier au premier décile : aug/w_neq1_frac > 0 (sinon l'arm est
-# STÉRILE — mode d'échec B5), train_loss/anchor loggée et stable.
-# Prédictions au lancement : P-x.1 cross-freq (10T/15T + décimées) ↓ vs
-# jumeau v3 ; P-x.2 probe-juge du checkpoint FINETUNÉ ≤ 0.30 (vs 0.409
-# mesuré E18b — l'ancre préserve le juge) ; P-x.3 chirurgie w:=1 à l'éval
-# dégrade les configs multi-fréquences (sinon le FiLM est décoratif).
+# Witnesses to check in the first decile: aug/w_neq1_frac > 0 (otherwise the
+# arm is STERILE - failure mode B5), train_loss/anchor logged and stable.
+# Predictions at launch: P-x.1 cross-freq (10T/15T + decimated) down vs the
+# v3 twin; P-x.2 probe-judge of the FINETUNED checkpoint <= 0.30 (vs 0.409
+# measured in E18b - the anchor preserves the judge); P-x.3 the w:=1 surgery
+# at eval degrades the multi-frequency configs (otherwise the FiLM is
+# decorative).
 defaults:
   - lotsa_tiny_xres_v3
   - _self_
@@ -25,9 +27,9 @@ training:
   finetune_mode: "full_finetune"
   max_epochs: 1
   loss:
-    # λ sous le lambda_z=0.1 qui n'a pas siphonné (E21, témoin inversé) ;
-    # même patron de surveillance : si train_loss dévie > 2 % du jumeau v3 à
-    # étape égale, replier à 0.05.
+    # lambda below the lambda_z=0.1 that did not siphon (E21, inverted
+    # witness); same monitoring pattern: if train_loss deviates > 2% from the
+    # v3 twin at equal step, fall back to 0.05.
     lambda_anchor: 0.1
 
 checkpoint:

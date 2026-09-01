@@ -1,7 +1,8 @@
+# ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
 Compute optimal TimeJEPA configuration based on dataset size and scaling laws.
 
-/!\ Deprecated, especially since I wasn't computing effective tokens per training
+Warning: deprecated, especially since I wasn't computing effective tokens per training
 by taking patching into consideration at this point. 
 """
 
@@ -78,7 +79,7 @@ class JEPAConfig:
         return (
             f"{self.name}: d={self.d_model}, h={self.n_heads}, "
             f"L_enc={self.encoder_layers}, L_pred={self.predictor_layers}, "
-            f"L_dec={self.decoder_layers} → {self.total_params/1e6:.1f}M params"
+            f"L_dec={self.decoder_layers} -> {self.total_params/1e6:.1f}M params"
         )
 
 
@@ -138,7 +139,7 @@ def compute_optimal_params(
     Compute optimal parameter count based on scaling laws.
     
     Regimes:
-    - "chinchilla": Original LLM scaling (tokens/params ≈ 20)
+    - "chinchilla": Original LLM scaling (tokens/params ~ 20)
     - "representation": For JEPA/contrastive (more capacity needed)
     - "conservative": Avoid overfitting (larger ratio)
     """
@@ -191,7 +192,7 @@ def generate_custom_config(
     Generate a custom config to match target params.
     """
     # Solve for d_model given layers and target params
-    # Simplified: total ≈ 14 * L_total * d^2 
+    # Simplified: total ~ 14 * L_total * d^2 
     L_total = encoder_layers + 2 + 2  # encoder + predictor + decoder
     
     d_model = int(np.sqrt(target_params / (14 * L_total)))
@@ -234,12 +235,12 @@ def print_analysis(
     """Full scaling law analysis."""
     
     print("\n" + "=" * 80)
-    print("🔬 TIMEJEPA SCALING LAW ANALYSIS")
+    print("TIMEJEPA SCALING LAW ANALYSIS")
     print("=" * 80)
     
     token_stats = compute_effective_tokens(total_points, epochs, context_length)
     
-    print(f"\n📊 DATA STATISTICS:")
+    print(f"\nDATA STATISTICS:")
     print(f"  Total datapoints:         {token_stats['total_points']:>15,}")
     print(f"  Context length:           {context_length:>15}")
     print(f"  Epochs:                   {token_stats['epochs']:>15}")
@@ -249,7 +250,7 @@ def print_analysis(
     print(f"  Effective tokens*:        {token_stats['effective_tokens']:>15,.0f}")
     print(f"\n  * Accounts for diminishing returns of repeated data")
     
-    print(f"\n🎯 OPTIMAL PARAMETER COUNTS:")
+    print(f"\nOPTIMAL PARAMETER COUNTS:")
     print("-" * 80)
     
     for regime in ["chinchilla", "representation", "conservative"]:
@@ -267,7 +268,7 @@ def print_analysis(
     )
     
     print(f"\n" + "=" * 80)
-    print("📋 PRESET CONFIGURATIONS")
+    print("PRESET CONFIGURATIONS")
     print("=" * 80)
     print(f"\n{'Name':<10} {'d_model':>8} {'heads':>6} {'L_enc':>6} {'L_pred':>7} {'L_dec':>6} {'Params':>12} {'Status':<15}")
     print("-" * 80)
@@ -280,11 +281,11 @@ def print_analysis(
         if config.name == best_config.name:
             status = "⭐ RECOMMENDED"
         elif config in viable_configs:
-            status = "✓ Viable"
+            status = "Viable"
         elif config.total_params < param_range['min']:
-            status = "⚠️ Too small"
+            status = "Too small"
         else:
-            status = "⚠️ Too large"
+            status = "Too large"
         
         print(f"{config.name:<10} {config.d_model:>8} {config.n_heads:>6} "
               f"{config.encoder_layers:>6} {config.predictor_layers:>7} {config.decoder_layers:>6} "
@@ -292,7 +293,7 @@ def print_analysis(
     
     
     print(f"\n" + "=" * 80)
-    print("🛠️  CUSTOM CONFIGURATION (optimized for your data)")
+    print("CUSTOM CONFIGURATION (optimized for your data)")
     print("=" * 80)
     
     for n_layers in [4, 6, 8]:
@@ -301,7 +302,7 @@ def print_analysis(
         print(f"  {custom}{indicator}")
     
     print(f"\n" + "=" * 80)
-    print("✅ RECOMMENDED YAML CONFIG")
+    print("RECOMMENDED YAML CONFIG")
     print("=" * 80)
     
     rec = best_config if best_config.total_params <= param_range['max'] else generate_custom_config(optimal_params, 6)
@@ -340,7 +341,7 @@ model:
     
     
     print("=" * 80)
-    print("📚 TRAINING RECOMMENDATIONS")
+    print("TRAINING RECOMMENDATIONS")
     print("=" * 80)
     
     # Batch size heuristic
@@ -363,7 +364,7 @@ model:
   Warmup steps:             ~{warmup_steps:,}
   Gradient accumulation:    Adjust to reach effective batch ~512-1024
   
-  ⚠️  With {epochs} epochs on {total_points/1e6:.0f}M points:
+  With {epochs} epochs on {total_points/1e6:.0f}M points:
       - Monitor val_loss for overfitting after epoch ~{max(5, epochs//3)}
       - Consider early stopping with patience=5-10
       - Use dropout=0.1-0.2 for regularization

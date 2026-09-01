@@ -55,7 +55,7 @@ class FinetuneModule(pl.LightningModule):
         # native geometry so val_loss stays comparable across epochs).
         #
         # Without this the decoder only ever sees one context length, while the
-        # encoder was pretrained on many — so evaluating at any other length
+        # encoder was pretrained on many - so evaluating at any other length
         # puts the decoder out of distribution even where the encoder is fine.
         # The context sweep could not separate those two effects; this removes
         # the decoder's share. Horizon stays FIXED in finetune: eval already
@@ -68,18 +68,18 @@ class FinetuneModule(pl.LightningModule):
         context_lengths: Optional[List[int]] = None,
         p_random_context_finetune: float = 0.0,
 
-        # G9.3 — ancre d'invariance (backlog E18b) : λ·MSE(ẑ, z_tgt) gardé au
-        # finetune, target encoder GELÉ. Sans elle, le finetune détruit le juge
-        # (rang 0.235 -> 0.409, E18b) et éroderait la cohérence xres — la loi
-        # de câblage (E18b/E21) : une capacité survit ssi le finetune la
-        # traverse. Défaut 0.0 = bit-identique à l'existant.
+        # G9.3 - invariance anchor (E18b backlog): lambda*MSE(z_hat, z_tgt)
+        # kept at finetune, target encoder FROZEN. Without it, finetune
+        # destroys the judge (rank 0.235 -> 0.409, E18b) and would erode xres
+        # coherence - the wiring law (E18b/E21): a capability survives iff
+        # the finetune exercises it. Default 0.0 = bit-identical to existing.
         lambda_anchor: float = 0.0,
 
-        # Chantier 2 (horizon natif) — fusionner la table de requêtes d'un
-        # checkpoint à horizon COURT dans un modèle à horizon LONG au lieu de la
-        # dropper. Opt-in : sans ce flag, un mismatch reste un échec bruyant
-        # (critical_missing), le comportement historique. Voir
-        # grow_future_query_table dans jepa_tst.py.
+        # Worksite 2 (native horizon) - merge the query table of a
+        # SHORT-horizon checkpoint into a LONG-horizon model instead of
+        # dropping it. Opt-in: without this flag a mismatch stays a loud
+        # failure (critical_missing), the historical behavior. See
+        # grow_future_query_table in jepa_tst.py.
         extend_horizon_queries: bool = False,
         
         # Optimizer
@@ -107,37 +107,40 @@ class FinetuneModule(pl.LightningModule):
         # Model
         self.model = model
         self.model.set_pretrain_mode(False)  # Switch to finetune mode
-        logger.info("✓ Model switched to finetune mode")
-        
-        # AVANT le chargement : load_pretrained_encoder lit cet attribut
-        # (chemin h512). Le poser après, c'était un AttributeError sur tout
-        # finetune lancé avec pretrained_encoder_path — jamais vu avant le
-        # premier finetune post-h512 (mix, 2026-08-22) car tiny-full tournait
-        # sur le commit pré-h512.
+        logger.info("Model switched to finetune mode")
+
+        # BEFORE loading: load_pretrained_encoder reads this attribute (h512
+        # path). Setting it after was an AttributeError on any finetune
+        # launched with pretrained_encoder_path - never seen before the first
+        # post-h512 finetune (mix, 2026-08-22) because tiny-full ran on the
+        # pre-h512 commit.
         self.extend_horizon_queries = bool(extend_horizon_queries)
         self.lambda_anchor = float(lambda_anchor)
         if self.lambda_anchor > 0 and finetune_mode == 'linear_probe':
-            # L'ancre vise encoder/predictor ; en linear_probe ils sont gelés :
-            # le terme serait une CONSTANTE ajoutée à la loss (val_loss faussée,
-            # zéro gradient utile). Refus bruyant plutôt que silence.
+            # The anchor targets encoder/predictor; in linear_probe they are
+            # frozen: the term would be a CONSTANT added to the loss (skewed
+            # val_loss, zero useful gradient). Refuse loudly rather than stay
+            # silent.
             raise ValueError(
-                "lambda_anchor > 0 avec finetune_mode='linear_probe' : l'ancre "
-                "n'aurait aucun gradient (tout est gelé) et fausserait val_loss.")
+                "lambda_anchor > 0 with finetune_mode='linear_probe': the "
+                "anchor would have no gradient (everything frozen) and would "
+                "skew val_loss.")
 
         # Load pretrained weights if provided
         if pretrained_encoder_path is not None:
             self.load_pretrained_encoder(pretrained_encoder_path)
         if self.lambda_anchor > 0:
-            # PIÈGE n°1 de l'ancre : load_pretrained_encoder SAUTE les clés
-            # target_encoder (voir plus bas), donc self.model.target_encoder
-            # est encore le deepcopy de l'online À LA CONSTRUCTION — des poids
-            # ALÉATOIRES. Ancrer dessus, c'est ancrer vers du bruit. On copie
-            # l'online fraîchement chargé : la même approximation que la sonde
-            # d'énergie (probe_energy.py, « l'encodeur online remplace le
-            # target ») — exacte à tau -> 1 en fin de pretrain.
+            # Anchor trap #1: load_pretrained_encoder SKIPS the
+            # target_encoder keys (see below), so self.model.target_encoder
+            # is still the deepcopy of the online encoder AT CONSTRUCTION -
+            # RANDOM weights. Anchoring on that is anchoring to noise. We
+            # copy the freshly loaded online encoder: the same approximation
+            # as the energy probe (probe_energy.py, "the online encoder
+            # stands in for the target") - exact as tau -> 1 at the end of
+            # pretrain.
             self.model.target_encoder.copy_from(self.model.online_encoder)
-            logger.info("✓ Ancre G9.3 : target_encoder <- copie de l'online "
-                        f"chargé (lambda_anchor={self.lambda_anchor})")
+            logger.info("G9.3 anchor: target_encoder <- copy of the loaded "
+                        f"online encoder (lambda_anchor={self.lambda_anchor})")
 
         # Apply finetuning strategy
         self.finetune_mode = finetune_mode
@@ -194,19 +197,19 @@ class FinetuneModule(pl.LightningModule):
         else:
             raise ValueError(f"Unknown checkpoint format. Keys: {list(checkpoint.keys())}")
         
-        # Chantier 2 — extension d'horizon opt-in : fusionner la table de
-        # requêtes courte AVANT filter_loadable, sinon ce dernier la droppe et
-        # le garde critical_missing ci-dessous refuse (comportement voulu hors
-        # extension intentionnelle).
+        # Worksite 2 - opt-in horizon extension: merge the short query table
+        # BEFORE filter_loadable, otherwise the latter drops it and the
+        # critical_missing guard below refuses (intended behavior outside an
+        # intentional extension).
         if self.extend_horizon_queries:
             cleaned_state_dict = grow_future_query_table(self.model, cleaned_state_dict)
 
-        # Drop entries whose shape does not match — swapping a point decoder for
+        # Drop entries whose shape does not match - swapping a point decoder for
         # the quantile head reuses the same key path with a different width, and
         # strict=False does NOT tolerate that (it only tolerates missing keys).
         cleaned_state_dict, dropped = filter_loadable(self.model, cleaned_state_dict)
         for key, ckpt_shape, model_shape in dropped:
-            logger.info(f"  ↷ re-initialising {key}: checkpoint {ckpt_shape} vs model {model_shape}")
+            logger.info(f"  re-initialising {key}: checkpoint {ckpt_shape} vs model {model_shape}")
 
         # Load weights
         missing, unexpected = self.model.load_state_dict(cleaned_state_dict, strict=False)
@@ -214,20 +217,20 @@ class FinetuneModule(pl.LightningModule):
         # Check for critical missing keys
         expected_missing = {'decoder', 'target_encoder', 'revin'}
         critical_missing = [k for k in missing if not any(exp in k for exp in expected_missing)]
-        # Symétrie des poids d'arm : un checkpoint qui porte des poids core que
-        # le modèle n'a pas (arcsinh -> nu, ESJEPA predictor.z_head -> nu, xres
-        # w_film -> nu) arrive en 'unexpected' et doit refuser autant que
-        # l'inverse — finetuner en amputant l'architecture pré-entraînée serait
-        # silencieux. (Durci 2026-08-23, était limité à robust_scaler. ; aligné
-        # sur loading.py.)
+        # Arm-weight symmetry: a checkpoint carrying core weights the model
+        # lacks (arcsinh -> bare, ESJEPA predictor.z_head -> bare, xres
+        # w_film -> bare) lands in 'unexpected' and must refuse as much as
+        # the reverse - finetuning while amputating the pretrained
+        # architecture would be silent. (Hardened 2026-08-23, was limited to
+        # robust_scaler.; aligned with loading.py.)
         core = ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')
         critical_missing += [k for k in unexpected if k.startswith(core)]
         
         if critical_missing:
-            logger.error(f"❌ Critical missing keys: {critical_missing}")
+            logger.error(f"Critical missing keys: {critical_missing}")
             raise RuntimeError(f"Failed to load pretrained weights: {critical_missing}")
-        
-        logger.info(f"✓ Loaded pretrained weights ({len(cleaned_state_dict)} keys)")
+
+        logger.info(f"Loaded pretrained weights ({len(cleaned_state_dict)} keys)")
         logger.info(f"  Expected missing (decoder): {len(missing) - len(critical_missing)} keys")
     
     def _apply_finetune_strategy(self, mode: str):
@@ -237,19 +240,19 @@ class FinetuneModule(pl.LightningModule):
             self.model.freeze_predictor()
             self.model.freeze_patching()
             self.model.freeze_target_encoder()
-            logger.info("✓ LINEAR PROBE: encoder frozen, predictor + decoder trainable")
+            logger.info("LINEAR PROBE: encoder frozen, predictor + decoder trainable")
         
         elif mode == 'full_finetune':
             self.model.unfreeze_encoder()
             self.model.unfreeze_predictor()
             self.model.unfreeze_patching()
-            logger.info("✓ FULL FINETUNE: all components trainable")
+            logger.info("FULL FINETUNE: all components trainable")
         
         elif mode == 'gradual_unfreeze':
             self.model.freeze_encoder()
             self.model.freeze_predictor()
             self.model.freeze_patching()
-            logger.info(f"✓ GRADUAL UNFREEZE: frozen, will unfreeze at epoch {self.unfreeze_after_epoch}")
+            logger.info(f"GRADUAL UNFREEZE: frozen, will unfreeze at epoch {self.unfreeze_after_epoch}")
         
         else:
             raise ValueError(f"Unknown finetune_mode: {mode}")
@@ -259,7 +262,7 @@ class FinetuneModule(pl.LightningModule):
         if self.finetune_mode == 'gradual_unfreeze':
             if self.current_epoch == self.unfreeze_after_epoch:
                 # B20: this used to call unfreeze_predictor() alone while
-                # logging "encoder and predictor" — the encoder and patching
+                # logging "encoder and predictor" - the encoder and patching
                 # stayed frozen forever. Now the action matches the log.
                 logger.info(
                     f"Epoch {self.current_epoch}: unfreezing encoder, predictor and patching"
@@ -289,28 +292,29 @@ class FinetuneModule(pl.LightningModule):
         Shared by train/val/test.
 
         With a probabilistic head the loss is the pinball over the whole quantile
-        fan, not a point loss on the median — otherwise the outer quantiles would
+        fan, not a point loss on the median - otherwise the outer quantiles would
         receive no gradient at all. The reported point metrics still use the
         median, which is the MAE-optimal estimate and what MASE scores.
 
-        G9.3 : `w` (paires xres du batch, None sinon) est relayé au forecast —
-        la pinball supervise alors un fan au taux k2 sur une cible au taux k2
-        (transformations pointwise, repère valide). L'ancre d'invariance, si
-        active, est calculée sur le TARGET BRUT (capturé avant les transforms
-        ci-dessous, qui RÉASSIGNENT target) et APRÈS la pinball (l'ordre des
-        fits revin/robust_scaler — mêmes stats, mais on ne dépend pas de ça).
+        G9.3: `w` (the batch's xres pairs, None otherwise) is relayed to
+        forecast - the pinball then supervises a fan at rate k2 against a
+        target at rate k2 (pointwise transforms, valid frame). The invariance
+        anchor, if active, is computed on the RAW TARGET (captured before the
+        transforms below, which REASSIGN target) and AFTER the pinball (the
+        revin/robust_scaler fit order - same stats, but we do not depend on
+        that).
         """
         raw_target = target
         results = self.model.forecast(context, w=w)
 
-        # G8.4 — si le modèle compresse (arcsinh robuste), la cible doit subir
-        # la MÊME compression avec les stats du contexte (posées par forecast()
-        # à l'instant) avant la normalisation RevIN : la pinball compare des
-        # quantiles en espace compressé+RevIN, la cible doit y vivre aussi.
+        # G8.4 - if the model compresses (robust arcsinh), the target must get
+        # the SAME compression with the context stats (just set by forecast())
+        # before RevIN normalization: the pinball compares quantiles in
+        # compressed+RevIN space, the target must live there too.
         if getattr(self.model, 'robust_scaler', None) is not None:
             target = self.model.robust_scaler.transform(target)
 
-        # Target normalized with the CONTEXT's statistics — never its own, which
+        # Target normalized with the CONTEXT's statistics - never its own, which
         # would leak the future into the normalization.
         if self.model.revin is not None:
             target = (target - self.model.revin.mean) / self.model.revin.std
@@ -323,11 +327,12 @@ class FinetuneModule(pl.LightningModule):
 
         self._last_anchor = None
         if self.lambda_anchor > 0:
-            # MSE d'invariance SEULE, pas de SIGReg : la cible (target gelé)
-            # est fixe, rien ne peut s'effondrer — l'argument déjà écrit pour
-            # l'arm reconstruction. `targets` sort de forward_pretrain déjà
-            # no_grad + detach. w : mêmes règles que forward_finetune (T2 —
-            # w=1 explicite si le FiLM existe, jamais None sur un modèle xres).
+            # Invariance MSE ALONE, no SIGReg: the target (frozen encoder) is
+            # fixed, nothing can collapse - the argument already written for
+            # the reconstruction arm. `targets` comes out of forward_pretrain
+            # already no_grad + detached. w: same rules as forward_finetune
+            # (T2 - explicit w=1 if the FiLM exists, never None on an xres
+            # model).
             w_anchor = w
             if w_anchor is None and hasattr(self.model.predictor, 'w_film'):
                 w_anchor = torch.ones(context.shape[0], device=context.device)
@@ -344,7 +349,7 @@ class FinetuneModule(pl.LightningModule):
     def _maybe_crop_context(self, context: torch.Tensor) -> torch.Tensor:
         """
         Sample a context length ONCE PER BATCH and crop from the LEFT (keep the
-        most recent history — what a shorter context would actually contain at
+        most recent history - what a shorter context would actually contain at
         inference). Mirrors JEPAPretrainModule._randomize_geometry, minus the
         horizon part, which stays fixed in finetune by design.
         """
@@ -368,20 +373,20 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
 
-        # G9.3 — paires xres au finetune : w par item quand le dataset l'émet
-        # (cross_resolution + p_multi_resolution_finetune > 0), None sinon.
+        # G9.3 - xres pairs at finetune: per-item w when the dataset emits it
+        # (cross_resolution + p_multi_resolution_finetune > 0), None otherwise.
         w = batch.get('w')
         if w is not None:
             w = w.float()
-            # Témoins (patron du pretrain) : sans eux, aucun moyen de vérifier
-            # depuis W&B que les paires sont actives — la stérilité silencieuse
-            # est le mode d'échec n°1 des arms de ce projet (B5).
+            # Witnesses (pretrain pattern): without them there is no way to
+            # verify from W&B that the pairs are active - silent sterility is
+            # this project's #1 arm failure mode (B5).
             self.log('aug/w_neq1_frac', (w != 1).float().mean(),
                      on_step=True, on_epoch=False, logger=True)
             self.log('aug/w_mean', w.mean(),
                      on_step=True, on_epoch=False, logger=True)
 
-        # Train only — validation_step and test_step keep the native geometry.
+        # Train only - validation_step and test_step keep the native geometry.
         context = self._maybe_crop_context(context)
         # Same observability as the pretrain: without this line there is no way
         # to confirm from W&B that the randomization is actually active.
@@ -481,13 +486,13 @@ class FinetuneModule(pl.LightningModule):
 
             # B20: register EVERY parameter, frozen ones included. A frozen
             # parameter has grad=None and AdamW skips it, so registration is a
-            # no-op until the parameter is unfrozen — at which point the
+            # no-op until the parameter is unfrozen - at which point the
             # EXISTING optimizer picks it up, and the LR scheduler stays
             # consistent because the groups never change.
             #
             # The previous code filtered on requires_grad here. The optimizer
             # is built once, at epoch 0, when gradual_unfreeze has everything
-            # frozen — so the later unfreeze flipped requires_grad, gradients
+            # frozen - so the later unfreeze flipped requires_grad, gradients
             # flowed, and optimizer.step() silently never updated those
             # weights. gradual_unfreeze therefore trained the decoder (plus
             # the RevIN affine) alone for the entire run, in every run that
@@ -559,10 +564,10 @@ class FinetuneModule(pl.LightningModule):
             group_name = param_group.get('name', f'group_{i}')
             self.log(f'lr_{group_name}', param_group['lr'], on_epoch=True, prog_bar=True, sync_dist=True)
 
-        # ESJEPA — témoin de stérilité du gate d'étalement : parti de zéro
-        # (zéro-init), s'il Y RESTE le décodeur ignore z — résultat négatif
-        # interprétable (la cross-attention contexte suffit), pas un échec
-        # silencieux. Équivalent finetune du aug/w_neq1_frac d'xres.
+        # ESJEPA - sterility witness of the spread gate: starts at zero
+        # (zero-init); if it STAYS there the decoder ignores z - an
+        # interpretable negative result (context cross-attention suffices),
+        # not a silent failure. Finetune equivalent of xres's aug/w_neq1_frac.
         head = getattr(getattr(self.model, 'decoder', None), 'decoder', None)
         z_gate = getattr(head, 'z_gate', None)
         if z_gate is not None:

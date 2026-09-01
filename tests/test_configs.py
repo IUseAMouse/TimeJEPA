@@ -1,11 +1,11 @@
 """
-Tests de la GRILLE DE CONFIGS Hydra (extraits de test_p0_regressions.py, audit
-du 2026-08-19 — déplacés à l'identique, aucun test réécrit).
+Tests for the Hydra CONFIG GRID (extracted from test_p0_regressions.py,
+2026-08-19 audit - moved verbatim, no test rewritten).
 
-Couvre : composition de chaque config d'expérience (B21), dimensions des
-échelles lotsa_* contre leurs références, arms geo ne différant que par leur
-variable déclarée, noms de checkpoints sans '=' (B21). Ce sont les tests les
-plus lents de la suite (composition Hydra) : marqués `slow`.
+Covers: composition of every experiment config (B21), lotsa_* scale
+dimensions against their references, geo arms differing only by their
+declared variable, checkpoint names without '=' (B21). These are the slowest
+tests in the suite (Hydra composition): marked `slow`.
 """
 
 import sys
@@ -59,7 +59,7 @@ def test_lotsa_scale_configs_match_their_reference_dimensions(size, reference):
 def test_lotsa_eval_config_matches_the_trained_model(size):
     """
     A shape mismatch at eval time only WARNS before producing silently wrong
-    numbers — the trap already hit on the p32 arm. Capacity must match too, not
+    numbers - the trap already hit on the p32 arm. Capacity must match too, not
     just geometry.
     """
     zs = _compose(f"lotsa_{size}_zeroshot")
@@ -117,7 +117,7 @@ def test_lotsa_configs_do_not_disturb_existing_ones():
     assert ft.data.get("use_mmap", False) is False
     assert len(ft.data.datasets_finetune) == len(base.data.datasets_finetune)
 
-    # The zero-shot arm — the primary protocol — must train its decoder on LOTSA
+    # The zero-shot arm - the primary protocol - must train its decoder on LOTSA
     # only, so that Monash and Nixtla stay unseen at every stage.
     zs = _compose("lotsa_tiny_zeroshot")
     assert zs.training.mode == "finetune"
@@ -156,7 +156,7 @@ def test_checkpoint_filename_has_no_equals_sign(config_name):
     metric name on top of the template's own text:
     'epochepoch=00_val_lossval_loss=0.3445.ckpt'. Hydra's override grammar
     treats '=' as a separator, so every downstream finetune and eval command
-    needed quoting gymnastics — and one of them failed outright with backslashes
+    needed quoting gymnastics - and one of them failed outright with backslashes
     surviving literally into the path.
     """
     cfg = _compose(config_name)

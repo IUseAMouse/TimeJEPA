@@ -1,43 +1,45 @@
-#!/usr/bin/env python
+# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round
+# (G13-T1/T2 control-as-EBM probe, E20c); kept per the no-delete policy.
 """
-G13-T1/T2 — l'hypothèse « contrôle en mode EBM », testée SANS a_film ni GPU.
+G13-T1/T2 - the "control in EBM mode" hypothesis, tested WITHOUT a_film or GPU.
 
     python scripts/control_ebm_probe.py \\
         --checkpoint checkpoints/timejepa_tiny_lotsa_mix/last.ckpt \\
         --model-config lotsa_tiny_mix_eval --standalone-targets
 
-Le principe : on POSSÈDE le simulateur (thermostat linéaire, dynamique connue),
-donc chaque affirmation du juge et chaque plan sont vérifiables contre la
-vraie dynamique — ce que ni LOTSA ni GIFT ne permettent.
+Principle: we OWN the simulator (linear thermostat, known dynamics), so every
+claim of the judge and every plan is verifiable against the true dynamics -
+which neither LOTSA nor GIFT allows.
 
-Simulateur (univarié observable, action cachée comme dans LOTSA) :
-    x_{t+1} = x_t + alpha·(amb_t − x_t) + beta·u_t + sigma·eps_t
-    amb_t   = sinusoïde 24 pas + niveau ; u_t ∈ [0, 1] (chauffe)
-    historique généré sous POLITIQUE thermostat (bang-bang lissé) ⇒ u corrélé
-    à l'état = confounding observationnel volontaire, le mur G13 en miniature.
+Simulator (observable univariate, hidden action as in LOTSA):
+    x_{t+1} = x_t + alpha*(amb_t - x_t) + beta*u_t + sigma*eps_t
+    amb_t   = 24-step sinusoid + level; u_t in [0, 1] (heating)
+    history generated under a thermostat POLICY (smoothed bang-bang) => u
+    correlated with the state = deliberate observational confounding, the G13
+    wall in miniature.
 
-T1 — le juge connaît-il la dynamique ?
-    Candidats h=256 : cohérents (nouvelles graines + consignes variées) contre
-    trois familles de violations — renversement temporel, saut d'état initial,
-    réponse à l'action INVERSÉE (beta → −beta). AUC énergie par famille.
-    Prédictions posées avant : saut/renversement séparés (AUC > 0.7) ; le
-    signe d'action est le cas dur — s'il n'est PAS séparé, c'est la mesure
-    directe du mur du confounding (le juge observationnel ne connaît pas
-    l'effet de u, seulement les morphologies).
+T1 - does the judge know the dynamics?
+    h=256 candidates: coherent (new seeds + varied setpoints) against three
+    violation families - time reversal, initial-state jump, INVERTED action
+    response (beta -> -beta). Energy AUC per family. Predictions written
+    beforehand: jump/reversal separated (AUC > 0.7); the action sign is the
+    hard case - if it is NOT separated, that directly measures the
+    confounding wall (the observational judge does not know the effect of u,
+    only the morphologies).
 
-T2 — planning par backprop, vérité terrain en main.
-    Objectif : maintenir x dans une bande [c_lo, c_hi] sur h pas. Commande
-    u ∈ [0,1]^h optimisée par gradient À TRAVERS le simulateur différentiable
-    (sans bruit), sous deux objectifs :
-        (a) coût seul ;
-        (b) coût + lambda_E · Énergie(ctx, x(u))  — le régularisateur
-            d'incertitude façon Henaff/Canziani/LeCun (MPUR).
-    VERDICT PAR EXÉCUTION : 200 rollouts bruités sous le u trouvé → taux de
-    violation réalisé + « gap d'optimisme » (coût planifié sans bruit vs coût
-    réalisé). Prédiction : (a) sur-promet (Goodhart du simulateur lisse),
-    (b) referme le gap ; si l'énergie n'aide pas, résultat négatif consigné.
+T2 - planning by backprop, ground truth in hand.
+    Goal: keep x inside a band [c_lo, c_hi] over h steps. Command u in
+    [0,1]^h optimized by gradient THROUGH the differentiable simulator
+    (noise-free), under two objectives:
+        (a) cost alone;
+        (b) cost + lambda_E * Energy(ctx, x(u)) - the uncertainty
+            regularizer a la Henaff/Canziani/LeCun (MPUR).
+    VERDICT BY EXECUTION: 200 noisy rollouts under the found u -> realized
+    violation rate + "optimism gap" (noise-free planned cost vs realized
+    cost). Prediction: (a) over-promises (smooth-simulator Goodhart), (b)
+    closes the gap; if energy does not help, negative result recorded.
 
-Lecture seule, CPU (~2-4 min). Sorties console + JSON evaluation/control_ebm/.
+Read-only, CPU (~2-4 min). Console output + JSON evaluation/control_ebm/.
 """
 
 import argparse
@@ -55,7 +57,7 @@ from hydra import compose, initialize_config_dir                    # noqa: E402
 
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
 
-# ----------------------------------------------------------------- simulateur
+# ------------------------------------------------------------------ simulator
 ALPHA, BETA, SIGMA = 0.10, 0.50, 0.05
 PERIOD, AMB_AMP, AMB_LVL = 24, 1.0, 0.0
 CTX_LEN, H = 1024, 256
@@ -68,7 +70,7 @@ def ambient(t0: int, n: int) -> torch.Tensor:
 
 def simulate(x0: float, t0: int, u: torch.Tensor, noise: torch.Tensor | None,
              beta: float = BETA) -> torch.Tensor:
-    """Rollout différentiable si u l'exige. u, noise : [n]. Retourne x [n]."""
+    """Rollout, differentiable if u requires it. u, noise: [n]. Returns x [n]."""
     amb = ambient(t0, len(u))
     xs, x = [], torch.as_tensor(float(x0))
     for i in range(len(u)):
@@ -83,7 +85,7 @@ def thermostat_policy(x: torch.Tensor, setpoint: float, gain: float = 2.0) -> to
 
 
 def gen_history(rng: torch.Generator, n: int = CTX_LEN, setpoints=(1.0, 2.0)):
-    """Historique sous politique thermostat, consignes jour/nuit alternées."""
+    """History under a thermostat policy, alternating day/night setpoints."""
     noise = torch.randn(n, generator=rng)
     xs, us, x = [], [], torch.tensor(0.5)
     for t in range(n):
@@ -95,11 +97,11 @@ def gen_history(rng: torch.Generator, n: int = CTX_LEN, setpoints=(1.0, 2.0)):
     return np.array(xs, dtype=np.float32), np.array(us, dtype=np.float32)
 
 
-# ----------------------------------------------------------- énergie du juge
+# -------------------------------------------------------------- judge energy
 def energy(model, ctx: torch.Tensor, cands: torch.Tensor, standalone: bool,
            grad: bool = False) -> torch.Tensor:
-    """E = 1 − cos(ẑ, enc(cand)) moyenné sur les patches. ctx [L], cands [Nc, h].
-    Différentiable en `cands` si grad=True (chemin de probe_energy, sans no_grad)."""
+    """E = 1 - cos(z_pred, enc(cand)) averaged over patches. ctx [L], cands [Nc, h].
+    Differentiable in `cands` if grad=True (probe_energy path, without no_grad)."""
     n_tgt = (cands.shape[1] - model.patching.patch_size) // model.patching.stride + 1
     x_ctx = ctx.reshape(1, -1, 1)
     xc = cands.unsqueeze(-1)
@@ -126,7 +128,7 @@ def energy(model, ctx: torch.Tensor, cands: torch.Tensor, standalone: bool,
 
 
 def auc(pos: np.ndarray, neg: np.ndarray) -> float:
-    """P(E_violation > E_cohérent) — 1.0 = séparation parfaite."""
+    """P(E_violation > E_coherent) - 1.0 = perfect separation."""
     return float((pos[None, :] > neg[:, None]).mean())
 
 
@@ -153,7 +155,7 @@ def run_t1(model, standalone, n_inst, n_cand, seed):
             jump = float(torch.empty(1).uniform_(1.5, 2.5, generator=g)) * \
                 (1 if torch.rand(1, generator=g) > 0.5 else -1)
             jmps.append(simulate(x0 + jump, t0, torch.stack(u_traj), noise))
-            # même politique, réponse à l'action INVERSÉE (chauffer refroidit)
+            # same policy, INVERTED action response (heating cools)
             xs_f, x = [], torch.tensor(x0)
             for i in range(H):
                 u = thermostat_policy(x, sp)
@@ -168,13 +170,13 @@ def run_t1(model, standalone, n_inst, n_cand, seed):
                                      standalone).numpy())
     out = {}
     coh = np.concatenate(fams["coherent"])
-    print("\nT1 — énergie par famille de candidats "
-          f"(cohérents : {coh.mean():.4f} ± {coh.std():.4f})")
+    print("\nT1 - energy per candidate family "
+          f"(coherent: {coh.mean():.4f} +- {coh.std():.4f})")
     for name in ("reversal", "state_jump", "beta_flip"):
         e = np.concatenate(fams[name])
         a = auc(e, coh)
         out[name] = {"mean_energy": float(e.mean()), "auc_vs_coherent": a}
-        print(f"  {name:11s} E {e.mean():.4f} ± {e.std():.4f}  AUC vs cohérent {a:.3f}")
+        print(f"  {name:11s} E {e.mean():.4f} +- {e.std():.4f}  AUC vs coherent {a:.3f}")
     out["coherent_mean_energy"] = float(coh.mean())
     return out
 
@@ -182,10 +184,10 @@ def run_t1(model, standalone, n_inst, n_cand, seed):
 # ------------------------------------------------------------------------ T2
 def plan(model, ctx, x0, t0, standalone, lambda_e, c_lo, c_hi,
          steps=120, lr=0.08, lambda_u=0.02, plan_beta=BETA):
-    """plan_beta ≠ BETA = T2b : le PLANNER croit une mauvaise dynamique (erreur
-    de modèle contrôlée) ; l'exécution (realized) utilise toujours la vraie.
-    C'est le cadre MPUR réel — le régularisateur n'a de travail que si le
-    modèle de planification est faux."""
+    """plan_beta != BETA = T2b: the PLANNER believes a wrong dynamics
+    (controlled model error); execution (realized) always uses the true one.
+    That is the real MPUR setting - the regularizer only has work to do when
+    the planning model is wrong."""
     raw = torch.zeros(H, requires_grad=True)
     opt = torch.optim.Adam([raw], lr=lr)
     for _ in range(steps):
@@ -193,10 +195,10 @@ def plan(model, ctx, x0, t0, standalone, lambda_e, c_lo, c_hi,
         x = simulate(x0, t0, u, noise=None, beta=plan_beta)
         cost = (torch.relu(x - c_hi) + torch.relu(c_lo - x)).mean() \
             + lambda_u * (u ** 2).mean()
-        # L'énergie vit à l'échelle ~0.7-1.0, le coût à ~0.005 : on
-        # régularise sur l'EXCÈS d'énergie au-dessus du niveau des futurs
-        # cohérents (E20c : λ_E brut à 0.5 noyait le coût à 99 % — procès
-        # truqué). lambda_e reste le poids de cet excès.
+        # The energy lives at ~0.7-1.0, the cost at ~0.005: regularize on the
+        # energy EXCESS above the coherent-futures level (E20c: raw lambda_E
+        # at 0.5 drowned the cost at 99% - a rigged trial). lambda_e stays
+        # the weight of that excess.
         if lambda_e > 0:
             e = energy(model, ctx, x.unsqueeze(0), standalone, grad=True)[0]
             loss = cost + lambda_e * torch.relu(e - plan.e_ref)
@@ -210,7 +212,7 @@ def plan(model, ctx, x0, t0, standalone, lambda_e, c_lo, c_hi,
     return u.detach(), cost_plan
 
 
-plan.e_ref = 0.80   # niveau d'énergie « futur cohérent » (T1, checkpoint mix)
+plan.e_ref = 0.80   # "coherent future" energy level (T1, mix checkpoint)
 
 
 def realized(u, x0, t0, c_lo, c_hi, n_mc, g):
@@ -225,8 +227,8 @@ def realized(u, x0, t0, c_lo, c_hi, n_mc, g):
 def run_t2(model, standalone, n_inst, lambda_e, n_mc, seed, plan_beta=BETA):
     g = torch.Generator().manual_seed(seed + 1)
     rows = []
-    print(f"\nT2 — planning par backprop, bande cible [1.2, 1.8], lambda_E={lambda_e}, "
-          f"beta du planner {plan_beta} (vrai : {BETA})")
+    print(f"\nT2 - planning by backprop, target band [1.2, 1.8], lambda_E={lambda_e}, "
+          f"planner beta {plan_beta} (true: {BETA})")
     for k in range(n_inst):
         hist, _ = gen_history(g)
         ctx, x0, t0 = torch.from_numpy(hist), float(hist[-1]), CTX_LEN
@@ -240,17 +242,17 @@ def run_t2(model, standalone, n_inst, lambda_e, n_mc, seed, plan_beta=BETA):
                          "violation_rate": viol, "u_mean": float(u.mean())}
         rows.append(row)
         a, b = row["cost_only"], row["cost+energy"]
-        print(f"  inst{k}  cost_only : plan {a['cost_plan']:.4f} réel {a['cost_real']:.4f} "
+        print(f"  inst{k}  cost_only: plan {a['cost_plan']:.4f} real {a['cost_real']:.4f} "
               f"(gap {a['optimism_gap']:+.4f}, viol {a['violation_rate']:.1%}) | "
-              f"+energy : plan {b['cost_plan']:.4f} réel {b['cost_real']:.4f} "
+              f"+energy: plan {b['cost_plan']:.4f} real {b['cost_real']:.4f} "
               f"(gap {b['optimism_gap']:+.4f}, viol {b['violation_rate']:.1%})")
     agg = {}
     for name in ("cost_only", "cost+energy"):
         agg[name] = {k: float(np.mean([r[name][k] for r in rows]))
                      for k in rows[0][name]}
-    print(f"  => gap d'optimisme moyen : cost_only {agg['cost_only']['optimism_gap']:+.4f} "
+    print(f"  => mean optimism gap: cost_only {agg['cost_only']['optimism_gap']:+.4f} "
           f"| +energy {agg['cost+energy']['optimism_gap']:+.4f} ; "
-          f"violation réalisée : {agg['cost_only']['violation_rate']:.1%} "
+          f"realized violation: {agg['cost_only']['violation_rate']:.1%} "
           f"| {agg['cost+energy']['violation_rate']:.1%}")
     return {"instances": rows, "aggregate": agg}
 
@@ -262,14 +264,14 @@ def main():
     ap.add_argument("--model-config", default="lotsa_tiny_mix_eval")
     ap.add_argument("--standalone-targets", action="store_true")
     ap.add_argument("--instances", type=int, default=8)
-    ap.add_argument("--candidates", type=int, default=16, help="par famille (T1)")
+    ap.add_argument("--candidates", type=int, default=16, help="per family (T1)")
     ap.add_argument("--lambda-e", type=float, default=0.5,
-                    help="poids de l'EXCÈS d'énergie au-dessus de e_ref (rééquilibré E20c)")
+                    help="weight of the energy EXCESS above e_ref (rebalanced E20c)")
     ap.add_argument("--plan-beta", type=float, default=BETA,
-                    help="T2b : beta CRU par le planner (vrai=0.5) — erreur de modèle contrôlée")
+                    help="T2b: beta BELIEVED by the planner (true=0.5) - controlled model error")
     ap.add_argument("--e-ref", type=float, default=0.80,
-                    help="énergie de référence des futurs cohérents (T1 du checkpoint sondé)")
-    ap.add_argument("--mc", type=int, default=200, help="rollouts de vérif (T2)")
+                    help="reference energy of coherent futures (T1 of the probed checkpoint)")
+    ap.add_argument("--mc", type=int, default=200, help="verification rollouts (T2)")
     ap.add_argument("--skip-t2", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -296,7 +298,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     tag = Path(args.checkpoint).stem + ("_standalone" if args.standalone_targets else "")
     (out / f"{tag}.json").write_text(json.dumps(results, indent=2))
-    print(f"\nJSON : {out / (tag + '.json')}")
+    print(f"\nJSON: {out / (tag + '.json')}")
 
 
 if __name__ == "__main__":

@@ -1,30 +1,30 @@
 # @package _global_
 #
-# RUN A — « CONTRÔLE MIXTE » : corpus (base gagnante + synthétique + chronos)
-# + scaler robuste arcsinh (G8.4). Baseline de l'arm xres.
+# RUN A - "MIXED CONTROL": corpus (winning base + synthetic + chronos)
+# + robust arcsinh scaler (G8.4). Baseline of the xres arm.
 #
 #   python scripts/train.py --config-name lotsa_tiny_mix wandb.run_name=mix-control
-#   # puis : lotsa_tiny_mix_zeroshot (finetune) et lotsa_tiny_mix_eval (évals)
+#   # then: lotsa_tiny_mix_zeroshot (finetune) and lotsa_tiny_mix_eval (evals)
 #
-# ⚠️ DÉCISION DE BUNDLING (utilisateur, 2026-08-20, compute limité) : ce run
-# regroupe TROIS changements vs tiny-full — corpus mixte (symlinks), scaler
-# arcsinh, et il sert de contrôle à xres. On renonce à isoler synthétique /
-# chronos / arcsinh entre eux (chronos ~0,5 % du corpus, jamais mesurable seul ;
-# arcsinh jugé « pas digne d'un run dédié »). Ce qu'on GARDE d'isolable :
-#   * mix vs tiny-full  = corpus mixte + arcsinh + cibles standalone + finetune
-#     2 époques, en paquet (chaque item listé dans E18) ;
-#   * xres vs mix       = l'OBJECTIF inter-résolution, UNE variable — rendu vrai
-#     par l'audit du 2026-08-20 : mix adopte AUSSI contextualized_targets:false
-#     (imposé côté xres par la physique des deux grilles), sinon la comparaison
-#     portait deux réglages. Le coût (cible EMA standalone : l'encodeur cible
-#     voit 31 patchs quand l'online en voit 127) est payé par les DEUX arms —
-#     mesuré, pas contourné.
+# BUNDLING DECISION (user, 2026-08-20, limited compute): this run bundles
+# THREE changes vs tiny-full - mixed corpus (symlinks), arcsinh scaler, and it
+# serves as the control for xres. We give up isolating synthetic / chronos /
+# arcsinh from each other (chronos ~0.5% of the corpus, never measurable
+# alone; arcsinh judged "not worth a dedicated run"). What STAYS isolable:
+#   * mix vs tiny-full  = mixed corpus + arcsinh + standalone targets +
+#     2-epoch finetune, as a package (each item listed in E18);
+#   * xres vs mix       = the cross-resolution OBJECTIVE, ONE variable - made
+#     true by the 2026-08-20 audit: mix ALSO adopts contextualized_targets:false
+#     (forced on the xres side by the physics of the two grids), otherwise the
+#     comparison carried two settings. The cost (standalone EMA target: the
+#     target encoder sees 31 patches while the online one sees 127) is paid by
+#     BOTH arms - measured, not dodged.
 #
-# Le scaler (components/robust_scale.py) : arcsinh((x−médiane)/MAD) en entrée,
-# sinh en sortie, RevIN intact au milieu. Attendu : les configs à queues
-# lourdes (bitbrains 3,6-6,0 MASE, car_parts CRPS>1, bizitobs) — la moitié
-# « domaine » d'E17. Le checkpoint s'auto-décrit (marqueur robust_scaler.is_robust) :
-# tout mismatch flag/checkpoint est refusé au chargement (P3.2).
+# The scaler (components/robust_scale.py): arcsinh((x-median)/MAD) on input,
+# sinh on output, RevIN intact in the middle. Expected: heavy-tailed configs
+# (bitbrains 3.6-6.0 MASE, car_parts CRPS>1, bizitobs) - the "domain" half of
+# E17. The checkpoint self-describes (robust_scaler.is_robust marker): any
+# flag/checkpoint mismatch is refused at load time (P3.2).
 defaults:
   - lotsa_tiny
   - _self_
@@ -34,24 +34,24 @@ model:
   robust_scale: true
 
 training:
-  # Plafond LR 3e-4 (décision utilisateur 2026-08-21, hérité : 7.5e-4 de
-  # tiny.yaml). Deux appuis : (a) mécanistique — à LR élevé l'encodeur online
-  # distance le teacher EMA et les cibles latentes dérivent en permanence, on
-  # paie l'objectif difficile deux fois ; (b) le pretrain tiny-full a montré
-  # une contraction tardive du rang effectif (47 -> 37 sur le dernier quart), à
-  # surveiller ici. Pas d'ablation (1 j/run) : partagé par mix ET xres, donc
-  # leur duel reste propre ; item de bundle de plus vs tiny-full (E18+).
+  # LR cap 3e-4 (decision 2026-08-21, inherited: 7.5e-4 from tiny.yaml).
+  # Two supports: (a) mechanistic - at high LR the online encoder outruns the
+  # EMA teacher and the latent targets drift constantly, the hard objective is
+  # paid twice; (b) the tiny-full pretrain showed a late contraction of
+  # effective rank (47 -> 37 over the last quarter), to watch here. No
+  # ablation (1 day/run): shared by mix AND xres, so their duel stays clean;
+  # one more bundle item vs tiny-full (E18+).
   optimizer:
     learning_rate: 3.0e-4
-  # 2 époques (décision utilisateur 2026-08-21) : budget-plafond plutôt que
-  # passe-unique strict — l'utilisateur coupe à la main s'il juge la seconde
-  # époque inutile. Le cosinus s'étale sur 2 époques : un arrêt manuel à la fin
-  # de l'époque 1 laisse le LR à ~50 % du max, pas recuit (même artefact que le
-  # checkpoint mi-parcours de tiny-full) — à garder en tête en comparant à
-  # tiny-full, qui a été recuit sur 1 époque exactement.
+  # 2 epochs (decision 2026-08-21): budget cap rather than strict
+  # single-pass - cut by hand if the second epoch looks useless.
+  # The cosine spans 2 epochs: a manual stop at the end of epoch 1 leaves the
+  # LR at ~50% of max, not annealed (same artifact as tiny-full's midway
+  # checkpoint) - keep in mind when comparing to tiny-full, which was annealed
+  # over exactly 1 epoch.
   max_epochs: 2
-  # Audit 2026-08-20 (C1) : aligné sur xres pour que le duel xres-vs-mix ne
-  # porte qu'une variable. Voir l'en-tête.
+  # Audit 2026-08-20 (C1): aligned with xres so the xres-vs-mix duel carries
+  # only one variable. See the header.
   contextualized_targets: false
 
 trainer:

@@ -1,31 +1,31 @@
 # @package _global_
 #
-# G5 — PRETRAIN LOTSA, échelle mini (5,1 M paramètres).
+# G5 - LOTSA PRETRAIN, mini scale (5.1M parameters).
 #
 #   make train CONFIG=lotsa_mini ARGS="trainer.accumulate_grad_batches=2 wandb.run_name=lotsa-mini"
 #
-# La cible du projet : 5 M paramètres, c'est-à-dire SOUS le plus petit
-# concurrent sérieux (Chronos-Bolt-Tiny ~9 M, Moirai-small ~14 M,
-# TiRex ~35 M). Un modèle de cette taille bien entraîné sur un corpus
-# divers est un candidat crédible pour la catégorie petite taille ;
-# viser le n°1 absolu, non — le haut du classement tient entre 35 M et
-# 500 M.
+# The project's target: 5M parameters, i.e. BELOW the smallest serious
+# competitor (Chronos-Bolt-Tiny ~9M, Moirai-small ~14M, TiRex ~35M). A model
+# of this size well trained on a diverse corpus is a credible candidate for
+# the small-size category; aiming for absolute #1, no - the top of the
+# leaderboard sits between 35M and 500M.
 #
-# Hérite de `lotsa_tiny` pour TOUT ce qui n'est pas la taille du modèle : corpus
-# converti, memmap, exclusions, stride, géométrie 1024/256, loss sigreg, décodeur
-# quantile. La seule variable est la capacité — c'est ce qui rend la comparaison
-# entre échelles interprétable.
+# Inherits from `lotsa_tiny` for EVERYTHING that is not model size: converted
+# corpus, memmap, exclusions, stride, 1024/256 geometry, sigreg loss,
+# quantile decoder. The only variable is capacity - that is what makes the
+# cross-scale comparison interpretable.
 #
-# Les dimensions sont écrites EXPLICITEMENT plutôt qu'héritées de `mini.yaml` :
-# celui-ci porte aussi son propre bloc `data`, qui écraserait le corpus LOTSA.
-# Un test vérifie qu'elles restent identiques à la référence.
+# The dimensions are written EXPLICITLY rather than inherited from
+# `mini.yaml`: that file also carries its own `data` block, which would
+# overwrite the LOTSA corpus. A test verifies they stay identical to the
+# reference.
 #
-# Batch et accumulation
+# Batch and accumulation
 # ---------------------
-# batch 384 x accumulation 1 x 3 GPU = 1152 de batch effectif, dans l'ordre
-# de grandeur des 1536 des runs de référence. À VALIDER par un run court : ces
-# valeurs sont un point de départ pour 24 Go à contexte 1024, pas une mesure.
-#   +trainer.max_steps=5000 pour borner le smoke test.
+# batch 384 x accumulation 1 x 3 GPUs = 1152 effective batch, in the order of
+# magnitude of the reference runs' 1536. TO VALIDATE with a short run: these
+# values are a starting point for 24 GB at context 1024, not a measurement.
+#   +trainer.max_steps=5000 to bound the smoke test.
 defaults:
   - lotsa_tiny
   - _self_

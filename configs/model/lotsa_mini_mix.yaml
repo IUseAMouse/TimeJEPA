@@ -1,23 +1,25 @@
 # @package _global_
 #
-# G7.4 — PRETRAIN du MINI (~5,1 M) sur la RECETTE MIX (corpus mixte v2 + arcsinh
-# + cibles standalone), décision utilisateur 2026-08-23 après E18i.
+# G7.4 - PRETRAIN of the MINI (~5.1M) on the MIX RECIPE (mixed v2 corpus +
+# arcsinh + standalone targets), decision 2026-08-23 after E18i.
 #
 #   python scripts/train.py --config-name lotsa_mini_mix wandb.run_name=mini-mix
-#   # puis : lotsa_mini_mix_zeroshot (finetune 1 époque) et lotsa_mini_mix_eval
+#   # then: lotsa_mini_mix_zeroshot (1-epoch finetune) and lotsa_mini_mix_eval
 #
-# LA comparaison visée : mini-mix vs tiny-mix, UNE variable — la capacité.
-# Tout le reste est copié de lotsa_tiny_mix à l'identique : corpus
-# (data/processed/lotsa_xres, v2 régénéré 20000 chunks/famille), robust_scale,
-# LR 3e-4 (⚠️ écrase le 4e-4 de lotsa_mini — le duel d'échelle exige le MÊME
-# LR que tiny-mix ; si mini préférait un autre LR, ce serait une variable de
-# plus), cibles standalone (C1), budget 2 époques, validation 0.05.
-# Les prédictions falsifiables du duel sont écrites au PLAN (G7.4, 2026-08-19) :
-# saturation ⇒ plateau rank/variance plus haut + écart GIFT tiny→mini accru.
+# THE targeted comparison: mini-mix vs tiny-mix, ONE variable - capacity.
+# Everything else is copied from lotsa_tiny_mix unchanged: corpus
+# (data/processed/lotsa_xres, v2 regenerated 20000 chunks/family),
+# robust_scale, LR 3e-4 (WARNING: overrides lotsa_mini's 4e-4 - the scale
+# duel demands the SAME LR as tiny-mix; if mini preferred another LR, that
+# would be one more variable), standalone targets (C1), 2-epoch budget,
+# validation 0.05.
+# The duel's falsifiable predictions are written in the PLAN (G7.4,
+# 2026-08-19): saturation => higher rank/variance plateau + wider tiny->mini
+# GIFT gap.
 #
-# Budget : max_epochs 2 comme tiny-mix (plafond, coupe manuelle possible).
-# E18c note qu'1 époque recuite « peut suffire » — mais dévier ici ajouterait
-# un item de bundle au duel d'échelle ; on paie la 2e époque pour la pureté.
+# Budget: max_epochs 2 like tiny-mix (cap, manual cut possible). E18c notes
+# that 1 annealed epoch "may be enough" - but deviating here would add a
+# bundle item to the scale duel; we pay the 2nd epoch for purity.
 defaults:
   - lotsa_mini
   - _self_
@@ -27,20 +29,20 @@ model:
   robust_scale: true
 
 training:
-  # Identique à lotsa_tiny_mix (voir son en-tête pour le raisonnement LR) —
-  # PAS le 4e-4 de lotsa_mini : une variable, la capacité.
+  # Identical to lotsa_tiny_mix (see its header for the LR reasoning) -
+  # NOT lotsa_mini's 4e-4: one variable, capacity.
   optimizer:
     learning_rate: 3.0e-4
   max_epochs: 2
-  # C1 (audit 2026-08-20) : cibles standalone, comme tiny-mix et xres.
+  # C1 (audit 2026-08-20): standalone targets, like tiny-mix and xres.
   contextualized_targets: false
 
 trainer:
   val_check_interval: 0.05
 
 early_stopping:
-  # Désactivé, même raisonnement que lotsa_tiny_mix / lotsa_mini_full : la
-  # valeur du modèle est en fin de recuit, pas au creux de val_loss (E12).
+  # Disabled, same reasoning as lotsa_tiny_mix / lotsa_mini_full: the model's
+  # value is at the end of annealing, not at the val_loss dip (E12).
   enabled: false
 
 data:

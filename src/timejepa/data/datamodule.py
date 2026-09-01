@@ -29,11 +29,11 @@ class TemperatureSampler(Sampler):
     materializing 500M+ indices in memory.
     
     With temperature T:
-        p_i ∝ n_i^T
+        p_i proportional to n_i^T
     
     - T=1.0: proportional to size (large datasets dominate)
     - T=0.5: square-root sampling (balanced compromise)  
-    - T→0: uniform across datasets
+    - T->0: uniform across datasets
     """
     
     def __init__(
@@ -48,20 +48,20 @@ class TemperatureSampler(Sampler):
         seed: int = 42,
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
-        # G10.2 — RATIONNEMENT du plafond (2026-08-24). Par défaut (False), le
-        # plafond max_oversample_ratio est consommé EN DÉBUT d'époque : dès
-        # qu'une famille l'atteint, elle disparaît de TOUS les batchs restants
-        # (le `continue` de __iter__) et le batch rétrécit. Mesuré
-        # (scripts/audit_batch_schedule.py, corpus mix, finetune) : 16 familles
-        # éteintes avant 1 % de l'époque, part des familles plafonnées
-        # 46.6 % -> 35.7 % du batch entre premier et dernier décile, batch
-        # 493 -> 409. La composition DÉRIVE donc vers les grosses familles —
-        # candidat mécanisme de la dérive GIFT de fin de finetune (G7.3c).
-        # Avec ration_oversample=True, le même budget max_samples[i] est étalé
-        # UNIFORMÉMENT sur l'époque (quota fractionnaire par batch, arrondi par
-        # accumulation) : même exposition totale par famille, composition et
-        # taille de batch quasi constantes. Opt-in strict : False = itération
-        # bit-identique à l'existant.
+        # G10.2 - cap RATIONING (2026-08-24). By default (False), the
+        # max_oversample_ratio cap is consumed AT THE START of the epoch: as
+        # soon as a family hits it, it disappears from ALL remaining batches
+        # (the `continue` in __iter__) and the batch shrinks. Measured
+        # (scripts/audit_batch_schedule.py, mix corpus, finetune): 16 families
+        # extinguished before 1% of the epoch, capped families' share
+        # 46.6% -> 35.7% of the batch between first and last decile, batch
+        # 493 -> 409. Composition therefore DRIFTS toward the big families -
+        # candidate mechanism for the end-of-finetune GIFT drift (G7.3c).
+        # With ration_oversample=True, the same max_samples[i] budget is
+        # spread UNIFORMLY over the epoch (fractional per-batch quota,
+        # rounded by accumulation): same total exposure per family, near
+        # constant composition and batch size. Strict opt-in: False =
+        # iteration bit-identical to existing.
         ration_oversample: bool = False,
     ):
         """
@@ -79,7 +79,7 @@ class TemperatureSampler(Sampler):
             seed: Random seed
         """
         # No argument: `Sampler.__init__` used to take an (unused, deprecated)
-        # `data_source`, and newer torch removed it entirely — at which point
+        # `data_source`, and newer torch removed it entirely - at which point
         # the call falls through to `object.__init__`, which accepts nothing:
         #     TypeError: object.__init__() takes exactly one argument
         # Calling with no argument is correct on both.
@@ -109,7 +109,7 @@ class TemperatureSampler(Sampler):
         
         # Compute temperature-smoothed sampling probabilities
         # FIXED: sizes^T (not sizes^(1/T))
-        # T=0.5 → sqrt, T→0 → uniform, T=1 → proportional
+        # T=0.5 -> sqrt, T->0 -> uniform, T=1 -> proportional
         sizes = torch.tensor(dataset_sizes, dtype=torch.float32)
         
         if temperature == 0:
@@ -202,11 +202,11 @@ class TemperatureSampler(Sampler):
             original_frac = size / total_original
             
             if ratio > 1.5:
-                status = f"⬆ {ratio:.1f}x oversample"
+                status = f"{ratio:.1f}x oversample"
             elif ratio < 0.8:
-                status = f"⬇ {ratio:.0%} coverage"
+                status = f"{ratio:.0%} coverage"
             else:
-                status = "✓ balanced"
+                status = "balanced"
             
             logger.info(
                 f"  [{i}] {size:>12,} samples | "
@@ -228,10 +228,10 @@ class TemperatureSampler(Sampler):
         samples_drawn = [0] * self.num_datasets
         max_samples = [int(size * self.max_oversample_ratio) for size in self.dataset_sizes]
 
-        # G10.2 — quota par batch en mode rationné : le budget de la famille
-        # étalé uniformément sur l'époque, accumulé fractionnairement (une
-        # famille à 0.4 échantillon/batch contribue 2 échantillons tous les 5
-        # batchs au lieu de brûler son budget au début puis disparaître).
+        # G10.2 - per-batch quota in rationed mode: the family's budget spread
+        # uniformly over the epoch, accumulated fractionally (a family at 0.4
+        # samples/batch contributes 2 samples every 5 batches instead of
+        # burning its budget early then disappearing).
         if self.ration_oversample:
             per_batch_quota = [m / max(self._num_batches, 1) for m in max_samples]
             allowance = [0.0] * self.num_datasets
@@ -357,7 +357,7 @@ class MonashDataModule(pl.LightningDataModule):
         self.val_dataset: Optional[AugmentedSubset] = None
         self.test_dataset: Optional[AugmentedSubset] = None
         
-        # Garder une référence au dataset complet
+        # Keep a reference to the full dataset
         self._full_dataset: Optional[TimeSeriesDataset] = None
     
     def prepare_data(self):
@@ -380,7 +380,7 @@ class MonashDataModule(pl.LightningDataModule):
                 clip_sigma=self.clip_sigma
             )
             
-            # Créer le dataset complet
+            # Build the full dataset
             self._full_dataset = TimeSeriesDataset(
                 data_path=self.data_path,
                 context_length=self.context_length,
@@ -400,7 +400,7 @@ class MonashDataModule(pl.LightningDataModule):
             
             self.normalizer = self._full_dataset.get_normalizer()
             
-            # Calculer les tailles
+            # Compute split sizes
             total_len = len(self._full_dataset)
             train_frac, val_frac, test_frac = self.train_val_test_split
             
@@ -427,9 +427,9 @@ class MonashDataModule(pl.LightningDataModule):
                 apply_augmentation=False
             )
             
-            logger.info(f"✓ Setup complete with {self.normalizer.__class__.__name__}")
+            logger.info(f"Setup complete with {self.normalizer.__class__.__name__}")
             if self.augmentation_config:
-                logger.info(f"✓ Augmentations enabled for training only")
+                logger.info(f"Augmentations enabled for training only")
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -471,6 +471,7 @@ class MonashDataModule(pl.LightningDataModule):
         pass
 
 
+# Unused (no call sites); kept per the no-delete policy.
 class MultiHorizonDataModule(MonashDataModule):
     """DataModule for multi-horizon forecasting."""
     
@@ -549,15 +550,15 @@ class MultiHorizonDataModule(MonashDataModule):
                 self._full_dataset, test_indices, apply_augmentation=False
             )
             
-            logger.info(f"✓ Setup complete for multi-horizon training "
+            logger.info(f"Setup complete for multi-horizon training "
                        f"with horizons: {self.prediction_lengths}")
 
 
 class MultiDatasetMonashDataModule(pl.LightningDataModule):
     """
-    Extension de MonashDataModule pour charger automatiquement 
-    plusieurs datasets du dossier data/processed/.
-    
+    MonashDataModule extension that automatically loads several datasets
+    from the data/processed/ directory.
+
     Supports temperature-based sampling to balance dataset representation
     without severe oversampling of small datasets.
     """
@@ -575,8 +576,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         balanced_sampling: bool = True,
         sampling_temperature: float = 0.5,  # sqrt sampling by default
         max_oversample_ratio: float = 5.0,  # cap repetitions
-        # G10.2 : étale le plafond uniformément sur l'époque au lieu de le
-        # consommer au début (voir TemperatureSampler.ration_oversample).
+        # G10.2: spreads the cap uniformly over the epoch instead of
+        # consuming it at the start (see TemperatureSampler.ration_oversample).
         ration_oversample: bool = False,
         # Standard params
         batch_size: int = 64,
@@ -614,7 +615,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                 - T=0.5: square-root sampling (balanced compromise) [default]
                 - T=0.25: more uniform (small datasets better represented)
             max_oversample_ratio: Max times a dataset can repeat per epoch
-            ... (autres params identiques à MonashDataModule)
+            ... (other params identical to MonashDataModule)
             dataset_overrides: Per-dataset config overrides
         """
         super().__init__()
@@ -765,14 +766,14 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     # the other 22 datasets training.
                     skipped.append((dataset_name, e))
                     logger.warning(
-                        f"  ⏭️  SKIPPING {dataset_name}: {e}"
+                        f"  SKIPPING {dataset_name}: {e}"
                     )
                     continue
 
                 if len(dm.train_dataset) == 0:
                     skipped.append((dataset_name, "0 training windows"))
                     logger.warning(
-                        f"  ⏭️  SKIPPING {dataset_name}: produced 0 training windows"
+                        f"  SKIPPING {dataset_name}: produced 0 training windows"
                     )
                     continue
 
@@ -788,14 +789,14 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                 self.test_dataset_sizes.append(len(dm.test_dataset))
                 self.dataset_names_order.append(dataset_name)
                 
-                logger.info(f"  ✓ {dataset_name}: "
+                logger.info(f"  {dataset_name}: "
                           f"train={len(dm.train_dataset):,}, "
                           f"val={len(dm.val_dataset):,}, "
                           f"test={len(dm.test_dataset):,}")
 
             if skipped:
                 logger.warning(
-                    f"⏭️  {len(skipped)}/{len(self.dataset_files)} dataset(s) skipped "
+                    f"{len(skipped)}/{len(self.dataset_files)} dataset(s) skipped "
                     f"(context_length={self.context_length} + "
                     f"prediction_length={self.prediction_length} = "
                     f"{self.context_length + self.prediction_length} timesteps required):"
@@ -831,8 +832,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         batch_size=self.batch_size,
                         temperature=self.sampling_temperature,
                         max_oversample_ratio=self.max_oversample_ratio,
-                        # G10.2 : opt-in, False par défaut — les runs existants
-                        # sont bit-identiques.
+                        # G10.2: opt-in, False by default - existing runs are
+                        # bit-identical.
                         ration_oversample=self.ration_oversample,
                         drop_last=True,
                         shuffle=True,
@@ -850,12 +851,12 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         seed=self.seed
                     )
                     
-                    logger.info("✓ Temperature-based sampling ENABLED")
+                    logger.info("Temperature-based sampling ENABLED")
                 else:
                     self._train_sampler = None
                     self._val_sampler = None
                     if len(self.dataset_files) > 1:
-                        logger.warning("⚠ Balanced sampling DISABLED - large datasets will dominate!")
+                        logger.warning("Balanced sampling DISABLED - large datasets will dominate!")
             else:
                 first_dm = list(self.datamodules.values())[0]
                 self.train_dataset = first_dm.train_dataset
@@ -868,7 +869,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             self.normalizer = list(self.datamodules.values())[0].normalizer
             
             if self.augmentation_config:
-                logger.info(f"✓ Augmentations enabled for training across all datasets")
+                logger.info(f"Augmentations enabled for training across all datasets")
     
     def train_dataloader(self) -> DataLoader:
         if self._train_sampler is not None:
@@ -891,8 +892,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             )
     
     def val_dataloader(self) -> DataLoader:
-        # Pour la validation, on évalue tous les samples sans sampling biaisé
-        # pour avoir des métriques représentatives de chaque dataset
+        # Validation scores all samples with no biased sampling, so metrics
+        # stay representative of each dataset.
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,

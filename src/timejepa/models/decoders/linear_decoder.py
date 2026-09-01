@@ -4,7 +4,7 @@ Linear Decoder for generative finetuning.
 After JEPA pretraining, we add a simple decoder head to generate
 actual time series values for forecasting tasks.
 
-Architecture: Representation [B, N, d_model] → Values [B, L_pred, C]
+Architecture: Representation [B, N, d_model] -> Values [B, L_pred, C]
 """
 
 import torch
@@ -23,8 +23,8 @@ class LinearDecoder(nn.Module):
     
     Architecture:
         Patch representations [B, num_patches, d_model]
-        → Linear projection [B, num_patches, patch_size * C]
-        → Reshape to [B, L_pred, C]
+        -> Linear projection [B, num_patches, patch_size * C]
+        -> Reshape to [B, L_pred, C]
     
     Args:
         d_model: Model dimension (512)
@@ -124,7 +124,7 @@ class MLPDecoder(nn.Module):
         
         hidden_dim = hidden_dim or d_model
         
-        # MLP projette vers d_model (pas directement vers patch_size * C)
+        # The MLP projects to d_model (not directly to patch_size * C)
         layers = []
         for i in range(num_layers):
             in_dim = d_model if i == 0 else hidden_dim
@@ -137,7 +137,7 @@ class MLPDecoder(nn.Module):
         
         self.mlp = nn.Sequential(*layers)
         
-        # UnPatching gère la projection finale + overlap
+        # UnPatching handles the final projection + overlap
         self.unpatching = UnPatching(
             patch_size=patch_size,
             stride=stride,
@@ -153,10 +153,10 @@ class MLPDecoder(nn.Module):
         if target_length is None:
             target_length = self.prediction_length
         
-        # MLP enrichit les représentations
+        # The MLP enriches the representations
         x = self.mlp(x)  # [B, num_patches, d_model]
-        
-        # UnPatching gère le reste proprement
+
+        # UnPatching handles the rest cleanly
         output = self.unpatching(x, target_len=target_length)
         
         return output
@@ -276,8 +276,8 @@ class ForecastingHead(nn.Module):
         revin: Optional[nn.Module] = None,
         quantile_levels: Optional[Sequence[float]] = None,
         quantile_use_context: bool = True,
-        # ESJEPA — transmis à QuantileHead (gate d'étalement). Flag off ⇒
-        # state_dict et comportement bit-identiques.
+        # ESJEPA - forwarded to QuantileHead (spread gate). Flag off =>
+        # state_dict and behavior bit-identical.
         error_signal: bool = False,
     ):
         super().__init__()
@@ -327,11 +327,11 @@ class ForecastingHead(nn.Module):
             raise ValueError(f"Unknown decoder_type: {decoder_type}")
 
         if error_signal and decoder_type != 'quantile':
-            # Un z entraîné au pretrain puis silencieusement inconsommé par un
-            # décodeur point est exactement la dégradation que le projet refuse.
+            # A z trained at pretrain then silently unconsumed by a point
+            # decoder is exactly the degradation this project refuses.
             raise ValueError(
-                f"error_signal=True exige decoder_type='quantile' (la voie z "
-                f"module l'étalement du fan) — reçu '{decoder_type}'."
+                f"error_signal=True requires decoder_type='quantile' (the z "
+                f"path modulates the fan's spread) - got '{decoder_type}'."
             )
 
         self.output_norm = nn.LayerNorm(num_features)
@@ -356,22 +356,24 @@ class ForecastingHead(nn.Module):
             context_embeddings: Encoder output [B, N_ctx, d_model]. Only the
                 quantile head consumes it; the point decoders ignore it, so the
                 caller can always pass it.
-            z: ESJEPA — stats du résidu prédites [B, N, z_dim]. Contrairement à
-                context_embeddings, un z fourni à un décodeur point est REFUSÉ :
-                il n'existe que si l'arm est actif, le perdre serait silencieux.
+            z: ESJEPA - predicted residual stats [B, N, z_dim]. Unlike
+                context_embeddings, a z given to a point decoder is REFUSED:
+                it only exists when the arm is active, losing it would be
+                silent.
 
         Returns:
             For point decoders: (forecast [B, L, C], forecast_denorm [B, L, C])
             For the quantile head: (quantiles [B, L, Q], quantiles_denorm [B, L, Q])
-            — the caller extracts the median.
+            - the caller extracts the median.
         """
         if self.decoder_type == 'quantile':
             predictions = self.decoder(x, context_embeddings=context_embeddings, z=z)
         else:
             if z is not None:
                 raise ValueError(
-                    "z (ESJEPA) reçu par un décodeur point — la voie z module "
-                    "un fan quantile, decoder_type='quantile' requis."
+                    "z (ESJEPA) received by a point decoder - the z path "
+                    "modulates a quantile fan, decoder_type='quantile' "
+                    "required."
                 )
             predictions = self.decoder(x)
 

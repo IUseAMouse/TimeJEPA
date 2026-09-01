@@ -1,14 +1,14 @@
-# ⚠️ DEPRECATED (audit du 2026-08-19) — doublon octet-à-octet de
-# _template_experiment.yaml, résidu de test d'héritage Hydra. Conservé par
-# politique no-delete (P2.9). Utiliser _template_experiment.yaml.
+# DEPRECATED (2026-08-19 audit) - byte-for-byte duplicate of
+# _template_experiment.yaml, leftover from a Hydra inheritance test. Kept per
+# the no-delete policy (P2.9); use _template_experiment.yaml.
 # @package _global_
 #
-# TEMPLATE — how to add a single-variable experiment config.
+# TEMPLATE - how to add a single-variable experiment config.
 #
 # Inherit from a base config and override only what you are testing. Everything
 # else (datasets, augmentations, SIGReg block, geometry randomization, trainer
 # settings) is inherited, so the comparison against the base run is provably
-# single-variable — no copy-paste drift.
+# single-variable - no copy-paste drift.
 #
 #   python scripts/train.py --config-name <this file's name without .yaml> \
 #       wandb.run_name=my-experiment

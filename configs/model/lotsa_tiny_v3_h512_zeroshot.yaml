@@ -1,19 +1,21 @@
 # @package _global_
-# H512 sur la lignée v3 — l'ablation horizon de S3, prise SANS pretrain neuf
-# (décision 2026-08-27, question utilisateur à la 2e minute du pretrain v3 :
-# « h512 direct dans le pretrain ? » — non : le design h512 est un levier de
-# FINETUNE via grow_future_query_table, un seul pretrain v3 nourrit les DEUX
-# finetunes h256/h512 et l'écart mesure le levier avec son contrôle gratuit).
+# H512 on the v3 lineage - S3's horizon ablation, taken WITHOUT a new
+# pretrain (decision 2026-08-27, user question at minute 2 of the v3
+# pretrain: "h512 directly in the pretrain?" - no: the h512 design is a
+# FINETUNE lever via grow_future_query_table, one v3 pretrain feeds BOTH
+# h256/h512 finetunes and the gap measures the lever with its free control).
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3_h512_zeroshot \
-#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<dernier ckpt nommé>"'
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<latest named ckpt>"'
 #
-# Mécanique et prédictions : voir lotsa_tiny_h512_zeroshot.yaml (l'original,
-# lignée mix) — mêmes deltas, seule la base change. Critère per-config (E19 +
-# E20b) : medium/long ↓, short inchangé ; si le gain vit surtout aux configs
-# multi-rollouts, l'hypothèse « frontières de rollout » (E20b) est confirmée.
-# ⚠️ Fenêtre finetune 1024+512 = 1536 : les morceaux 1280 (lotsa_short)
-# sortent du finetune — coût mesuré de l'arm, lire la ligne « skipped » au setup.
+# Mechanics and predictions: see lotsa_tiny_h512_zeroshot.yaml (the original,
+# mix lineage) - same deltas, only the base changes. Per-config criterion
+# (E19 + E20b): medium/long down, short unchanged; if the gain lives mostly
+# in multi-rollout configs, the "rollout boundaries" hypothesis (E20b) is
+# confirmed.
+# WARNING: finetune window 1024+512 = 1536: the 1280 chunks (lotsa_short)
+# leave the finetune - measured cost of the arm, read the "skipped" line at
+# setup.
 defaults:
   - lotsa_tiny_v3_zeroshot
   - _self_

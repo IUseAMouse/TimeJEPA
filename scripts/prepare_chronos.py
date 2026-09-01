@@ -1,36 +1,33 @@
-#!/usr/bin/env python
 """
-Convertit les sous-ensembles UTILES du corpus Chronos au format TimeJEPA.
+Converts the USEFUL subsets of the Chronos corpus to the TimeJEPA format.
 
-    # inventaire : ce qui est admis, ce qui est exclu et POURQUOI
+    # inventory: what is admitted, what is excluded and WHY
     python scripts/prepare_chronos.py --list
 
-    # conversion (4 datasets, quelques minutes)
+    # conversion (4 datasets, a few minutes)
     python scripts/prepare_chronos.py --out data/processed/chronos_extras
 
-Pourquoi si peu, et pourquoi quand même
----------------------------------------
-Vérifié le 2026-08-19 : `Salesforce/GiftEvalPretrain` est identique à l'octet à
-LOTSA moins les 18 datasets d'éval GIFT — le « levier corpus » qu'on croyait y
-trouver est vide, on s'entraîne déjà dessus. Du corpus Chronos
-(`autogluon/chronos_datasets`, 53 sous-ensembles), tout ce qui n'est pas un
-doublon de LOTSA ou une fuite d'évaluation tient dans une ALLOWLIST de quatre
-noms — d'où une liste blanche explicite plutôt que des motifs d'exclusion :
-pour 4 datasets fixés, énumérer ce qu'on admet est plus sûr qu'énumérer ce
-qu'on refuse.
+Why so few, and why bother anyway: verified 2026-08-19,
+`Salesforce/GiftEvalPretrain` is byte-identical to LOTSA minus the 18 GIFT
+eval datasets - the "corpus lever" we hoped to find there is empty, we
+already train on it. Of the Chronos corpus (`autogluon/chronos_datasets`, 53
+subsets), everything that is not a LOTSA duplicate or an evaluation leak fits
+in a four-name ALLOWLIST - hence an explicit allowlist rather than exclusion
+patterns: for 4 fixed datasets, enumerating what we admit is safer than
+enumerating what we refuse.
 
-`--chunk-length 8192` par défaut, et c'est le vrai intérêt de ce corpus : la
-décimation multi-résolution exige `1280·f ≤ longueur_du_morceau`, donc les
-morceaux LOTSA de 2048 n'autorisent AUCUN facteur f ≥ 2. Ces fichiers-ci (et le
-corpus synthétique) sont les seuls morceaux 8192, c'est-à-dire le carburant de
-l'arm inter-résolution (G9.2). `choose_chunk_length` raccourcit automatiquement
-quand les séries sont trop courtes (dominick est hebdomadaire, ~350 pas :
-il sera probablement rejeté par --min-length — le résumé le dira).
+`--chunk-length 8192` by default, and that is this corpus's real value:
+multi-resolution decimation requires `1280*f <= chunk_length`, so the 2048
+LOTSA chunks allow NO factor f >= 2. These files (and the synthetic corpus)
+are the only 8192 chunks, i.e. the fuel of the cross-resolution arm (G9.2).
+`choose_chunk_length` shortens automatically when series are too short
+(dominick is weekly, ~350 steps: probably rejected by --min-length - the
+summary will say).
 
-Le mélange avec un corpus existant se fait par SYMLINK des .npy dans le
-répertoire du corpus visé, jamais en générant dedans (doctrine du repo, cf.
-generate_synthetic.py). Fichiers préfixés `chronos_` : provenance lisible dans
-les logs de couverture, zéro collision de nom.
+Mixing with an existing corpus is done by SYMLINKING the .npy files into the
+target corpus directory, never by generating inside it (repo doctrine, cf.
+generate_synthetic.py). Files prefixed `chronos_`: readable provenance in the
+coverage logs, zero name collision.
 """
 
 import argparse
@@ -53,38 +50,37 @@ for _noisy in ("httpx", "httpcore", "urllib3", "huggingface_hub", "datasets",
 
 CHRONOS_REPO = "autogluon/chronos_datasets"
 
-# La liste blanche : les seuls sous-ensembles à la fois NOUVEAUX par rapport à
-# LOTSA et sans recoupement avec les trois suites d'évaluation du projet
-# (GIFT-Eval 97 configs, Nixtla, Monash locale). Vérifié un à un le 2026-08-19.
+# The allowlist: the only subsets both NEW relative to LOTSA and free of
+# overlap with the project's three evaluation suites (GIFT-Eval 97 configs,
+# Nixtla, local Monash). Checked one by one on 2026-08-19.
 CHRONOS_ALLOWLIST = ("dominick", "ercot", "mexico_city_bikes", "ushcn_daily")
 
-# Le reste du corpus, avec la raison — imprimé par --list pour audit. Les
-# motifs à '*' couvrent des groupes entiers.
+# The rest of the corpus, with the reason - printed by --list for audit.
+# '*' patterns cover whole groups.
 CHRONOS_EXCLUDED = {
-    "exchange_rate": "EST l'éval Nixtla `exchange`",
-    "electricity_15min": "source du Nixtla `electricity` (UCI)",
-    "wiki_daily_100k": "recoupe l'éval Monash locale wikipedia-web-traffic",
-    "solar* (solar, solar_1h)": "recoupe l'éval Monash locale solar-10-minute",
-    "m4_*": "datasets d'éval GIFT",
-    "monash_*": "doublons LOTSA et/ou datasets d'éval (traffic, weather, hospital…)",
-    "taxi_*": "déjà dans LOTSA (taxi_30min)",
-    "uber_tlc_*": "déjà dans LOTSA",
-    "m5": "déjà dans LOTSA",
-    "nn5": "déjà dans LOTSA (réadmis là-bas)",
-    "weatherbench_*": "climat — era5+cmip6 pèsent déjà ~30 % du batch (audit G7.1)",
-    "wind_farms_*": "déjà dans LOTSA (wind_farms_with_missing)",
-    "training_corpus": "TSMixup du corpus Chronos entier : mélange des sources "
-                       "ci-dessus, donc fuite par construction",
+    "exchange_rate": "IS the Nixtla `exchange` eval",
+    "electricity_15min": "source of the Nixtla `electricity` (UCI)",
+    "wiki_daily_100k": "overlaps the local Monash eval wikipedia-web-traffic",
+    "solar* (solar, solar_1h)": "overlaps the local Monash eval solar-10-minute",
+    "m4_*": "GIFT eval datasets",
+    "monash_*": "LOTSA duplicates and/or eval datasets (traffic, weather, hospital...)",
+    "taxi_*": "already in LOTSA (taxi_30min)",
+    "uber_tlc_*": "already in LOTSA",
+    "m5": "already in LOTSA",
+    "nn5": "already in LOTSA (readmitted there)",
+    "weatherbench_*": "climate - era5+cmip6 already weigh ~30% of the batch (G7.1 audit)",
+    "wind_farms_*": "already in LOTSA (wind_farms_with_missing)",
+    "training_corpus": "TSMixup of the whole Chronos corpus: a mix of the "
+                       "sources above, so leakage by construction",
 }
 
-# ushcn_daily n'a pas de colonne `target` : chaque variable météo est une
-# colonne. Chacune devient une série indépendante — le traitement univarié
-# standard du projet.
+# ushcn_daily has no `target` column: each weather variable is a column. Each
+# becomes an independent series - the project's standard univariate treatment.
 USHCN_VALUE_COLUMNS = ("PRCP", "SNOW", "SNWD", "TMAX", "TMIN")
 
 
 def series_iter_chronos(subset: str):
-    """Flux de séries 1-D float32 d'un sous-ensemble Chronos, en streaming."""
+    """Stream of 1-D float32 series from one Chronos subset."""
     from datasets import load_dataset
 
     ds = load_dataset(CHRONOS_REPO, subset, split="train", streaming=True)
@@ -114,33 +110,33 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=Path("data/processed/chronos_extras"))
     ap.add_argument("--chunk-length", type=int, default=8192,
-                    help="Maximum ; choose_chunk_length raccourcit par sous-"
-                         "ensemble. 8192 = décimation possible jusqu'à f=6.")
+                    help="Maximum; choose_chunk_length shortens per subset. "
+                         "8192 = decimation possible up to f=6.")
     ap.add_argument("--min-length", type=int, default=1280,
-                    help="Fenêtre requise (ctx 1024 + horizon 256).")
+                    help="Required window (ctx 1024 + horizon 256).")
     ap.add_argument("--max-chunks-per-subset", type=int, default=200_000)
     ap.add_argument("--max-nan-fraction", type=float, default=0.05)
-    ap.add_argument("--list", action="store_true", help="Inventaire seul.")
+    ap.add_argument("--list", action="store_true", help="Inventory only.")
     ap.add_argument("--resume", action="store_true",
-                    help="Sauter les sous-ensembles déjà convertis.")
+                    help="Skip already-converted subsets.")
     args = ap.parse_args()
 
     print()
     print("=" * 72)
-    print(f"ADMIS ({len(CHRONOS_ALLOWLIST)}) — liste blanche explicite")
+    print(f"ADMITTED ({len(CHRONOS_ALLOWLIST)}) - explicit allowlist")
     print("=" * 72)
     for n in CHRONOS_ALLOWLIST:
-        print(f"  ✓ {n}")
+        print(f"  + {n}")
     print()
     print("=" * 72)
-    print(f"EXCLUS ({len(CHRONOS_EXCLUDED)} groupes) — À RELIRE")
+    print(f"EXCLUDED ({len(CHRONOS_EXCLUDED)} groups) - RE-READ THIS")
     print("=" * 72)
     for n, why in CHRONOS_EXCLUDED.items():
-        print(f"  ✗ {n:<28} {why}")
+        print(f"  x {n:<28} {why}")
     print()
 
     if args.list:
-        print("--list : aucune conversion effectuée.")
+        print("--list: no conversion performed.")
         return
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -148,9 +144,9 @@ def main():
     for i, subset in enumerate(CHRONOS_ALLOWLIST, 1):
         out_path = args.out / f"chronos_{subset}.npy"
         if args.resume and out_path.exists():
-            logger.info(f"[{i}/{len(CHRONOS_ALLOWLIST)}] {subset}: déjà présent, sauté")
+            logger.info(f"[{i}/{len(CHRONOS_ALLOWLIST)}] {subset}: already present, skipped")
             continue
-        logger.info(f"[{i}/{len(CHRONOS_ALLOWLIST)}] {subset} → {out_path.name}")
+        logger.info(f"[{i}/{len(CHRONOS_ALLOWLIST)}] {subset} -> {out_path.name}")
         t0 = time.time()
         try:
             written, stats, effective = convert_subset(
@@ -161,26 +157,26 @@ def main():
                 max_nan_fraction=args.max_nan_fraction,
             )
             if effective is None:
-                logger.warning(f"    séries trop courtes (médiane < {args.min_length}) "
-                               f"— inutilisable pour cette géométrie")
+                logger.warning(f"    series too short (median < {args.min_length}) "
+                               f"- unusable for this geometry")
                 continue
             if effective != args.chunk_length:
-                logger.info(f"    longueur de morceau adaptée : {effective}")
+                logger.info(f"    chunk length adapted: {effective}")
             logger.info(f"    {stats.summary(effective, args.min_length)} "
                         f"({time.time() - t0:.0f} s)")
             total += written
-        except Exception as exc:  # un sous-ensemble cassé ne tue pas les autres
-            logger.error(f"  ✗ {subset} échoué : {type(exc).__name__}: {exc}")
+        except Exception as exc:  # one broken subset must not kill the others
+            logger.error(f"  x {subset} failed: {type(exc).__name__}: {exc}")
 
     print()
-    print(f"Terminé : {total:,} morceaux ÉCRITS ce run")
-    print(f"Sortie : {args.out}")
+    print(f"Done: {total:,} chunks WRITTEN this run")
+    print(f"Output: {args.out}")
     print()
-    print("Mélange à un corpus (exemple) :")
+    print("Mixing into a corpus (example):")
     print("  mkdir -p data/processed/lotsa_chronos")
     print("  ln -s $(pwd)/data/processed/lotsa/*.npy data/processed/lotsa_chronos/")
     print("  ln -s $(pwd)/data/processed/chronos_extras/*.npy data/processed/lotsa_chronos/")
-    print("  # puis l'audit d'équilibre sur le répertoire mixte")
+    print("  # then the balance audit on the mixed directory")
 
 
 if __name__ == "__main__":

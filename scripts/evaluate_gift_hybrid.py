@@ -1,44 +1,43 @@
-#!/usr/bin/env python
 """
-G12 sur GIFT — TTM-R3 brut vs hybride « TTM propose, TimeJEPA juge ».
+G12 on GIFT - raw TTM-R3 vs the "TTM proposes, TimeJEPA judges" hybrid.
 
     python scripts/evaluate_gift_hybrid.py \\
         --judge-checkpoint checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<ckpt> \\
         --judge-config lotsa_tiny_v3_eval
 
-STATUT : expérience de PAPIER (chapitre G12), JAMAIS un chiffre officiel — un
-hybride bi-modèle est au-delà de la ligne G11 (décision utilisateur 2026-08-24).
-Conçu 2026-08-28 (question utilisateur : porter le duo evaluate_energy/TTM sur
-GIFT). Le harnais leaderboard (evaluate_gift.py) n'est PAS touché.
+STATUS: PAPER experiment (chapter G12), NEVER an official number - a
+two-model hybrid is beyond the G11 line (decision 2026-08-24). Designed
+2026-08-28 (user question: port the evaluate_energy/TTM duo to GIFT). The
+leaderboard harness (evaluate_gift.py) is NOT touched.
 
-Trois lectures, trois statuts :
-  * `ttm`        — TTM-R3 brut sur les fenêtres GIFT. Sa MASE ABSOLUE se
-                   compare au CSV officiel TTM-R3-PT vendoré (validation
-                   croisée du harnais + part « pipeline » de leur score).
-                   ⚠️ son CRPS est un point-forecast effondré : NE PAS le citer.
-  * `hybrid_ttm` — pool bootstrap + SN + drift + chemins TTM jitterés, jugé
-                   par NOTRE pretrain (encodage contextualisé, E18c), lu en
-                   quantiles pondérés. LA mesure : un point forecaster externe
-                   devient probabiliste (fan + couverture) par juge latent.
-  * référence champion : PAS recalculée ici — citer les évals complètes
-                   existantes (meilleure statistique que nos fenêtres plafonnées).
+Three readouts, three statuses:
+  * `ttm`        - raw TTM-R3 on the GIFT windows. Its ABSOLUTE MASE compares
+                   to the vendored official TTM-R3-PT CSV (harness
+                   cross-validation + the "pipeline" share of their score).
+                   Warning: its CRPS is a collapsed point forecast: do NOT cite it.
+  * `hybrid_ttm` - pool of bootstrap + SN + drift + jittered TTM paths,
+                   judged by OUR pretrain (contextualized encoding, E18c),
+                   read as weighted quantiles. THE measure: an external point
+                   forecaster becomes probabilistic (fan + coverage) via a
+                   latent judge.
+  * champion reference: NOT recomputed here - cite the existing full evals
+                   (better statistics than our capped windows).
 
-Appariement : les DEUX readers voient exactement les mêmes instances
-(sous-échantillonnage régulier, --instances par config) — les comparaisons
-internes sont appariées ; les valeurs absolues sur fenêtres plafonnées ne
-remplacent pas une éval complète.
+Pairing: BOTH readers see exactly the same instances (regular subsampling,
+--instances per config) - internal comparisons are paired; absolute values on
+capped windows do not replace a full eval.
 
-Rollout TTM pour h > 96 : réinjection autorégressive segment par segment
-(jitter sur le PREMIER segment seulement — la diversité naît au départ, les
-segments suivants prolongent chaque chemin de façon déterministe).
+TTM rollout for h > 96: autoregressive segment-by-segment reinjection (jitter
+on the FIRST segment only - diversity is born at the start, later segments
+extend each path deterministically).
 
-Choix du juge (à déclarer dans le papier) :
-  * primaire   = checkpoint FINAL nommé du pretrain (zéro sélection) ;
-  * secondaire = juge sélectionné par probe (loi pic-tôt) — le probe lit des
-    données GIFT, donc cette colonne est étiquetée « sélection déclarée ».
+Judge choice (to declare in the paper):
+  * primary   = the pretrain's FINAL named checkpoint (zero selection);
+  * secondary = probe-selected judge (early-peak law) - the probe reads GIFT
+    data, so that column is labeled "declared selection".
 
-Sorties : evaluation/gift_hybrid/<judge>/{per_config/*.json, summary.json}
-(même format que le harnais officiel, couverture incluse).
+Outputs: evaluation/gift_hybrid/<judge>/{per_config/*.json, summary.json}
+(same format as the official harness, coverage included).
 """
 
 import argparse
@@ -68,7 +67,7 @@ logger = logging.getLogger("gift_hybrid")
 
 def ttm_rollout(prop: TTMProposer, ctx: np.ndarray, h: int,
                 n_jitter: int, rng) -> np.ndarray:
-    """[1+n_jitter, h] — chemins TTM, autorégressifs par segments de pred_len."""
+    """[1+n_jitter, h] - TTM paths, autoregressive in pred_len segments."""
     ctxs, segs, rem = None, [], h
     while rem > 0:
         step = min(prop.pred_len, rem)
@@ -110,18 +109,18 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
         scale = gift.seasonal_error(inst.context, m)
 
         tp = ttm_rollout(prop, inst.context.astype(np.float32), h, n_jitter, rng)
-        # TTM émet des NaN sur certains contextes extrêmes (variance ~0,
-        # bitbrains) : chemin propre non fini -> instance sautée pour les DEUX
-        # readers (l'appariement prime) ; jitters non finis simplement écartés.
+        # TTM emits NaNs on some extreme contexts (variance ~0, bitbrains):
+        # non-finite clean path -> instance skipped for BOTH readers (pairing
+        # comes first); non-finite jitters simply dropped.
         if not np.isfinite(tp[0]).all():
             n_ttm_nonfinite += 1
             continue
         tp = tp[np.isfinite(tp).all(axis=1)]
-        accs["ttm"].add(inst.target, tp[0], None, scale)      # chemin propre, point
+        accs["ttm"].add(inst.target, tp[0], None, scale)      # clean path, point
 
         if judge is not None:
-            # h_judge : l'énergie se lit sur les premiers pas <= horizon natif
-            # du juge (single-shot par construction) ; quantiles sur h complet.
+            # h_judge: the energy reads on the first steps <= the judge's
+            # native horizon (single-shot by construction); quantiles on full h.
             cands, e = candidate_energies(judge, ctx, inst.context, h, m, K,
                                           rng, device, extra_cands=tp,
                                           h_judge=judge.prediction_length,
@@ -144,40 +143,40 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--judge-checkpoint", default=None,
-                    help="requis sauf en --ttm-only")
+                    help="required unless --ttm-only")
     ap.add_argument("--ttm-only", action="store_true",
-                    help="validation croisée du claim TTM (2026-08-31) : TTM "
-                         "brut sur les fenêtres COMPLÈTES, sans juge, agrégé "
-                         "vs SN locale ET officielle. Sa MASE se compare au "
-                         "0.7240 du CSV leaderboard ; l'écart mesure ce que "
-                         "leur recette per-régime + leur pipeline achètent "
-                         "par rapport à UNE variante (1024-96) roulée par "
-                         "nous. Sa 'CRPS' est un point effondré (=ND) : ne "
-                         "comparer qu'en le disant.")
+                    help="cross-validation of the TTM claim (2026-08-31): raw "
+                         "TTM on the FULL windows, no judge, aggregated vs "
+                         "local AND official SN. Its MASE compares to the "
+                         "0.7240 of the leaderboard CSV; the gap measures "
+                         "what their per-regime recipe + pipeline buy over "
+                         "ONE variant (1024-96) rolled by us. Its 'CRPS' is "
+                         "a collapsed point (=ND): only compare while "
+                         "saying so.")
     ap.add_argument("--judge-config", default="lotsa_tiny_v3_eval")
     ap.add_argument("--ttm-model", default="ibm-granite/granite-timeseries-ttm-r3")
     ap.add_argument("--ttm-revision", default="1024-96-r3")
     ap.add_argument("--ttm-jitter", type=int, default=4)
-    ap.add_argument("--candidates", type=int, default=24, help="bootstraps du pool")
-    ap.add_argument("--instances", type=int, default=150, help="par config, appariées")
+    ap.add_argument("--candidates", type=int, default=24, help="pool bootstraps")
+    ap.add_argument("--instances", type=int, default=150, help="per config, paired")
     ap.add_argument("--configs", default=None,
-                    help="sous-ensemble GIFT 'a/b/c,d/e/f' (défaut : les 97)")
+                    help="GIFT subset 'a/b/c,d/e/f' (default: all 97)")
     ap.add_argument("--gift-root", default="data/gift_eval")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--centered-bootstrap", action="store_true",
-                    help="G12c : bootstrap des innovations saisonnières recollé "
-                         "sur le chemin TTM (anti-dilution par construction)")
+                    help="G12c: seasonal-innovation bootstrap glued onto the "
+                         "TTM path (anti-dilution by construction)")
     ap.add_argument("--tag", default=None,
-                    help="suffixe du répertoire de sortie — OBLIGATOIRE pour "
-                         "une variante de pool (sinon collision de marqueurs "
-                         "avec le run de base du même juge)")
+                    help="output-directory suffix - REQUIRED for a pool "
+                         "variant (otherwise marker collision with the same "
+                         "judge's base run)")
     args = ap.parse_args()
     if not args.ttm_only and args.judge_checkpoint is None:
-        ap.error("--judge-checkpoint est requis (sauf en --ttm-only)")
+        ap.error("--judge-checkpoint is required (unless --ttm-only)")
     if args.ttm_only and args.instances == 150:
-        args.instances = 10 ** 9           # fenêtres complètes par défaut
+        args.instances = 10 ** 9           # full windows by default
     if args.ttm_only:
-        args.ttm_jitter = 0                # un seul chemin propre
+        args.ttm_jitter = 0                # single clean path
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     judge = None
@@ -204,7 +203,7 @@ def main():
         marker = out_dir / "per_config" / (config.replace("/", "__") + ".json")
         if marker.exists():
             results[config] = json.loads(marker.read_text())
-            logger.info(f"[{i}/{len(configs)}] {config}: déjà fait, sauté")
+            logger.info(f"[{i}/{len(configs)}] {config}: already done, skipped")
             continue
         t0 = time.time()
         try:
@@ -212,7 +211,7 @@ def main():
                                   device, rng, args.instances,
                                   args.candidates, args.ttm_jitter,
                                   centered=args.centered_bootstrap)
-        except Exception as exc:   # une config cassée ne tue pas les 96 autres
+        except Exception as exc:   # one broken config must not kill 96 others
             logger.error(f"[{i}/{len(configs)}] {config} FAILED: "
                          f"{type(exc).__name__}: {exc}")
             continue
@@ -223,14 +222,14 @@ def main():
             hy = res["hybrid_ttm"]
             cov = hy.get("coverage") or {}
             extra = (f"hybrid MASE {hy['MASE']:.3f} CRPS {hy['CRPS']:.3f} "
-                     f"couv80 {(cov.get('0.9', 0) - cov.get('0.1', 0)):.2f} ")
+                     f"cov80 {(cov.get('0.9', 0) - cov.get('0.1', 0)):.2f} ")
         else:
             extra = ""
         logger.info(
             f"[{i}/{len(configs)}] {config}: ttm MASE {t['MASE']:.3f} | "
             f"{extra}({res['n_instances']} inst, {time.time() - t0:.0f}s)")
 
-    # Agrégats : geomean des ratios vs SN LOCAL (mêmes fenêtres — apparié).
+    # Aggregates: geomean of ratios vs LOCAL SN (same windows - paired).
     def geomean_ratio(metric, reader):
         ratios = [results[c][reader][metric] / results[c]["seasonal_naive_local"][metric]
                   for c in results
@@ -249,8 +248,8 @@ def main():
         summary["hybrid_coverage80_mean"] = float(
             np.mean([c["0.9"] - c["0.1"] for c in covs]))
     if args.ttm_only:
-        # Le chiffre de la validation croisée : ratio vs la SN OFFICIELLE
-        # vendorée — la normalisation du leaderboard (TTM-R3-PT : MASE 0.7240).
+        # The cross-validation number: ratio vs the vendored OFFICIAL SN -
+        # the leaderboard normalization (TTM-R3-PT: MASE 0.7240).
         summary["ttm_vs_official_sn"] = gift.aggregate(
             {c: results[c]["ttm"] for c in results},
             gift.official_seasonal_naive())
@@ -259,20 +258,20 @@ def main():
     logger.info("=" * 60)
     for r in readers:
         a = summary["aggregates_vs_local_sn"][r]
-        note = "  (CRPS point effondré — ne pas citer)" if r == "ttm" else ""
+        note = "  (collapsed point CRPS - do not cite)" if r == "ttm" else ""
         logger.info(f"  {r:11s} MASE ratio {a['MASE']:.4f} | "
-                    f"CRPS ratio {a['CRPS']:.4f}{note}  [vs SN locale]")
+                    f"CRPS ratio {a['CRPS']:.4f}{note}  [vs local SN]")
     if args.ttm_only:
         o = summary["ttm_vs_official_sn"]
         logger.info(
-            f"  ttm vs SN OFFICIELLE : MASE ratio {o['geomean_MASE_ratio']:.4f} "
-            f"({o['n_configs_MASE']} configs) | claim leaderboard TTM-R3-PT : "
-            f"0.7240 | CRPS point {o['geomean_CRPS_ratio']:.4f} vs leur 0.5195 "
-            f"probabiliste (pas comparable)")
+            f"  ttm vs OFFICIAL SN: MASE ratio {o['geomean_MASE_ratio']:.4f} "
+            f"({o['n_configs_MASE']} configs) | TTM-R3-PT leaderboard claim: "
+            f"0.7240 | point CRPS {o['geomean_CRPS_ratio']:.4f} vs their "
+            f"probabilistic 0.5195 (not comparable)")
     if covs:
-        logger.info(f"  couverture 80% hybride : "
+        logger.info(f"  hybrid 80% coverage: "
                     f"{summary['hybrid_coverage80_mean']:.3f} (nominal 0.800)")
-    logger.info(f"Sorties : {out_dir}")
+    logger.info(f"Outputs: {out_dir}")
 
 
 if __name__ == "__main__":

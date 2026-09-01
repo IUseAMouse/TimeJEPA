@@ -1,16 +1,16 @@
 """
-Tests du paquet données v3 (roadmap S2) : familles synthétiques ops/intermittent,
-augmentations TiRex-style, décimation.
+Tests for the v3 data package (roadmap S2): ops/intermittent synthetic
+families, TiRex-style augmentations, decimation.
 
-Invariants, par gravité :
-1. Flag off = rien : les nouvelles augmentations désactivées par défaut sont
-   des passe-plats EXACTS ; les familles DEFAULT sont inchangées.
-2. La physique des nouvelles familles : ops = positif, zéros exacts, rafales à
-   queue lourde ; intermittent = entiers, zéros majoritaires.
-3. Les augmentations actives font ce qu'elles disent (courbe commune
-   contexte/cible, plafond commun, spikes périodiques continus à la jonction).
-4. La décimation : mean-pooling exact, refus des morceaux trop courts,
-   jamais d'écrasement.
+Invariants, by severity:
+1. Flag off = nothing: the new augmentations, disabled by default, are EXACT
+   pass-throughs; the DEFAULT families are unchanged.
+2. The physics of the new families: ops = positive, exact zeros, heavy-tailed
+   bursts; intermittent = integers, mostly zeros.
+3. Active augmentations do what they say (common context/target curve,
+   common cap, periodic spikes continuous across the junction).
+4. Decimation: exact mean-pooling, refusal of too-short chunks, never an
+   overwrite.
 """
 
 import subprocess
@@ -32,7 +32,7 @@ RNG = lambda s=0: np.random.default_rng(s)  # noqa: E731
 
 
 # ---------------------------------------------------------------------------
-# 1. Flag off = rien
+# 1. Flag off = nothing
 # ---------------------------------------------------------------------------
 
 def test_default_families_unchanged():
@@ -52,7 +52,7 @@ def test_new_augmentations_are_exact_passthrough_by_default():
 
 
 # ---------------------------------------------------------------------------
-# 2. La physique des nouvelles familles
+# 2. The physics of the new families
 # ---------------------------------------------------------------------------
 
 def _spec(kind, **kw):
@@ -66,13 +66,13 @@ def test_ops_family_is_nonnegative_with_exact_zeros_and_bursts():
     for _ in range(30):
         x = sample_series(_spec("ops", period_range=(256.0, 2048.0)), rng)
         assert np.isfinite(x).all()
-        assert (x >= 0).all(), "une série ops doit rester positive"
+        assert (x >= 0).all(), "an ops series must stay positive"
         if (x == 0.0).any():
             n_zero_series += 1
         med = np.median(x[x > 0]) if (x > 0).any() else 1.0
         ratios.append(x.max() / max(med, 1e-9))
-    assert n_zero_series >= 5, "la zéro-inflation doit apparaître (zéros EXACTS)"
-    assert np.median(ratios) > 5, "les rafales doivent dominer le plancher (queue lourde)"
+    assert n_zero_series >= 5, "zero-inflation must appear (EXACT zeros)"
+    assert np.median(ratios) > 5, "bursts must dominate the floor (heavy tail)"
 
 
 def test_intermittent_family_is_integer_and_sparse():
@@ -81,8 +81,8 @@ def test_intermittent_family_is_integer_and_sparse():
         x = sample_series(_spec("intermittent"), rng)
         assert np.isfinite(x).all()
         assert (x >= 0).all()
-        assert np.allclose(x, np.round(x)), "demande ENTIÈRE"
-        assert (x == 0).mean() > 0.3, "les zéros doivent dominer ou presque"
+        assert np.allclose(x, np.round(x)), "demand must be INTEGER"
+        assert (x == 0).mean() > 0.3, "zeros must dominate or nearly so"
 
 
 def test_families_are_deterministic_by_seed():
@@ -92,7 +92,7 @@ def test_families_are_deterministic_by_seed():
 
 
 # ---------------------------------------------------------------------------
-# 3. Les augmentations actives
+# 3. Active augmentations
 # ---------------------------------------------------------------------------
 
 def _aug(**kw):
@@ -111,8 +111,8 @@ def test_amplitude_modulation_applies_common_piecewise_curve():
     curve = torch.cat([c, t])
     a, b = aug.config.amplitude_mod_range
     assert (curve >= a - 1e-5).all() and (curve <= b + 1e-5).all()
-    assert curve.std() > 0.01, "la courbe doit réellement moduler"
-    # continuité à la jonction contexte/cible (courbe commune)
+    assert curve.std() > 0.01, "the curve must actually modulate"
+    # continuity at the context/target junction (common curve)
     assert abs(c[-1] - t[0]) < 0.05
 
 
@@ -122,9 +122,9 @@ def test_censor_clips_context_and_target_at_common_cap():
     ctx, tgt = torch.randn(1024) * 10, torch.randn(256) * 10
     c, t = aug.censor(ctx, tgt)
     cap = max(c.max().item(), t.max().item())
-    assert cap < max(ctx.max().item(), tgt.max().item()), "le plafond doit écrêter"
+    assert cap < max(ctx.max().item(), tgt.max().item()), "the cap must clip"
     assert c.max() <= cap + 1e-6 and t.max() <= cap + 1e-6
-    # les valeurs sous le plafond sont intactes
+    # values under the cap are intact
     assert torch.equal(c[ctx <= cap], ctx[ctx <= cap])
 
 
@@ -132,21 +132,21 @@ def test_spikes_are_periodic_and_cross_the_boundary():
     torch.manual_seed(3)
     aug = _aug(spike_enabled=True, p_spike=1.0)
     ctx, tgt = torch.zeros(1024), torch.zeros(256)
-    # std nulle -> scale plancher 1e-6 : forcer un signal de base
+    # zero std -> floor scale 1e-6: force a base signal
     ctx += torch.randn(1024) * 0.1
     tgt += torch.randn(256) * 0.1
     c, t = aug.spike_injection(ctx.clone(), tgt.clone())
     d_ctx, d_tgt = (c - ctx), (t - tgt)
     hits = torch.nonzero(torch.cat([d_ctx, d_tgt]).abs() > 1e-6).flatten()
-    assert len(hits) >= 2, "des spikes doivent exister"
+    assert len(hits) >= 2, "spikes must exist"
     gaps = torch.diff(hits)
-    assert (gaps == gaps[0]).all(), "les spikes doivent être PÉRIODIQUES"
+    assert (gaps == gaps[0]).all(), "spikes must be PERIODIC"
     assert d_tgt.abs().max() > 0 or hits.max() < 1024, \
-        "la période doit pouvoir continuer dans la cible"
+        "the period must be able to continue into the target"
 
 
 # ---------------------------------------------------------------------------
-# 4. La décimation
+# 4. Decimation
 # ---------------------------------------------------------------------------
 
 def test_decimate_mean_pools_and_refuses_short(tmp_path):
@@ -166,26 +166,26 @@ def test_decimate_mean_pools_and_refuses_short(tmp_path):
     out = np.load(dst / "densefam_dec2.npy")
     assert out.shape == (4, 2048)
     expected = arr.reshape(4, 2048, 2).mean(axis=2)
-    assert np.allclose(out, expected), "mean-pooling exact exigé"
-    # 1500 // 2 = 750 < 1280 : refusée, dite
+    assert np.allclose(out, expected), "exact mean-pooling required"
+    # 1500 // 2 = 750 < 1280: refused, and said
     assert not (dst / "shortfam_dec2.npy").exists()
-    assert "sauté" in (r.stdout + r.stderr)
+    assert "skipped" in (r.stdout + r.stderr)
 
 
 def test_pad_to_left_pads_and_keeps_target_side_real():
-    """Séries courtes (G7.1) : rembourrage-bord GAUCHE — la donnée réelle
-    occupe la fin du morceau (côté cible), le préfixe est plat, exactement la
-    condition d'éval des séries courtes (prepare_context)."""
+    """Short series (G7.1): LEFT edge padding - the real data occupies the
+    end of the chunk (target side), the prefix is flat, exactly the eval
+    condition for short series (prepare_context)."""
     from timejepa.data.lotsa import iter_dense_chunks
-    series = [np.arange(100, 600, dtype=np.float32),   # 500 pas, >= 384
-              np.arange(50, dtype=np.float32)]          # 50 pas, < min : rejetée
+    series = [np.arange(100, 600, dtype=np.float32),   # 500 steps, >= 384
+              np.arange(50, dtype=np.float32)]          # 50 steps, < min: rejected
     chunks = list(iter_dense_chunks(iter(series), chunk_length=1280,
                                     min_length=384, pad_to=1280))
     assert len(chunks) == 1
     c = chunks[0]
     assert c.shape[0] == 1280
-    assert np.array_equal(c[-500:], series[0]), "la fin doit être la donnée réelle"
-    assert (c[:780] == series[0][0]).all(), "le préfixe doit être plat (edge-pad)"
+    assert np.array_equal(c[-500:], series[0]), "the end must be the real data"
+    assert (c[:780] == series[0][0]).all(), "the prefix must be flat (edge-pad)"
 
 
 def test_pad_to_off_is_unchanged():
@@ -198,7 +198,7 @@ def test_pad_to_off_is_unchanged():
 def test_solar_power_is_readmitted():
     from timejepa.data.lotsa import is_eval_overlap
     assert not is_eval_overlap("solar_power")
-    assert is_eval_overlap("solar")            # le motif reste actif pour GIFT
+    assert is_eval_overlap("solar")            # the pattern stays active for GIFT
 
 
 def test_v3_configs_compose():

@@ -49,26 +49,26 @@ class AugmentationConfig:
     trend_magnitude: float = 0.1
     p_trend: float = 0.2
 
-    # --- Augmentations TiRex-style (v3, 2026-08-24) --------------------------
-    # LE plus gros poste de l'ablation TiRex (CRPS 0.411 -> 0.430 sans elles,
-    # devant CPM et devant le choix de backbone). Toutes DÉSACTIVÉES par
-    # défaut : les configs existantes sont bit-identiques ; le pretrain v3 les
-    # active. Contrairement à random_scale (INERTE sous arcsinh — médiane/MAD
-    # 1-homogènes, audit T5), ces trois-là changent la FORME du signal et
-    # survivent donc à la normalisation robuste.
-    # Modulation d'amplitude : multiplication par une tendance linéaire par
-    # morceaux (le niveau du signal dérive — non-stationnarité d'amplitude).
+    # --- TiRex-style augmentations (v3, 2026-08-24) --------------------------
+    # THE biggest item of the TiRex ablation (CRPS 0.411 -> 0.430 without
+    # them, ahead of CPM and ahead of the backbone choice). All DISABLED by
+    # default: existing configs are bit-identical; the v3 pretrain enables
+    # them. Unlike random_scale (INERT under arcsinh - median/MAD are
+    # 1-homogeneous, audit T5), these three change the SHAPE of the signal
+    # and therefore survive robust normalization.
+    # Amplitude modulation: multiplication by a piecewise-linear trend (the
+    # signal level drifts - amplitude non-stationarity).
     amplitude_mod_enabled: bool = False
     amplitude_mod_knots: Tuple[int, int] = (2, 6)
     amplitude_mod_range: Tuple[float, float] = (0.5, 1.5)
     p_amplitude_mod: float = 0.5
-    # Censure : écrêtage à un quantile aléatoire de la fenêtre (capteurs
-    # saturés, capacités — le régime « l2c » de bizitobs).
+    # Censoring: clipping at a random quantile of the window (saturated
+    # sensors, capacities - the bizitobs "l2c" regime).
     censor_enabled: bool = False
     censor_quantile_range: Tuple[float, float] = (0.85, 0.99)
     p_censor: float = 0.5
-    # Injection de spikes PÉRIODIQUES épars (donc prédictibles — appliqués
-    # conjointement contexte+cible pour que le monde reste cohérent).
+    # Sparse PERIODIC spike injection (hence predictable - applied jointly
+    # to context+target so the world stays coherent).
     spike_enabled: bool = False
     spike_amp_range: Tuple[float, float] = (3.0, 10.0)
     p_spike: float = 0.05
@@ -200,10 +200,10 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TiRex-style : multiplication par une tendance LINÉAIRE PAR MORCEAUX
-        (points de rupture aléatoires, pas une grille régulière comme le
-        magnitude warp) — le niveau du signal dérive par régimes. Courbe
-        continue sur [contexte‖cible], appliquée aux deux.
+        TiRex-style: multiplication by a PIECEWISE-LINEAR trend (random
+        breakpoints, not a regular grid like the magnitude warp) - the signal
+        level drifts by regimes. Continuous curve over [context + target],
+        applied to both.
         """
         if not self.config.amplitude_mod_enabled:
             return context, target
@@ -213,7 +213,7 @@ class TimeSeriesAugmentations:
         total_len = context.shape[-1] + target.shape[-1]
         lo, hi = self.config.amplitude_mod_knots
         n_knots = int(torch.randint(lo, hi + 1, (1,)).item())
-        # positions de rupture aléatoires (triées), valeurs indépendantes
+        # random breakpoint positions (sorted), independent values
         pos = torch.sort(torch.rand(n_knots)).values
         pos = torch.cat([torch.zeros(1), pos, torch.ones(1)])
         a, b = self.config.amplitude_mod_range
@@ -237,9 +237,9 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TiRex-style : écrêtage au quantile q ~ U(censor_quantile_range) de la
-        fenêtre complète — capteur saturé, capacité atteinte. Même seuil pour
-        contexte et cible (le plafond est une propriété du monde).
+        TiRex-style: clipping at quantile q ~ U(censor_quantile_range) of the
+        full window - saturated sensor, capacity reached. Same threshold for
+        context and target (the ceiling is a property of the world).
         """
         if not self.config.censor_enabled:
             return context, target
@@ -257,10 +257,10 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TiRex-style : spikes PÉRIODIQUES épars — la période continue du
-        contexte dans la cible, donc le motif est prédictible et appliqué aux
-        deux (un spike aléatoire dans la seule cible serait du bruit
-        inapprenable ; un motif périodique est un signal).
+        TiRex-style: sparse PERIODIC spikes - the period continues from the
+        context into the target, so the pattern is predictable and applied to
+        both (a random spike in the target alone would be unlearnable noise;
+        a periodic pattern is a signal).
         """
         if not self.config.spike_enabled:
             return context, target
@@ -307,7 +307,7 @@ class TimeSeriesAugmentations:
         longer raw stretch and decimates it, genuinely changing the sampling
         frequency.
 
-        Both are useful, for different reasons — this one for sensor-quality
+        Both are useful, for different reasons - this one for sensor-quality
         robustness, the other for temporal-scale generalization.
 
         Note: This is applied to both context and target together
@@ -423,10 +423,10 @@ class TimeSeriesAugmentations:
         context, target = self.diverse_resolution_sampling(context, target)
         context, target = self.random_scale(context, target)
         context, target = self.magnitude_warp(context, target)
-        # TiRex-style (v3) — off par défaut, activées par le pretrain v3 :
-        # modulation d'amplitude, puis spikes (dans le signal), puis censure
-        # (le plafond écrête tout ce qui précède, spikes compris — comme un
-        # vrai capteur saturé).
+        # TiRex-style (v3) - off by default, enabled by the v3 pretrain:
+        # amplitude modulation, then spikes (in the signal), then censoring
+        # (the ceiling clips everything before it, spikes included - like a
+        # real saturated sensor).
         context, target = self.amplitude_modulation(context, target)
         context, target = self.spike_injection(context, target)
         context, target = self.censor(context, target)

@@ -1,14 +1,14 @@
 """
-Non-parametric probabilistic forecasting head (option B).
+Non-parametric probabilistic forecasting head.
 
 Why quantiles rather than a parametric distribution
 ---------------------------------------------------
-GIFT-Eval ranks on CRPS, approximated by the weighted quantile loss — which IS
+GIFT-Eval ranks on CRPS, approximated by the weighted quantile loss - which IS
 an average of pinball losses over a quantile grid. Predicting the grid directly
 optimizes the ranking metric with no proxy in between.
 
-It also imposes no distributional shape. The datasets we currently lose on
-(exchange, bitcoin, ETTm) are noisy, skewed and heavy-tailed; a Gaussian would
+It also imposes no distributional shape. The hardest datasets (exchange,
+bitcoin, ETTm) are noisy, skewed and heavy-tailed; a Gaussian would
 be the wrong model and a Student-t, while better on tails, is still unimodal
 and symmetric.
 
@@ -16,10 +16,10 @@ There is a side benefit on the point metric too: MASE is MAE-based, and MAE is
 minimized by the MEDIAN. Training with Huber gives something between a mean and
 a median; pinball gives the exact conditional median at q=0.5.
 
-Why the head is fed the context (option B rather than A)
--------------------------------------------------------
+Why the head is fed the context
+-------------------------------
 The predictor is trained under MSE against the target latent, so it converges to
-E[z_target | z_context] — a conditional MEAN by construction (measured on a live
+E[z_target | z_context] - a conditional MEAN by construction (measured on a live
 run: pred_var 0.6 against target_var 0.95). Dispersion information lives in the
 residual, which the model never observes at inference.
 
@@ -27,8 +27,8 @@ Two contexts with the same conditional mean but different volatility can
 therefore collapse to the same predicted latent, leaving a decoder that only
 sees that latent unable to tell them apart. Cross-attending to the context
 embeddings gives the head direct access to the window's volatility signature.
-`scripts/probe_uncertainty.py` measures whether this actually buys anything on
-a given checkpoint.
+`scripts/archive/probe_uncertainty.py` measured that this buys real signal
+on a trained checkpoint.
 
 Quantile crossing
 -----------------
@@ -64,7 +64,7 @@ def pinball_loss(
     WQL are on the same scale.
 
     Args:
-        quantiles: [B, L, Q] — must be sorted along Q (guaranteed by QuantileHead)
+        quantiles: [B, L, Q] - must be sorted along Q (guaranteed by QuantileHead)
         target:    [B, L, 1] or [B, L]
         levels:    the Q quantile levels
     """
@@ -87,7 +87,7 @@ class QuantileHead(nn.Module):
 
     Architecture:
         z_pred [B, N_tgt, D]
-          -> cross-attention over z_ctx [B, N_ctx, D]   (option B; skipped for A)
+          -> cross-attention over z_ctx [B, N_ctx, D]   (if use_context)
           -> MLP
           -> UnPatching to [B, L, Q]                    (Q plays the channel role)
           -> monotone reparameterization
@@ -98,7 +98,7 @@ class QuantileHead(nn.Module):
         patch_size / stride: must match the encoder's patching grid
         prediction_length: horizon in timesteps
         quantile_levels: the grid, defaults to GIFT-Eval's 9 levels
-        use_context: cross-attend to the context embeddings (option B)
+        use_context: cross-attend to the context embeddings
         num_heads: heads for the cross-attention
     """
 
@@ -113,9 +113,9 @@ class QuantileHead(nn.Module):
         num_heads: int = 4,
         hidden_dim: Optional[int] = None,
         dropout: float = 0.1,
-        # ESJEPA — modulation de l'ÉTALEMENT du fan par la voie z. Opt-in
-        # strict : flag off ⇒ l'attribut z_gate n'existe pas, state_dict et
-        # chemin de calcul bit-identiques (pattern w_film).
+        # ESJEPA - modulation of the fan's SPREAD by the z path. Strict
+        # opt-in: flag off => the z_gate attribute does not exist, state_dict
+        # and compute path bit-identical (w_film pattern).
         use_error_signal: bool = False,
         z_dim: int = 4,
     ):
@@ -147,13 +147,13 @@ class QuantileHead(nn.Module):
             self.context_norm = nn.LayerNorm(d_model)
 
         if use_error_signal:
-            # Gate multiplicatif sur les largeurs de _make_monotone :
-            # z [B, N, z_dim] -> (g_low, g_up) par patch -> widths · exp(g).
-            # Zéro-init poids ET biais ⇒ exp(0)=1 : identité EXACTE à l'init
-            # (le finetune part du fan baseline, la modulation n'apparaît que
-            # si le gradient la demande). La MÉDIANE n'est pas touchable par
-            # construction — MASE structurellement invariant, tout delta WQL
-            # attribuable à l'étalement.
+            # Multiplicative gate on _make_monotone's widths:
+            # z [B, N, z_dim] -> (g_low, g_up) per patch -> widths * exp(g).
+            # Zero-init weights AND bias => exp(0)=1: EXACT identity at init
+            # (finetune starts from the baseline fan, modulation only appears
+            # if the gradient asks for it). The MEDIAN is untouchable by
+            # construction - MASE structurally invariant, any WQL delta
+            # attributable to the spread.
             self.z_gate = nn.Linear(z_dim, 2)
             nn.init.zeros_(self.z_gate.weight)
             nn.init.zeros_(self.z_gate.bias)
@@ -186,10 +186,10 @@ class QuantileHead(nn.Module):
         Returns:
             quantiles [B, L, Q], strictly increasing along Q.
 
-        `z` (ESJEPA, optionnel) : stats du résidu prédites [B, N, z_dim] —
-        module l'étalement via z_gate. Refus bilatéral : construit avec
-        use_error_signal sans z, ou z fourni sans le module ⇒ ValueError
-        (jamais de dégradation silencieuse, précédent use_context).
+        `z` (ESJEPA, optional): predicted residual stats [B, N, z_dim] -
+        modulates the spread via z_gate. Two-way refusal: built with
+        use_error_signal but no z, or z given without the module =>
+        ValueError (never a silent degradation, use_context precedent).
         """
         if self.use_error_signal and z is None:
             raise ValueError(
@@ -199,9 +199,9 @@ class QuantileHead(nn.Module):
             )
         if z is not None and not self.use_error_signal:
             raise ValueError(
-                "z reçu mais la tête a été construite sans use_error_signal — "
-                "le gate n'existe pas, la modulation serait silencieusement "
-                "perdue."
+                "z received but the head was built without use_error_signal "
+                "- the gate does not exist, the modulation would be silently "
+                "lost."
             )
         target_length = target_length or self.prediction_length
         h = predicted_latents
@@ -224,10 +224,10 @@ class QuantileHead(nn.Module):
 
         gates = None
         if z is not None:
-            # z est par PATCH [B, N, z_dim] ; les largeurs sont par PAS DE
-            # TEMPS [B, L, ·]. Mapping non chevauchant t -> min(t//stride, N-1)
-            # — plus simple que reproduire l'overlap-averaging d'UnPatching et
-            # suffisant pour une échelle.
+            # z is per PATCH [B, N, z_dim]; the widths are per TIMESTEP
+            # [B, L, .]. Non-overlapping mapping t -> min(t//stride, N-1) -
+            # simpler than reproducing UnPatching's overlap-averaging and
+            # good enough for a scale.
             g = self.z_gate(z)                               # [B, N, 2]
             idx = torch.div(
                 torch.arange(raw.shape[1], device=raw.device),
@@ -247,9 +247,9 @@ class QuantileHead(nn.Module):
         or minus a cumulative sum of softplus widths. Sorting is then a property
         of the parameterization rather than something to penalize or post-process.
 
-        `gates` (ESJEPA, [B, L, 2]) : facteurs log-multiplicatifs (g_low, g_up)
-        appliqués aux widths — exp(g)·softplus reste > 0, la monotonie et la
-        médiane sont préservées par construction.
+        `gates` (ESJEPA, [B, L, 2]): log-multiplicative factors (g_low, g_up)
+        applied to the widths - exp(g)*softplus stays > 0, monotonicity and
+        the median are preserved by construction.
         """
         mid = self.median_idx
         median = raw[..., mid:mid + 1]                       # [B, L, 1]

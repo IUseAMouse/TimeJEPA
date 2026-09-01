@@ -1,8 +1,8 @@
-# ⚠️ DEPRECATED (audit du 2026-08-19) — racine ORPHELINE, ne pas utiliser.
-# Dérive mesurée par rapport à tiny.yaml : liste de datasets périmée, clés
-# multi-résolution/context_lengths absentes, blocs recopiés jamais resynchronisés.
-# Les échelles vivantes sont lotsa_mini / lotsa_base (qui héritent de lotsa_tiny
-# et redéfinissent les dimensions). Conservé par politique no-delete (P2.9).
+# DEPRECATED (2026-08-19 audit) - ORPHANED root, do not use. Measured drift
+# vs tiny.yaml: stale dataset list, missing multi-resolution/context_lengths
+# keys, copied blocks never resynced. Kept per the no-delete policy (P2.9);
+# use lotsa_mini / lotsa_base (which inherit from lotsa_tiny and redefine the
+# dimensions).
 # @package _global_
 # configs/model/timejepa_large.yaml
 
@@ -67,7 +67,7 @@ training:
   
   optimizer:
     name: "adamw"
-    learning_rate: 3.0e-4  # Plus conservateur
+    learning_rate: 3.0e-4  # More conservative
     weight_decay: 0.05
     betas: [0.9, 0.95]
     eps: 1.0e-8
@@ -75,14 +75,14 @@ training:
   
   lr_scheduler:
     type: "cosine"
-    warmup_epochs: 0.2  # 20% warmup pour gros modèle
+    warmup_epochs: 0.2  # 20% warmup for a large model
     min_lr: 1.0e-6
   
   max_epochs: 20
   
   ema:
     enabled: true
-    momentum_base: 0.999  # Plus lent pour gros modèle
+    momentum_base: 0.999  # Slower for a large model
     momentum_final: 1.0
     schedule: "cosine"
   

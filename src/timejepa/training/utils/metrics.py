@@ -58,7 +58,7 @@ def sigreg_loss(
                                * e^{-t^2/2} dt
 
     (the integrand is even in t, hence integrating over the half-line and
-    doubling). Evaluated by trapezoidal quadrature — no density estimation, no
+    doubling). Evaluated by trapezoidal quadrature - no density estimation, no
     custom kernels, just GEMM and complex exponentials.
 
     Why this over VICReg
@@ -68,7 +68,7 @@ def sigreg_loss(
     satisfy both and still be badly non-Gaussian (bimodal, heavy-tailed).
     SIGReg constrains the whole distribution with a single hyperparameter, and
     the paper reports the objective correlating (r ~ 0.8) with downstream
-    accuracy — useful here because our val_loss is measured on held-out *series*
+    accuracy - useful here because our val_loss is measured on held-out *series*
     and tracks benchmark performance poorly.
 
     Directions are resampled every call: over many steps this covers the sphere,
@@ -146,14 +146,14 @@ def vicreg_loss(
        `reshape(-1, D)`, i.e. pooling the batch AND the patch-position axes.
        Different patch positions naturally differ, so positional diversity alone
        could satisfy the variance hinge while representations collapsed *at a
-       fixed position* — precisely the failure mode observed on noisy series.
+       fixed position* - precisely the failure mode observed on noisy series.
        With `per_position=True` the statistics are computed across the batch for
        each patch position separately, then averaged, so the hinge measures what
        it is supposed to measure.
 
     2. The `targets` half of the variance and covariance terms was computed on a
        detached tensor (targets come from the EMA encoder under no_grad), so it
-       contributed exactly zero gradient — half the regularizer was decorative
+       contributed exactly zero gradient - half the regularizer was decorative
        while still inflating the reported loss. The target terms are now
        computed under no_grad and returned as diagnostics only; only the
        predictions side enters the loss.
@@ -199,7 +199,7 @@ def vicreg_loss(
     # === Invariance (MSE) ===
     inv_loss = F.mse_loss(predictions, targets)
 
-    # === Variance / Covariance — predictions only (targets carry no gradient) ===
+    # === Variance / Covariance - predictions only (targets carry no gradient) ===
     var_loss = _variance_hinge(predictions)
     cov_loss = _covariance(predictions)
 
@@ -243,7 +243,7 @@ def jepa_loss(
     Anti-collapse used to be applied only to the *predictor output*. The
     representation we actually care about downstream is the online encoder's
     output, and it was never constrained directly. Pass `context_embeddings` to
-    regularize it — this is the tensor a linear probe or the forecasting decoder
+    regularize it - this is the tensor a linear probe or the forecasting decoder
     consumes.
 
     Args:
@@ -350,6 +350,7 @@ def jepa_loss(
     return (loss, components) if return_components else loss
 
 
+# No external call sites; kept per the no-delete policy.
 def representation_variance(embeddings: torch.Tensor) -> torch.Tensor:
     """
     Measure variance of representations (to detect collapse).
@@ -369,6 +370,7 @@ def representation_variance(embeddings: torch.Tensor) -> torch.Tensor:
     return variance
 
 
+# No external call sites; kept per the no-delete policy.
 def representation_std(embeddings: torch.Tensor) -> torch.Tensor:
     """Standard deviation of representations."""
     if embeddings.ndim == 3:
@@ -378,6 +380,7 @@ def representation_std(embeddings: torch.Tensor) -> torch.Tensor:
     return std
 
 
+# No external call sites; kept per the no-delete policy.
 def cosine_similarity_matrix(
     embeddings1: torch.Tensor,
     embeddings2: Optional[torch.Tensor] = None
@@ -416,7 +419,7 @@ def compute_pretrain_metrics(
     # Main loss
     metrics['loss/mse'] = jepa_loss(predictions, targets, loss_type='mse').item()
     
-    # VICReg components (pour monitoring même si pas utilisé dans la loss)
+    # VICReg components (for monitoring even when not used in the loss)
     vicreg_result = vicreg_loss(predictions, targets)
     metrics['vicreg/invariance'] = vicreg_result['invariance'].item()
     metrics['vicreg/variance'] = vicreg_result['variance'].item()
@@ -508,8 +511,9 @@ def huber(predictions: torch.Tensor, targets: torch.Tensor, delta: float = 1.0) 
     return F.huber_loss(predictions, targets, reduction='mean', delta=delta)
 
 
+# No external call sites; kept per the no-delete policy.
 def r2_score(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-    """R² (coefficient of determination)."""
+    """R^2 (coefficient of determination)."""
     ss_res = torch.sum((targets - predictions) ** 2)
     ss_tot = torch.sum((targets - torch.mean(targets)) ** 2)
     return 1 - ss_res / (ss_tot + 1e-8)
@@ -567,7 +571,7 @@ def mase(
     Pooled is the default because the per-window form is numerically unstable on
     real data: a window whose seasonal difference is ~0 (flat or constant
     segments, which ETTm2 and electricity both contain) produces a ratio of
-    ~1/eps and single-handedly dominates the average. Observed in practice —
+    ~1/eps and single-handedly dominates the average. Observed in practice -
     per-window MASE on ETTm2 returned ~1e4 for every model AND for seasonal
     naive itself, which is obviously meaningless. Pooling makes those windows
     contribute proportionally to their actual error instead of exploding.
@@ -579,7 +583,7 @@ def mase(
     Args:
         predictions: [B, H] or [B, H, C]
         targets:     [B, H] or [B, H, C]
-        context:     [B, L] or [B, L, C] — the history the forecast was made from
+        context:     [B, L] or [B, L, C] - the history the forecast was made from
         season_length: Seasonal period m (see utils.baselines.get_seasonality)
         aggregate: 'pooled' | 'per_series'
 
@@ -655,19 +659,19 @@ def weighted_quantile_loss(
     eps: float = 1e-8,
 ) -> torch.Tensor:
     """
-    Weighted Quantile Loss (WQL) — the CRPS proxy GIFT-Eval ranks on.
+    Weighted Quantile Loss (WQL) - the CRPS proxy GIFT-Eval ranks on.
 
         WQL = mean_q [ sum_i QL_q(y_i, y_hat_{q,i}) ] / sum_i |y_i|
 
     Args:
-        quantile_predictions: [Q, B, H, ...] — one forecast per quantile level,
+        quantile_predictions: [Q, B, H, ...] - one forecast per quantile level,
             OR [B, H, ...] for a point forecast (broadcast to every level).
         targets: [B, H, ...]
         quantile_levels: list of Q levels, default = [0.1, 0.2, ..., 0.9]
 
     Note:
         With a point forecast the result collapses to `nd()` exactly. That is
-        the honest score for a deterministic model — it is what TimeJEPA would
+        the honest score for a deterministic model - it is what TimeJEPA would
         get on GIFT-Eval today, and it is why a quantile head (P2.1) is a
         prerequisite for competing there rather than a nice-to-have.
     """

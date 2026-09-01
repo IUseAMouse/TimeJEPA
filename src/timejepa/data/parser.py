@@ -220,7 +220,7 @@ def save_processed_data(
     if compress:
         np.savez_compressed(output_path.with_suffix('.npz'), data=final_data)
     else:
-        np.save(output_path, final_data)  # ← FIX ICI : sauve juste l'array
+        np.save(output_path, final_data)  # save just the array
     
     logger.info(f"Saved to {output_path}")
     

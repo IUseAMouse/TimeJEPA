@@ -1,6 +1,6 @@
 # @package _global_
 #
-# ARM PATCH 32/16 du round géométrie. Identique à tiny_geo sauf le patching.
+# PATCH 32/16 ARM of the geometry round. Identical to tiny_geo except patching.
 #
 #   python scripts/train.py    --config-name tiny_geo_p32 wandb.run_name=geo-p32
 #   python scripts/train.py    --config-name tiny_geo_p32 training.mode=finetune \
@@ -8,22 +8,22 @@
 #   python scripts/evaluate.py --config-name tiny_geo_p32 \
 #       +checkpoint_path=checkpoints/timejepa_tiny_geo_p32/pretrain_False/<ckpt>
 #
-# Pourquoi une config plutôt que deux overrides
+# Why a config rather than two overrides
 # ---------------------------------------------
-# `model.patch_length=32 model.stride=16` devait être répété sur CHAQUE commande
-# de l'arm — train, finetune, éval, balayage de contexte. Un oubli au finetune
-# lève une RuntimeError (bruyant, récupérable) ; un oubli à l'ÉVAL ne fait que
-# warner "re-initialising patching.*" et sort des chiffres silencieusement faux,
-# produits par une couche de patching réinitialisée sous un encodeur entraîné.
-# Une config nommée supprime la classe d'erreur.
+# `model.patch_length=32 model.stride=16` had to be repeated on EVERY command
+# of the arm - train, finetune, eval, context sweep. Forgetting it at finetune
+# raises a RuntimeError (loud, recoverable); forgetting it at EVAL only warns
+# "re-initialising patching.*" and outputs silently wrong numbers, produced by
+# a reinitialized patching layer under a trained encoder. A named config
+# removes the error class.
 #
-# La question tranchée par cet arm
+# The question this arm settles
 # --------------------------------
-# 63 tokens à ctx 1024 au lieu de 127 : ~4x moins d'attention. La comparaison
-# patch16/patch32 n'a jamais été propre (2e vs 3e batch différaient aussi par
-# tout le bundle P1 et par ftall) ; ici les deux arms ne diffèrent QUE par le
-# patch. Enjeu réel : si patch32 égale patch16, l'entraînement à l'échelle LOTSA
-# coûte 4x moins cher — à savoir avant de payer G5.
+# 63 tokens at ctx 1024 instead of 127: ~4x less attention. The
+# patch16/patch32 comparison was never clean (2nd vs 3rd batch also differed
+# by the whole P1 bundle and by ftall); here the two arms differ ONLY by the
+# patch. Real stake: if patch32 matches patch16, LOTSA-scale training costs
+# 4x less - worth knowing before paying for G5.
 defaults:
   - tiny_geo
   - _self_

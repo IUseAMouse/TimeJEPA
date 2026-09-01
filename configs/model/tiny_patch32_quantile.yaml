@@ -1,40 +1,39 @@
 # @package _global_
 #
-# P2.1 — tête quantile (option B : décodeur alimenté par le contexte)
+# P2.1 - quantile head (decoder fed by the context)
 #
-# FINETUNE UNIQUEMENT. Ne change que le décodeur, donc réutilise tel quel le
-# checkpoint de pretrain existant — aucun pretrain à relancer. À comparer au
-# finetune Huber lancé depuis le MÊME checkpoint.
+# FINETUNE ONLY. Only changes the decoder, so it reuses the existing pretrain
+# checkpoint as is - no pretrain to rerun. To compare against the Huber
+# finetune launched from the SAME checkpoint.
 #
 #   python scripts/train.py --config-name tiny_patch32_quantile \
 #       training.mode=finetune \
-#       +training.pretrained_encoder_path=<le même ckpt de pretrain> \
+#       +training.pretrained_encoder_path=<the same pretrain ckpt> \
 #       wandb.run_name=p2-quantile
 #
-# Pourquoi non paramétrique
+# Why non-parametric
 # -------------------------
-# GIFT-Eval classe sur le CRPS, approximé par le WQL — qui EST une moyenne de
-# pinball sur une grille de quantiles. Prédire la grille optimise donc la
-# métrique de classement sans intermédiaire. Et aucune forme de loi n'est
-# imposée : les datasets sur lesquels on perd (exchange, bitcoin, ETTm) sont
-# bruités, asymétriques, à queues lourdes.
+# GIFT-Eval ranks on CRPS, approximated by WQL - which IS an average of
+# pinball over a quantile grid. Predicting the grid therefore optimizes the
+# ranking metric directly. And no distribution shape is imposed: the datasets
+# we lose on (exchange, bitcoin, ETTm) are noisy, asymmetric, heavy-tailed.
 #
-# Bénéfice de bord sur MASE : elle est basée sur la MAE, minimisée par la
-# MÉDIANE. Huber donne quelque chose entre moyenne et médiane ; le pinball donne
-# la médiane conditionnelle exacte en q=0.5.
+# Side benefit on MASE: it is based on MAE, minimized by the MEDIAN. Huber
+# gives something between mean and median; pinball gives the exact conditional
+# median at q=0.5.
 #
-# Pourquoi le contexte alimente le décodeur (B plutôt que A)
+# Why the context feeds the decoder (B rather than A)
 # ----------------------------------------------------------
-# Le prédicteur est entraîné sous MSE contre le latent cible : il converge vers
-# E[z_cible | z_contexte], une moyenne conditionnelle par construction (mesuré
-# en run réel : pred_var 0.6 contre target_var 0.95). L'information de
-# dispersion vit dans le résidu, que le modèle ne voit jamais à l'inférence.
-# Deux contextes de même moyenne conditionnelle mais de volatilités différentes
-# peuvent donc se projeter au même endroit. La cross-attention vers les
-# embeddings de contexte redonne au décodeur l'accès direct à cette signature.
+# The predictor is trained under MSE against the target latent: it converges
+# to E[z_target | z_context], a conditional mean by construction (measured on
+# a real run: pred_var 0.6 vs target_var 0.95). The dispersion information
+# lives in the residual, which the model never sees at inference. Two contexts
+# with the same conditional mean but different volatilities can thus project
+# to the same place. Cross-attention to the context embeddings gives the
+# decoder direct access to that signature again.
 #
-# `scripts/probe_uncertainty.py` mesure, sur un checkpoint donné, si ça apporte
-# réellement quelque chose — à lancer avant, pour savoir ce qu'on attend.
+# `scripts/probe_uncertainty.py` measures, on a given checkpoint, whether this
+# actually brings something - run it first, to know what to expect.
 defaults:
   - tiny_patch32_ftall
   - _self_
@@ -46,8 +45,8 @@ model:
 
 training:
   loss:
-    # Ignoré quand le décodeur est probabiliste : la loss devient le pinball sur
-    # toute la grille. Le laisser explicite évite de croire que Huber s'applique.
+    # Ignored when the decoder is probabilistic: the loss becomes pinball over
+    # the whole grid. Keeping it explicit avoids believing Huber applies.
     finetune_type: "huber"
 
 wandb:

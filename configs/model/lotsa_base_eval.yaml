@@ -1,24 +1,24 @@
 # @package _global_
 #
-# G5 — ÉVALUATION ZERO-SHOT, échelle base.
+# G5 - ZERO-SHOT EVALUATION, base scale.
 #
 #   python scripts/evaluate.py --config-name lotsa_base_eval \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_base_zs/pretrain_False/<ckpt>
 #
-# Géométrie et capacité du modèle entraîné, mais données d'ÉVALUATION (corpus
-# Monash). Ni `lotsa_base` ni `lotsa_base_zeroshot` ne conviennent : leur
-# `data_dir` pointe sur LOTSA, donc la section « datasets locaux » porterait sur
-# le corpus d'entraînement.
+# Geometry and capacity of the trained model, but EVALUATION data (Monash
+# corpus). Neither `lotsa_base` nor `lotsa_base_zeroshot` fits: their
+# `data_dir` points to LOTSA, so the "local datasets" section would run on
+# the training corpus.
 #
-# ⚠️ Comme pour `lotsa_tiny_eval` : la section « Nixtla » est intégralement
-# zero-shot, la section « Local datasets » ne l'est pas pour sept entrées
+# WARNING - as for `lotsa_tiny_eval`: the "Nixtla" section is fully
+# zero-shot, the "Local datasets" section is not for seven entries
 # (london-smart-meters, bitcoin, wind-farms-minutely, rideshare, fred-md,
-# sunspot-daily, melbourne-pedestrian-count) qui ont un équivalent RETENU dans
-# LOTSA. Ce sont les chiffres Nixtla qui sont publiables.
+# sunspot-daily, melbourne-pedestrian-count) which have a KEPT equivalent in
+# LOTSA. The Nixtla numbers are the publishable ones.
 #
-# Un test verrouille l'identité de géométrie ET de capacité avec
-# `lotsa_base_zeroshot` : à l'évaluation une forme incompatible ne fait que
-# WARNER avant de sortir des chiffres silencieusement faux.
+# A test locks the identity of geometry AND capacity with
+# `lotsa_base_zeroshot`: at evaluation an incompatible shape only WARNS
+# before outputting silently wrong numbers.
 defaults:
   - tiny_geo
   - _self_

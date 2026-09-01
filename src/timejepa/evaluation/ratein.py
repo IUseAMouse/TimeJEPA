@@ -1,41 +1,39 @@
 """
-RateIN — canonicalisation du taux d'échantillonnage à l'inférence.
+RateIN - sampling-rate canonicalization at inference.
 
-Décision 2026-08-31 (verdict de prémisse G9.3) : les deux modèles sub-3M qui
-nous battent traitent l'échelle temporelle À L'ENTRÉE — FlowState ajuste son
-pas interne par la saisonnalité fournie, TinyCast détecte la période par FFT
-(zéro paramètre) et réaligne. Notre loi interne E1 dit la même chose : la
-compétence suit le NOMBRE DE CYCLES vus dans le contexte (bande de
-fonctionnement ~16-48 pas/cycle, soit 2-6 positions de patch), et
-l'interpolation d'entrée est catastrophique (ECL ×4 : skill −136 %). D'où :
+Decision 2026-08-31 (G9.3 premise verdict): the two sub-3M models that beat
+us handle time scale AT THE INPUT - FlowState adjusts its internal step from
+the provided seasonality, TinyCast detects the period by FFT (zero
+parameters) and realigns. Our internal law E1 says the same: skill tracks the
+NUMBER OF CYCLES seen in the context (operating band ~16-48 steps/cycle, i.e.
+2-6 patch positions), and input interpolation is catastrophic (ECL x4:
+skill -136%). Hence:
 
-  * détection de période CAUSALE (rfft + test de Fisher, zéro paramètre —
-    même statut de fairness que la médiane/MAD de RobustScale : une
-    statistique du contexte, une règle uniforme pour les 97 configs) ;
-  * DÉCIMATION SEULE vers la bande [16, 48] pas/cycle (jamais k<1 : on ne
-    fabrique pas de points) ;
-  * forecast à h' = ceil(h/k) sur la grille décimée (bonus : moins de
-    rollouts sur les configs long-terme haute fréquence), puis
-    ré-interpolation du fan complet vers la grille native.
+  * CAUSAL period detection (rfft + Fisher test, zero parameters - same
+    fairness status as RobustScale's median/MAD: a context statistic, one
+    uniform rule for the 97 configs);
+  * DECIMATION ONLY toward the [16, 48] steps/cycle band (never k<1: we do
+    not fabricate points);
+  * forecast at h' = ceil(h/k) on the decimated grid (bonus: fewer rollouts
+    on high-frequency long-term configs), then reinterpolation of the full
+    fan to the native grid.
 
-k=1 (défaut, et choix du détecteur sur toute série sans pic significatif ou
-déjà dans la bande) = chemin d'éval STRICTEMENT identique — épinglé par test.
-C'est aussi le test de falsification le moins cher de l'hypothèse xres : si
-même l'oracle-k ne gagne rien, la géométrie d'échelle n'est pas le mécanisme
-de la queue.
+k=1 (default, and the detector's choice on any series without a significant
+peak or already in the band) = STRICTLY identical eval path - pinned by test.
+It is also the cheapest falsification test of the xres hypothesis: if even
+oracle-k gains nothing, scale geometry is not the mechanism of the tail.
 """
 
 from typing import Optional
 
 import numpy as np
 
-# Bande de fonctionnement cible en pas/période (E1 : 2-6 positions de patch
-# à stride 8). Le k choisi est le PLUS PETIT facteur qui y ramène la période.
-# La grille monte à 48 : un cycle journalier vu en minutes (période 1440)
-# demande k≈32 ; à k élevé l'historique disponible borne de lui-même le
-# contexte effectif (decimate prend ce qu'il y a — le modèle est
-# longueur-agnostique). Le repli ne passe JAMAIS sous la bande (on ne
-# sur-décime pas un cycle).
+# Target operating band in steps/period (E1: 2-6 patch positions at stride
+# 8). The chosen k is the SMALLEST factor that brings the period into it.
+# The grid goes up to 48: a daily cycle seen in minutes (period 1440) needs
+# k~32; at high k the available history bounds the effective context by
+# itself (decimate takes what there is - the model is length-agnostic). The
+# fallback NEVER goes below the band (we do not over-decimate a cycle).
 BAND_LO, BAND_HI = 16, 48
 K_CANDIDATES = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48)
 
@@ -43,14 +41,14 @@ K_CANDIDATES = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48)
 def detect_period(history: np.ndarray, max_window: int = 8192,
                   alpha: float = 0.05,
                   min_period: int = 16) -> Optional[int]:
-    """Période dominante des `max_window` derniers points, ou None.
+    """Dominant period of the last `max_window` points, or None.
 
-    Test de significativité de Fisher sur le périodogramme (g-statistic),
-    seuil Bonferroni sur le nombre de fréquences testées — le protocole
-    TinyCast, conservateur par construction : sur du bruit blanc, la
-    probabilité de détection est ~alpha, et sans détection k restera 1.
-    Exigences : >= 2 périodes complètes dans la fenêtre, période >= min_period
-    (en deçà, la bande [16,48] est déjà atteinte, inutile de décimer).
+    Fisher significance test on the periodogram (g-statistic), Bonferroni
+    threshold on the number of tested frequencies - the TinyCast protocol,
+    conservative by construction: on white noise, the detection probability
+    is ~alpha, and without detection k stays 1. Requirements: >= 2 full
+    periods in the window, period >= min_period (below that, the [16,48]
+    band is already reached, no point decimating).
     """
     x = np.asarray(history, dtype=np.float64)
     x = x[np.isfinite(x)]
@@ -63,27 +61,27 @@ def detect_period(history: np.ndarray, max_window: int = 8192,
         return None
 
     spec = np.abs(np.fft.rfft(x)) ** 2
-    spec = spec[1:]                                    # sans la composante DC
+    spec = spec[1:]                                    # drop the DC component
     freqs_idx = np.arange(1, len(spec) + 1)
     periods = n / freqs_idx
-    # candidates : au moins 2 périodes complètes, et période >= min_period
+    # candidates: at least 2 full periods, and period >= min_period
     valid = (periods <= n / 2) & (periods >= min_period)
     if not valid.any():
         return None
     m = int(valid.sum())
     g = spec[valid] / spec[valid].sum()
-    # Seuil de Fisher (approximation premier terme) : g* tel que
-    # m·(1−g*)^(m−1) = alpha. Appliqué à TOUS les pics (conservateur), et on
-    # retient la PLUS PETITE période significative, pas la plus forte —
-    # mesuré au smoke (2026-08-31) : sur electricity/H, le pic dominant est
-    # l'hebdo (168 → k=6) et décimer détruit la structure intra-journalière
-    # que le modèle exploitait ; si un cycle significatif vit déjà dans la
-    # bande, la bonne décision est k=1.
+    # Fisher threshold (first-term approximation): g* such that
+    # m*(1-g*)^(m-1) = alpha. Applied to ALL peaks (conservative), and we
+    # keep the SMALLEST significant period, not the strongest - measured at
+    # the smoke (2026-08-31): on electricity/H, the dominant peak is weekly
+    # (168 -> k=6) and decimating destroys the intra-day structure the model
+    # was exploiting; if a significant cycle already lives in the band, the
+    # right decision is k=1.
     g_star = 1.0 - (alpha / m) ** (1.0 / (m - 1))
-    # Maxima locaux seulement : la fuite spectrale d'un pic vrai éclabousse
-    # les bins voisins au-dessus du seuil, et « la plus petite période
-    # significative » deviendrait un lobe (mesuré : sinusoïde P=96 détectée
-    # 93). Un lobe n'est pas un maximum local du périodogramme.
+    # Local maxima only: spectral leakage of a true peak splashes neighboring
+    # bins above the threshold, and "the smallest significant period" would
+    # become a lobe (measured: P=96 sinusoid detected as 93). A lobe is not a
+    # local maximum of the periodogram.
     gp = np.concatenate(([0.0], g, [0.0]))
     local_max = (g >= gp[:-2]) & (g >= gp[2:])
     sig = (g >= g_star) & local_max
@@ -93,22 +91,22 @@ def detect_period(history: np.ndarray, max_window: int = 8192,
 
 
 def choose_k(period: Optional[int]) -> int:
-    """Plus petit k qui ramène period/k dans [BAND_LO, BAND_HI] ; 1 sinon."""
+    """Smallest k that brings period/k into [BAND_LO, BAND_HI]; 1 otherwise."""
     if period is None or period <= BAND_HI:
         return 1
     for k in K_CANDIDATES:
         if BAND_LO <= period / k <= BAND_HI:
             return k
-    # période énorme sans k exact dans la grille : prendre le plus grand k
-    # qui ne passe pas SOUS la bande (jamais sur-décimer un cycle).
+    # huge period with no exact k in the grid: take the largest k that does
+    # not go BELOW the band (never over-decimate a cycle).
     fallback = [k for k in K_CANDIDATES if period / k >= BAND_LO]
     return fallback[-1] if fallback else 1
 
 
 def decimate(x: np.ndarray, k: int) -> np.ndarray:
-    """Mean-pool par blocs de k, ALIGNÉ À DROITE (le dernier point du dernier
-    bloc est le dernier point de la série — l'origine du forecast ne bouge
-    pas) ; l'excédent de gauche est tronqué."""
+    """Mean-pool in blocks of k, RIGHT-ALIGNED (the last point of the last
+    block is the last point of the series - the forecast origin does not
+    move); the left excess is truncated."""
     if k == 1:
         return x
     n = (len(x) // k) * k
@@ -116,12 +114,13 @@ def decimate(x: np.ndarray, k: int) -> np.ndarray:
 
 
 def reinterp_fan(fan_dec: np.ndarray, h: int, k: int) -> np.ndarray:
-    """[h', Q] sur grille décimée -> [h, Q] sur grille native.
+    """[h', Q] on the decimated grid -> [h, Q] on the native grid.
 
-    Le bloc décimé i couvre les pas natifs [i·k, (i+1)·k) ; sa valeur est
-    posée au CENTRE du bloc (i·k + (k−1)/2) et chaque niveau de quantile est
-    interpolé linéairement entre centres (extrapolation constante aux bords).
-    La monotonie des niveaux survit : combinaison convexe de vecteurs triés.
+    Decimated block i covers native steps [i*k, (i+1)*k); its value is placed
+    at the CENTER of the block (i*k + (k-1)/2) and each quantile level is
+    linearly interpolated between centers (constant extrapolation at the
+    edges). Level monotonicity survives: convex combination of sorted
+    vectors.
     """
     if k == 1:
         return fan_dec[:h]

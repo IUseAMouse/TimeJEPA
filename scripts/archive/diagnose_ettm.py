@@ -1,3 +1,4 @@
+# ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
 Diagnostic: is the ETTm failure about patch size, or about frequency coverage?
 
@@ -165,7 +166,7 @@ def main():
 
     print("\nReading:")
     print("  Skill rising with context length, at constant patch-positions/cycle,")
-    print("  means the driver is HOW MANY CYCLES FIT IN THE CONTEXT — not patch size,")
+    print("  means the driver is HOW MANY CYCLES FIT IN THE CONTEXT - not patch size,")
     print("  and not which frequencies were in the pretrain corpus.")
 
 

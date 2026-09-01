@@ -42,7 +42,7 @@ datasets:
     expected_files: ["*.tsf"]
     frequency: "half-hourly"
   
-  # Datasets additionnels recommandés
+  # Additional recommended datasets
   m4-hourly:
     url: "https://zenodo.org/records/4656589/files/m4_hourly_dataset.zip?download=1"
     description: "M4 competition hourly - 414 series"

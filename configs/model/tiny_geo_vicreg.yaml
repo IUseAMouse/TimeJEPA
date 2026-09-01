@@ -1,6 +1,6 @@
 # @package _global_
 #
-# ARM VICReg du round géométrie. Identique à tiny_geo sauf la loss de pretrain.
+# VICReg ARM of the geometry round. Identical to tiny_geo except the pretrain loss.
 #
 #   python scripts/train.py    --config-name tiny_geo_vicreg wandb.run_name=geo-vicreg
 #   python scripts/train.py    --config-name tiny_geo_vicreg training.mode=finetune \
@@ -8,24 +8,25 @@
 #   python scripts/evaluate.py --config-name tiny_geo_vicreg \
 #       +checkpoint_path=checkpoints/timejepa_tiny_geo_vicreg/pretrain_False/<ckpt>
 #
-# L'ablation P1.11, jamais terminée : SIGReg n'a été comparé à rien.
+# The P1.11 ablation, never finished: SIGReg was compared to nothing.
 # ------------------------------------------------------------------
-# Et c'est la PREMIÈRE FOIS que le VICReg corrigé s'entraîne réellement. Tous
-# les anciens checkpoints "VICReg" tournaient avec la version poolée (variance
-# calculée après reshape(-1, D), aveugle au collapse positionnel : 0.0000 vs
-# 0.9990 mesuré) ET des poids variance/covariance à 0.0 — c'est-à-dire une MSE
-# pure. Cet arm teste le vrai VICReg : per-position, 25/15/1, régularisation
-# des embeddings d'encodeur.
+# And this is the FIRST TIME the corrected VICReg actually trains. All the old
+# "VICReg" checkpoints ran with the pooled version (variance computed after
+# reshape(-1, D), blind to positional collapse: 0.0000 vs 0.9990 measured) AND
+# variance/covariance weights at 0.0 - that is, pure MSE. This arm tests the
+# real VICReg: per-position, 25/15/1, regularization of the encoder
+# embeddings.
 #
-# Ce que les courbes doivent dire
+# What the curves must say
 # -------------------------------
-# `train_vicreg/variance` quasi nul = aucune pression de collapse, tant mieux ;
-# une hinge qui travaille fort = information que SIGReg ne donnait pas.
-# À croiser avec `collapse/effective_rank` (calibration : 3.7-4.8 à l'init sur
-# signal réel, PAS 128 — l'alarme est l'approche de 1.0) et `collapse/context_std`.
+# `train_vicreg/variance` near zero = no collapse pressure, good; a hinge
+# working hard = information SIGReg was not giving. Cross-check with
+# `collapse/effective_rank` (calibration: 3.7-4.8 at init on real signal, NOT
+# 128 - the alarm is approaching 1.0) and `collapse/context_std`.
 #
-# ⚠️ Les val_loss des trois arms ne sont PAS comparables entre elles (objectifs
-# différents). L'arbitrage se fait sur l'éval downstream, mêmes commandes.
+# WARNING: the three arms' val_loss are NOT comparable to each other
+# (different objectives). Arbitration happens on the downstream eval, same
+# commands.
 defaults:
   - tiny_geo
   - _self_

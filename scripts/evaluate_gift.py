@@ -1,11 +1,10 @@
-#!/usr/bin/env python
 """
-GIFT-Eval harness — evaluates a TimeJEPA checkpoint on the official 97 configs.
+GIFT-Eval harness - evaluates a TimeJEPA checkpoint on the official 97 configs.
 
     # 1. download the benchmark data (once, ~a few GB)
     make gift-download
 
-    # 2. run (CPU is fine for the tiny models — that is their point)
+    # 2. run (CPU is fine for the tiny models - that is their point)
     python scripts/evaluate_gift.py --config-name lotsa_tiny_eval \\
         +checkpoint_path=checkpoints/timejepa_lotsa_tiny_zs/pretrain_False/<ckpt>
 
@@ -15,7 +14,7 @@ GIFT-Eval harness — evaluates a TimeJEPA checkpoint on the official 97 configs
     #   +gift_max_series=50                                    debug subsample
 
 The protocol lives in src/timejepa/evaluation/gift.py, transcribed constant by
-constant from the official harness — read its module docstring before touching
+constant from the official harness - read its module docstring before touching
 anything here. This script only does the plumbing: batching contexts, calling
 `model.forecast`, streaming instances into the metric accumulators, and writing
 three artifacts under evaluation/<model>/<ckpt>/gift/:
@@ -73,7 +72,7 @@ def prepare_context(past: np.ndarray, max_len: int, stride: int,
     Turn a raw past into a model-ready context.
 
     * keep the most recent `max_len` points (the model's trained maximum);
-    * NaNs are linearly interpolated (edge-filled at the ends) — model INPUT
+    * NaNs are linearly interpolated (edge-filled at the ends) - model INPUT
       only, targets are never imputed;
     * truncate FROM THE LEFT to a multiple of `stride`: Patching would
       otherwise right-pad by repeating the final value, i.e. fabricate
@@ -98,18 +97,18 @@ def prepare_context(past: np.ndarray, max_len: int, stride: int,
 
 
 # ---------------------------------------------------------------------------
-# TTA — procédures d'inférence UNIFORMES sur les 97 configs (roadmap S1.5,
-# décision utilisateur 2026-08-24 : TTA oui / multi-checkpoints non).
-# Un seul checkpoint ; chaque variante est une transformation déterministe du
-# contexte, identique pour toutes les configs — pas d'adaptation par config.
+# TTA - inference procedures UNIFORM across the 97 configs (roadmap S1.5,
+# decision 2026-08-24: TTA yes / multi-checkpoints no).
+# Single checkpoint; each variant is a deterministic transform of the context,
+# identical for all configs - no per-config adaptation.
 # ---------------------------------------------------------------------------
 
 def _negated(out: dict) -> dict:
-    """Miroir par inversion de signe : q_k(-X) = -q_{1-k}(X) — la médiane se
-    nie, le fan se nie ET se renverse sur l'axe des niveaux (l'ordre croissant
-    est préservé). Précédents : TimesFM `force_flip_invariance`, YingLong.
-    Bien défini sous arcsinh/RevIN : les deux repères sont impairs autour de
-    leur centre (médiane/moyenne du contexte nié = négation du centre)."""
+    """Sign-flip mirror: q_k(-X) = -q_{1-k}(X). The median negates; the fan
+    negates AND reverses along the level axis (ascending order preserved).
+    Precedents: TimesFM `force_flip_invariance`, YingLong. Well defined under
+    arcsinh/RevIN: both frames are odd around their center (median/mean of the
+    negated context = negation of the center)."""
     res = {"forecast_denorm": -out["forecast_denorm"]}
     q = out.get("quantiles_denorm")
     if q is not None:
@@ -124,25 +123,24 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
                  lookbacks=None, flip: bool = False, shifts=None,
                  w=None) -> dict:
     """
-    Moyenne de variantes d'inférence du MÊME checkpoint :
-      * multi-lookback : le contexte tronqué à L' pour chaque L' de `lookbacks`
-        (borné à la longueur disponible, aligné sur le stride) ;
-      * miroir sign-flip optionnel sur chaque variante ;
-      * `shifts` (2026-08-25, idée utilisateur — équivariance de translation) :
-        pour chaque s, une variante prévoit depuis l'origine t−s (les s points
-        les plus récents retirés, longueur ré-alignée sur le stride → la PHASE
-        du grid de patchs change) ; sa prévision est RÉALIGNÉE sur l'horizon
-        (l'indice p+s−1 de la variante = la position p de l'horizon) et
-        moyennée par position avec masque de couverture (les s dernières
-        positions ne sont couvertes que par les variantes moins décalées).
-        Recommandé : s petits (1..7 = moins d'un patch de péremption).
-    NB théorique (testé, pas seulement affirmé) : la variante d'échelle
-    f(kx)/k est un NO-OP EXACT sous RobustScale+RevIN (médiane et MAD sont
-    1-homogènes → entrée normalisée bit-identique) — le seul élément du groupe
-    affine non quotienté par la normalisation est le SIGNE, c'est le flip.
-    Les fans sont moyennés niveau à niveau (la moyenne pondérée de vecteurs
-    triés reste triée) ; la médiane est relue dans le fan moyenné.
-    Sans options : strictement équivalent à model.forecast.
+    Average of inference variants of the SAME checkpoint:
+      * multi-lookback: context truncated to L' for each L' in `lookbacks`
+        (capped to available length, stride-aligned);
+      * optional sign-flip mirror on each variant;
+      * `shifts` (2026-08-25, translation equivariance): for each
+        s, a variant forecasts from origin t-s (the s most recent points
+        removed, length re-aligned on the stride, so the patch-grid PHASE
+        changes); its forecast is REALIGNED onto the horizon (variant index
+        p+s-1 = horizon position p) and averaged per position with a coverage
+        mask (the last s positions are only covered by less-shifted variants).
+        Recommended: small s (1..7 = less than one patch of staleness).
+    Theory note (tested, not just asserted): the scale variant f(kx)/k is an
+    EXACT NO-OP under RobustScale+RevIN (median and MAD are 1-homogeneous, so
+    the normalized input is bit-identical) - the only affine-group element not
+    quotiented out by normalization is the SIGN, hence the flip.
+    Fans are averaged level by level (a weighted mean of sorted vectors stays
+    sorted); the median is re-read from the averaged fan.
+    With no options: strictly equivalent to model.forecast.
     """
     L = batch.shape[1]
     stride = model.patching.stride
@@ -151,27 +149,29 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
                     if min(int(lb), L) >= model.patching.patch_size})
     if not looks:
         looks = [L]
-    # s >= h : la variante décalée ne couvrirait AUCUNE position de l'horizon
-    # (mesuré : m4_yearly a h=6 — un shift de 7 cassait l'alignement).
+    # s >= h: the shifted variant would cover NO horizon position at all
+    # (measured: m4_yearly has h=6 - a shift of 7 broke the alignment).
     shift_list = [0] + sorted({int(s) for s in (shifts or [])
                                if 0 < int(s) < h})
 
-    outs = []                                  # (sortie, décalage s)
+    outs = []                                  # (output, shift s)
     for lb in looks:
         for s in shift_list:
             ctx = batch[:, -lb:L - s if s else None] if s else batch[:, -lb:]
-            # ré-alignement stride : tronquer À GAUCHE (jamais à droite — le
-            # padding de Patching fabriquerait des points après l'origine)
+            # stride re-alignment: trim on the LEFT (never on the right -
+            # Patching's padding would fabricate points after the origin)
             trim = ctx.shape[1] % stride
             if trim:
                 ctx = ctx[:, trim:]
             if ctx.shape[1] < model.patching.patch_size:
                 continue
-            # w (RateIN x w) : le taux est invariant par négation -> même w
-            # sur la variante miroir.
-            outs.append((model.forecast(ctx, n=h, w=w), s))
+            # w (RateIN x w): the rate is invariant under negation -> same w
+            # on the mirrored variant. Only forwarded when set, so test
+            # doubles without a w kwarg keep working.
+            kw = {} if w is None else {"w": w}
+            outs.append((model.forecast(ctx, n=h, **kw), s))
             if flip:
-                outs.append((_negated(model.forecast(-ctx, n=h, w=w)), s))
+                outs.append((_negated(model.forecast(-ctx, n=h, **kw)), s))
 
     if len(outs) == 1:
         return outs[0][0]
@@ -188,7 +188,7 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
                 acc += v
                 cnt += 1.0
             else:
-                # indices s..h−1 de la variante ↔ positions 0..h−s−1
+                # variant indices s..h-1 map to horizon positions 0..h-s-1
                 acc[:, :h - s] += v[:, s:]
                 cnt[:h - s] += 1.0
         shape = [1, h] + [1] * (ref.dim() - 2)
@@ -214,16 +214,16 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
 
 def apply_quantile_gamma(out: dict, gamma) -> dict:
     """
-    G4.2 — calibration conforme uniforme : q'_k = med + gamma_k · (q_k − med).
+    G4.2 - uniform conformal calibration: q'_k = med + gamma_k * (q_k - med).
 
-    gamma [Q] vient de scripts/calibrate_quantiles.py (corpus de FINETUNE,
-    jamais GIFT — un seul vecteur pour les 97 configs, doctrine mono-checkpoint).
-    La médiane est intouchable par construction (gamma_0.5 = 1 et le point
-    forecast n'est pas modifié) : MASE bit-identique, tout delta est du CRPS.
-    gamma > 0 préserve la monotonie des quantiles. Appliqué APRÈS la moyenne
-    TTA (la calibration est faite sous la même procédure) ; l'enveloppe G8.4b
-    a déjà borné les quantiles en amont — l'élargissement peut la dépasser
-    marginalement (gamma ≲ 2 contre une enveloppe à ±10·range : accepté).
+    gamma [Q] comes from scripts/calibrate_quantiles.py (FINETUNE corpus,
+    never GIFT - one vector for all 97 configs, single-checkpoint doctrine).
+    The median is untouched by construction (gamma_0.5 = 1 and the point
+    forecast is unchanged): MASE bit-identical, any delta is CRPS.
+    gamma > 0 preserves quantile monotonicity. Applied AFTER the TTA average
+    (calibration was done under the same procedure); the G8.4b envelope
+    already bounded the quantiles upstream - widening can exceed it slightly
+    (gamma ~< 2 against a +-10*range envelope: accepted).
     """
     q = out.get("quantiles_denorm")
     if q is None or gamma is None:
@@ -240,7 +240,7 @@ def apply_quantile_gamma(out: dict, gamma) -> dict:
 
 
 def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
-    """Pinball moyenne (convention GluonTS x2 sans effet sur l'argmin)."""
+    """Mean pinball loss (GluonTS x2 convention, no effect on the argmin)."""
     d = y[:, None] - fan
     q = np.asarray(levels, dtype=np.float64)
     return float(np.mean(np.maximum(q * d, (q - 1.0) * d)))
@@ -249,50 +249,47 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
 def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        stride: int, patch: int, device,
                        batch_size: int) -> dict:
-    """RateIN v2 (2026-09-01) — le k PAR SÉRIE, choisi par BACKTEST CAUSAL.
+    """RateIN v2 (2026-09-01) - per-series k chosen by CAUSAL BACKTEST.
 
-    Verdict oracle du 2026-08-31 : le mécanisme vaut jusqu'à +57 % par config
-    (34/91 > 5 %), mais le détecteur FFT v1 le rate sur les fréquences
-    grossières (il décime des D/W/M que l'oracle laisse à k=1) ET l'oracle
-    révèle un SECOND mécanisme que la période ne voit pas (collapse de
-    rollout : bizitobs/H gagne 40 % à k=16 sur un cycle de 24). Le backtest
-    capture les deux SANS métadonnée : pour chaque série, on retire les h_bt
-    derniers pas de son passé (jamais le test — la fenêtre rejouée précède la
-    première cible d'éval), on forecast chaque k candidat, et on garde le
-    meilleur pinball. Même logique que la calibration-T en contexte (E18h).
+    Oracle verdict 2026-08-31: the mechanism is worth up to +57% per config
+    (34/91 > 5%), but the v1 FFT detector misses coarse frequencies (it
+    decimates D/W/M configs the oracle leaves at k=1) and the oracle reveals
+    a SECOND mechanism the period cannot see (rollout collapse: bizitobs/H
+    gains 40% at k=16 on a cycle of 24). The backtest captures both WITHOUT
+    metadata: for each series, drop the last h_bt steps of its past (never
+    the test - the replayed window precedes the first eval target), forecast
+    each candidate k, keep the best pinball. Same logic as in-context
+    T-calibration (E18h).
 
-    v2.1 (2026-09-01, verdict du run v2 : capture 30 % de l'oracle) :
-    * h_bt = h RÉEL (plus de cap à 256) — le cap rendait le collapse de
-      rollout INVISIBLE à la sélection : à h_bt<=256, k=1 n'a jamais besoin
-      de rollout dans le backtest, donc les plus gros gains oracle (bizitobs
-      +40-56 % à k=16-24, h=480) ne pouvaient pas être vus. Le backtest doit
-      refléter la vraie tâche. Repli : h_bt réduit si l'historique est court.
-    * jusqu'à 2 fenêtres moyennées (réduction de variance, coût x2 sur une
-      mini-passe) ;
-    * marge no-op de 5 % (esprit règle 1-SE) : une pinball sur 1-2 fenêtres
-      de 14 pas est bruitée (m4_daily 3.89 vs flip 3.48 en v2) — k>1 doit
-      battre k=1 d'au moins REL_MARGIN ; les vrais gains oracle sont à
-      +20-50 %, très au-dessus.
+    v2.1 (2026-09-01, v2 run verdict: captures 30% of the oracle):
+    * h_bt = REAL h (no more 256 cap) - the cap made rollout collapse
+      INVISIBLE to selection: at h_bt<=256, k=1 never needs rollout in the
+      backtest, so the biggest oracle gains (bizitobs +40-56% at k=16-24,
+      h=480) could not be seen. Fallback: h_bt reduced on short histories.
+    * up to 2 averaged windows (variance reduction, x2 cost on a mini-pass);
+    * 5% no-op margin (1-SE-rule spirit): pinball on 1-2 windows of 14 steps
+      is noisy (m4_daily 3.89 vs flip 3.48 in v2) - k>1 must beat k=1 by at
+      least REL_MARGIN; real oracle gains are +20-50%, far above.
 
-    v3 (2026-09-01, diagnostic v2.1 : winner's curse par série) : k PAR
-    CONFIG, scores poolés entre séries. L'argmin PAR SÉRIE sur 11 candidats
-    avec 1-2 fenêtres sélectionne les coups de chance (jena/D : 14/42
-    instances à k=16, le PIRE k de la table oracle, +163 %) et les mélanges
-    de k sous-performent le k uniforme sur les paysages accidentés
-    (bitbrains 0.896 avec un mélange vs <=0.837 pour TOUTE la colonne
-    oracle). Pooling : ratio pinball k/k=1 par série, geomean entre séries
-    (la normalisation ôte l'échelle/difficulté), variance / n_séries, et la
-    granularité devient CELLE DE L'ORACLE (par config) qui borne la capture.
-    Un k coté sur moins de 2/3 des séries de base est disqualifié
-    (sous-ensemble biaisé — typiquement grand k sur séries courtes). La
-    garde par instance (historique décimé < patch -> k=1) reste le filet.
+    v3 (2026-09-01, v2.1 diagnosis: per-series winner's curse): k PER
+    CONFIG, scores pooled across series. The per-series argmin over 11
+    candidates with 1-2 windows picks lucky draws (jena/D: 14/42 instances
+    at k=16, the WORST k in the oracle table, +163%) and mixed k
+    underperforms uniform k on rough landscapes (bitbrains 0.896 with a mix
+    vs <=0.837 for the WHOLE oracle column). Pooling: pinball ratio k/k=1
+    per series, geomean across series (normalization removes
+    scale/difficulty), variance / n_series, and the granularity becomes the
+    ORACLE's (per config), which bounds the capture. A k scored on fewer
+    than 2/3 of the base series is disqualified (biased subset - typically
+    large k on short series). The per-instance guard (decimated history <
+    patch -> k=1) stays as the safety net.
     """
     REL_MARGIN = 0.05
     N_BT_WINDOWS = 2
     ks = {}
     entries = []                                    # (idx, sub_hist, known)
     for idx, y in enumerate(series):
-        past = y[:len(y) - windows * h]             # avant TOUTE cible de test
+        past = y[:len(y) - windows * h]             # before ANY test target
         avail = len(past) - 4 * patch
         h_bt = min(h, avail)
         if h_bt < 16:
@@ -320,8 +317,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
             ctx = prepare_context(hist, max_len, stride, patch)
             if ctx is None:
                 continue
-            # h_bt varie par série (repli historiques courts) -> le bucket
-            # porte aussi h_fc pour que le batch soit homogène.
+            # h_bt varies per series (short-history fallback) -> the bucket
+            # also carries h_fc so each batch stays homogeneous.
             buckets[(len(ctx), -(-len(known) // k))].append((idx, ctx, known))
         for (length, h_fc), items in buckets.items():
             for i in range(0, len(items), batch_size):
@@ -352,7 +349,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
         rs = [np.mean(scores[i][k]) / np.mean(scores[i][1])
               for i in base_scored if scores[i].get(k)]
         if not rs or len(rs) < (2 * len(base_scored)) // 3:
-            continue                                # sous-ensemble biaisé
+            continue                                # biased subset
         ratios[k] = float(np.exp(np.mean(np.log(np.maximum(rs, 1e-12)))))
     K = 1
     if ratios:
@@ -385,26 +382,25 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # rectangular batch. Within a config almost everything lands in one bucket
     # (most series are longer than the 1024-step cap).
     buckets = defaultdict(list)
-    # G9.1 — max_context peut DÉPASSER model.input_length : l'encodeur est
-    # RoPE (agnostique à la longueur), le prédicteur ne dépend que du nombre
-    # de requêtes cibles. C'est le test « contexte 2048 à l'inférence seule ».
+    # G9.1 - max_context may EXCEED model.input_length: the encoder is RoPE
+    # (length-agnostic), the predictor only depends on the number of target
+    # queries. This is the "2048 context at inference only" test.
     max_len = max_context or (model.input_length
                               if hasattr(model, "input_length") else 1024)
     stride = model.patching.stride
     n_inst = 0
     k_hist = Counter()
-    # RateIN v2 — le k par SÉRIE choisi par backtest causal (voir le helper) ;
-    # calculé une fois avant la boucle, batché.
+    # RateIN v2 - per-series k chosen by causal backtest (see the helper);
+    # computed once before the loop, batched.
     bt_ks = None
     if ratein_mode == "backtest" and not forced_k:
         bt_ks = _backtest_series_k(model, series, h, windows, max_len, stride,
                                    model.patching.patch_size, device,
                                    batch_size)
     for inst in gift.iter_test_instances(series, h, windows):
-        # RateIN — canonicalisation du taux (2026-08-31, verdict G9.3) : k
-        # est une statistique CAUSALE du passé (règle uniforme sur les 97
-        # configs — même statut que médiane/MAD). forced_k = mode ORACLE
-        # (diagnostic, jamais officiel).
+        # RateIN (2026-08-31, G9.3 verdict): k is a causal statistic of the
+        # past, one uniform rule across the 97 configs (same status as
+        # median/MAD). forced_k = ORACLE mode (diagnostic, never official).
         if forced_k:
             k = forced_k
         elif bt_ks is not None:
@@ -416,13 +412,13 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         hist = (ratein_mod.decimate(inst.context[-(max_len * k):], k)
                 if k > 1 else inst.context)
         if k > 1 and len(hist) < model.patching.patch_size:
-            # Garde (crash oracle 2026-08-31, IndexError sur 6 configs) : un
-            # historique court décimé par un grand k devient vide — repli k=1.
+            # Guard (oracle crash 2026-08-31, IndexError on 6 configs): a
+            # short history decimated by a large k goes empty - fall back k=1.
             k, hist = 1, inst.context
         ctx = prepare_context(hist, max_len, stride, model.patching.patch_size)
         if ctx is None:
             continue
-        # MASE scale uses the FULL past, not the capped context — gluonts
+        # MASE scale uses the FULL past, not the capped context - gluonts
         # computes the seasonal error on the entire history of the series.
         scale = gift.seasonal_error(inst.context, m)
         buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale))
@@ -430,15 +426,15 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         n_inst += 1
 
     for (length, k), items in sorted(buckets.items()):
-        # RateIN x w (synergie G9.3, flag gated) : contexte décimé par k, fan
-        # demandé DIRECTEMENT au taux natif via w = 1/k — zéro
-        # ré-interpolation (la seule perte que même l'oracle ne peut éviter).
-        # Garde d'extrapolation : la FiLM n'a vu que log2(w) dans la gamme
-        # des facteurs d'entraînement ([1,2,4] -> [-2,2]) ; au-delà de
-        # ratein_w_max_k, repli sur le chemin standard décimé+reinterp.
+        # RateIN x w (G9.3 synergy, gated flag): context decimated by k, fan
+        # requested DIRECTLY at native rate via w = 1/k - zero
+        # re-interpolation (the one loss even the oracle cannot avoid).
+        # Extrapolation guard: the FiLM only saw log2(w) within the training
+        # factor range ([1,2,4] -> [-2,2]); beyond ratein_w_max_k, fall back
+        # to the standard decimate+reinterp path.
         use_w = ratein_w and 1 < k <= ratein_w_max_k
-        # Grille décimée : h' = ceil(h/k) pas suffisent à couvrir l'horizon
-        # natif (bonus mesurable : moins de rollouts sur 10S/5T long-terme).
+        # Decimated grid: h' = ceil(h/k) steps cover the native horizon
+        # (measurable bonus: fewer rollouts on long-term 10S/5T).
         h_fc = h if use_w else -(-h // k)
         for i in range(0, len(items), batch_size):
             chunk = items[i:i + batch_size]
@@ -531,40 +527,40 @@ def main(cfg: DictConfig):
     batch_size = int(cfg.get("gift_batch_size", 64))
     max_series = int(cfg.get("gift_max_series", 0))
 
-    # TTA / contexte long (roadmap S1) — opt-in, défauts = comportement exact
-    # d'avant. Exemples :
-    #   +max_context=2048                       (G9.1, inférence seule)
-    #   +tta_lookbacks='512,1024'               (multi-lookback moyenné)
-    #   +tta_flip=true                          (miroir sign-flip)
+    # TTA / long context (roadmap S1) - opt-in, defaults = exact previous
+    # behavior. Examples:
+    #   +max_context=2048                       (G9.1, inference only)
+    #   +tta_lookbacks='512,1024'               (averaged multi-lookback)
+    #   +tta_flip=true                          (sign-flip mirror)
     max_context = int(cfg.get("max_context", 0))
-    #   +ratein=fft   (alias true)             détecteur de période v1
-    #   +ratein=backtest                        k par série, backtest causal (v2)
-    #   +ratein=oracle                          balayage de k — DIAGNOSTIC,
-    #                                           regarde le test, jamais officiel
+    #   +ratein=fft   (alias true)             period detector v1
+    #   +ratein=backtest                        per-series k, causal backtest (v2)
+    #   +ratein=oracle                          k sweep - DIAGNOSTIC, looks at
+    #                                           the test set, never official
     ratein_raw = str(cfg.get("ratein", "")).lower()
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
                        "backtest": "backtest", "bt": "backtest"}.get(
                            ratein_raw, "off")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
-    # RateIN x w (gated) : +ratein_w=true — fan au taux natif via w=1/k sur
-    # les buckets décimés (k <= 4). Exige un modèle cross_resolution ET un
-    # mode ratein actif (sans décimation, w=1 partout = no-op trompeur).
+    # RateIN x w (gated): +ratein_w=true - fan at native rate via w=1/k on
+    # decimated buckets (k <= 4). Requires a cross_resolution model AND an
+    # active ratein mode (without decimation, w=1 everywhere = misleading no-op).
     ratein_w = str(cfg.get("ratein_w", "")).lower() in ("true", "1", "on")
     if ratein_w and not (ratein_on or ratein_oracle):
-        raise ValueError("+ratein_w exige +ratein=backtest/fft/oracle "
-                         "(sans décimation, w vaudrait 1 partout)")
+        raise ValueError("+ratein_w requires +ratein=backtest/fft/oracle "
+                         "(without decimation, w would be 1 everywhere)")
     tta_lookbacks = ([int(x) for x in str(cfg.tta_lookbacks).split(",")]
                      if cfg.get("tta_lookbacks") else None)
     tta_flip = bool(cfg.get("tta_flip", False))
-    #   +tta_shifts='2,4,6'  (translation : origines t−s réalignées, s < stride
-    #                         recommandé — moins d'un patch de péremption)
+    #   +tta_shifts='2,4,6'  (translation: origins t-s realigned, s < stride
+    #                         recommended - less than one patch of staleness)
     tta_shifts = ([int(x) for x in str(cfg.tta_shifts).split(",")]
                   if cfg.get("tta_shifts") else None)
     #   +quantile_gamma='evaluation/calibration/gamma_<ckpt>.json'
-    #   (G4.2 : facteurs d'élargissement par niveau, calibrés sur le corpus de
-    #    FINETUNE par scripts/calibrate_quantiles.py — statut : ablation papier,
-    #    décision utilisateur 2026-08-25, pas nécessairement le chiffre officiel)
+    #   (G4.2: per-level widening factors, calibrated on the FINETUNE corpus
+    #    by scripts/calibrate_quantiles.py - status: paper ablation, user
+    #    decision 2026-08-25, not necessarily the official number)
     quantile_gamma, gamma_tag = None, ""
     if cfg.get("quantile_gamma"):
         gpath = Path(str(cfg.quantile_gamma))
@@ -582,9 +578,9 @@ def main(cfg: DictConfig):
     model = create_model_from_config(cfg)
     model = load_checkpoint(model, checkpoint_path, device)
 
-    # Chaque variante d'inférence a son PROPRE répertoire : les JSON per_config
-    # servent de marqueurs de reprise, mélanger deux procédures dans le même
-    # cache relirait les chiffres de l'une comme s'ils mesuraient l'autre.
+    # Each inference variant gets its OWN directory: the per_config JSONs act
+    # as resume markers, and mixing two procedures in one cache would re-read
+    # one procedure's numbers as if they measured the other.
     tag = ""
     if max_context:
         tag += f"_ctx{max_context}"
@@ -593,8 +589,8 @@ def main(cfg: DictConfig):
     if tta_flip:
         tag += "_flip"
     if ratein_w and getattr(model.predictor, "w_film", None) is None:
-        raise ValueError("+ratein_w exige un modèle cross_resolution "
-                         "(FiLM w absent du prédicteur — config xres)")
+        raise ValueError("+ratein_w requires a cross_resolution model "
+                         "(no w FiLM in the predictor - xres config)")
     if ratein_mode_val == "fft":
         tag += "_ratein"
     elif ratein_mode_val == "backtest":
@@ -611,22 +607,22 @@ def main(cfg: DictConfig):
     per_config = out_dir / "per_config"
     per_config.mkdir(parents=True, exist_ok=True)
 
-    # Piège de reprise mesuré (2026-08-20) : le répertoire est indexé sur le NOM
-    # du checkpoint, et `last.ckpt` est écrasé au fil du run — une ré-éval de
-    # `last` relisait les JSON de l'ancien checkpoint en affichant « already
-    # done » sur 97 configs, c'est-à-dire un agrégat de l'ANCIEN modèle présenté
-    # comme une mesure du nouveau. L'empreinte (mtime+taille) rend le cas
-    # bruyant. Refus plutôt que nettoyage : rien n'est jamais supprimé ici.
+    # Measured resume trap (2026-08-20): the directory is keyed on the
+    # checkpoint NAME, and `last.ckpt` gets overwritten during a run - a
+    # re-eval of `last` re-read the old checkpoint's JSONs while printing
+    # "already done" on 97 configs, i.e. an aggregate of the OLD model
+    # presented as a measure of the new one. The fingerprint (mtime+size)
+    # makes the case loud. Refuse rather than clean: nothing is ever deleted here.
     ckpt_stat = Path(checkpoint_path).stat()
     fingerprint = f"{ckpt_stat.st_mtime_ns}:{ckpt_stat.st_size}"
     fp_file = out_dir / "checkpoint_fingerprint.txt"
     if fp_file.exists() and fp_file.read_text().strip() != fingerprint:
         raise RuntimeError(
-            f"{out_dir} contient les résultats d'une AUTRE version de "
-            f"{Path(checkpoint_path).name} (empreinte différente — le fichier a "
-            f"été écrasé depuis, typiquement un last.ckpt en cours de run). "
-            f"Reprendre relirait les anciens JSON comme s'ils mesuraient le "
-            f"nouveau checkpoint. Déplacer ou renommer ce répertoire, puis relancer."
+            f"{out_dir} holds results from a DIFFERENT version of "
+            f"{Path(checkpoint_path).name} (fingerprint mismatch - the file was "
+            f"overwritten since, typically a last.ckpt from a running job). "
+            f"Resuming would re-read the old JSONs as if they measured the new "
+            f"checkpoint. Move or rename this directory, then relaunch."
         )
     fp_file.write_text(fingerprint)
 
@@ -640,10 +636,10 @@ def main(cfg: DictConfig):
         t0 = time.time()
         try:
             if ratein_oracle:
-                # Balayage de k PAR CONFIG — la borne supérieure du gain
-                # atteignable par canonicalisation du taux. Tranche
-                # l'échec-diagnostic de P-RIN : si même l'oracle ne gagne
-                # nulle part, la géométrie d'échelle n'est pas le mécanisme.
+                # Per-config k sweep - the upper bound on the gain reachable
+                # by rate canonicalization. Settles the P-RIN diagnostic
+                # failure: if even the oracle gains nowhere, scale geometry
+                # is not the mechanism.
                 per_k, best = {}, None
                 for kk in ratein_mod.K_CANDIDATES:
                     r_k = evaluate_config(model, config, gift_root, device,
@@ -714,39 +710,39 @@ def main(cfg: DictConfig):
         a = summary[key]
         logger.info(f"  {key}: MASE ratio {a['geomean_MASE_ratio']:.4f} | "
                     f"CRPS ratio {a['geomean_CRPS_ratio']:.4f}")
-    # Couverture empirique moyenne (instrument E21 : nominal q10=0.10, q90=0.90
-    # => intervalle 80 % ; la sous-couverture zero-shot mesurée est du shift,
-    # G4.2 — le levier légitime est le gate z d'ESJEPA).
+    # Mean empirical coverage (E21 instrument: nominal q10=0.10, q90=0.90
+    # => 80% interval; the measured zero-shot under-coverage is shift, G4.2 -
+    # the legitimate lever is the ESJEPA z gate).
     covs = [r["model"].get("coverage") for r in results.values()
             if r["model"].get("coverage")]
     if covs:
         c10 = float(np.mean([c["0.1"] for c in covs]))
         c90 = float(np.mean([c["0.9"] for c in covs]))
-        logger.info(f"  coverage (moyenne {len(covs)} configs): q10 {c10:.3f} (nominal 0.100) | "
-                    f"q90 {c90:.3f} (nominal 0.900) | intervalle 80% -> {c90 - c10:.3f}")
+        logger.info(f"  coverage (mean over {len(covs)} configs): q10 {c10:.3f} (nominal 0.100) | "
+                    f"q90 {c90:.3f} (nominal 0.900) | 80% interval -> {c90 - c10:.3f}")
     if ratein_on:
         fr = [r["ratein"]["frac_k_gt1"] for r in results.values()
               if "ratein" in r]
         n_active = sum(1 for f in fr if f > 0.5)
-        logger.info(f"  RateIN : {n_active}/{len(fr)} configs majoritairement "
-                    f"décimées | part d'instances k>1 (moyenne) : "
+        logger.info(f"  RateIN: {n_active}/{len(fr)} configs mostly "
+                    f"decimated | share of k>1 instances (mean): "
                     f"{float(np.mean(fr)):.1%}")
     if ratein_oracle:
-        # LA lecture de l'échec-diagnostic P-RIN : combien de configs
-        # gagnent > 5 % même avec le meilleur k choisi en trichant.
+        # THE reading of the P-RIN diagnostic failure: how many configs gain
+        # > 5% even with the best k chosen by cheating.
         gains = {c: r["oracle"]["gain_vs_k1"] for c, r in results.items()
                  if "oracle" in r}
         big = sorted(((g, c) for c, g in gains.items() if g > 0.05),
                      reverse=True)
-        logger.info(f"  ORACLE-k (diagnostic, jamais officiel) : "
-                    f"{len(big)}/{len(gains)} configs gagnent > 5% vs k=1")
+        logger.info(f"  ORACLE-k (diagnostic, never official): "
+                    f"{len(big)}/{len(gains)} configs gain > 5% vs k=1")
         for g, c in big[:8]:
             logger.info(f"    {c}: {g:+.1%} (best_k="
                         f"{results[c]['oracle']['best_k']})")
         if not big:
-            logger.info("    AUCUNE -> échec-diagnostic P-RIN : la géométrie "
-                        "d'échelle n'est pas le mécanisme de la queue ; "
-                        "G9.3/xres non financé.")
+            logger.info("    NONE -> P-RIN diagnostic failure: scale "
+                        "geometry is not the tail mechanism; G9.3/xres "
+                        "not funded.")
     logger.info(f"Results: {out_dir}")
 
 

@@ -1,12 +1,12 @@
 """
-Tests du PIPELINE DE CORPUS (extraits de test_p0_regressions.py, audit du
-2026-08-19 — déplacés à l'identique, aucun test réécrit).
+Tests for the CORPUS PIPELINE (extracted from test_p0_regressions.py,
+2026-08-19 audit - moved verbatim, no test rewritten).
 
-Couvre : B17 (dataset trop court ne tue pas un run multi-datasets), G5
-(intégration LOTSA purement additive : exclusions, mmap, _pack_series), B22
-(object arrays des survivants uniformes), B18 (dérive de version torch dans le
-sampler), G8.1 (réadmissions EVAL_SAFE_OVERRIDES — la zone où une erreur
-invalide tous les chiffres du projet).
+Covers: B17 (a too-short dataset does not kill a multi-dataset run), G5
+(purely additive LOTSA integration: exclusions, mmap, _pack_series), B22
+(object arrays of uniform survivors), B18 (torch version drift in the
+sampler), G8.1 (EVAL_SAFE_OVERRIDES readmissions - the area where one mistake
+invalidates every number in the project).
 """
 
 import sys
@@ -102,7 +102,7 @@ def test_window_indices_are_a_compact_array(short_and_long_datasets):
     """
     B19. window_indices was a Python list of 2-tuples: ~120 bytes per window
     (8 list pointer + 56 tuple + 56 for two int objects, start_idx being well
-    past the small-int cache). At the corpus's ~54M windows that is ~6.5 GB —
+    past the small-int cache). At the corpus's ~54M windows that is ~6.5 GB -
     and paid PER PROCESS, because a dataloader worker walking the list bumps
     each tuple's refcount, writing to its page and defeating fork's
     copy-on-write. Observed as a steady climb to ~50 GB on a 57 GB host.
@@ -213,7 +213,7 @@ def test_lotsa_segmentation_produces_dense_chunks():
 def test_memmapped_windows_yield_writable_tensors(tmp_path):
     """
     B23. With use_mmap, np.load(mmap_mode="r") is read-only, ascontiguousarray on
-    a contiguous slice does not copy, and .float() on float32 is a no-op — so the
+    a contiguous slice does not copy, and .float() on float32 is a no-op - so the
     tensor aliased the mapping. Augmentations run right after, and an in-place
     write to a read-only mapping is a segfault at best and silent corruption of
     the .npy on disk at worst.
@@ -266,8 +266,8 @@ def test_family_grouping_prevents_one_domain_dominating():
 def test_chunk_stats_explain_an_empty_subset():
     """
     A subset that yields nothing must say WHY. Series shorter than chunk_length
-    are dropped to keep the output dense, so a series of 5000 steps — perfectly
-    usable for a 1280-step window — is lost at chunk_length 8192. Without the
+    are dropped to keep the output dense, so a series of 5000 steps - perfectly
+    usable for a 1280-step window - is lost at chunk_length 8192. Without the
     breakdown, that is indistinguishable from a subset whose series are simply
     too short, and the two call for opposite decisions.
     """
@@ -281,13 +281,13 @@ def test_chunk_stats_explain_an_empty_subset():
     assert wide.series == 4
     assert wide.too_short == 1              # the 900-step one, genuinely unusable
     assert wide.lost_to_chunking == 2       # 5000 and 3000: recoverable
-    assert "PERDUES" in wide.summary(8192, 1280)
+    assert "LOST" in wide.summary(8192, 1280)
 
     narrow = ChunkStats()
     list(iter_dense_chunks(series, chunk_length=2048, min_length=1280, stats=narrow))
     assert narrow.lost_to_chunking == 0
     assert narrow.emitted > wide.emitted    # 12 against 2 on identical input
-    assert "PERDUES" not in narrow.summary(2048, 1280)
+    assert "LOST" not in narrow.summary(2048, 1280)
 
 
 def test_short_gaps_are_imputed_and_structural_ones_refused():
@@ -297,7 +297,7 @@ def test_short_gaps_are_imputed_and_structural_ones_refused():
     interpolated; large ones are refused rather than invented.
 
     The refusal matters as much as the imputation. Those metro subsets carry
-    ~23% NaN in REGULAR 23-step blocks — the nightly service closure. Filling
+    ~23% NaN in REGULAR 23-step blocks - the nightly service closure. Filling
     that would fabricate 3am ridership, so raising the threshold would be a
     mistake rather than a fix, and the summary says so.
     """
@@ -327,8 +327,8 @@ def test_short_gaps_are_imputed_and_structural_ones_refused():
     assert out2 == []
     assert st2.non_finite == 1
     summary = st2.summary(4096, 1280)
-    assert "STRUCTURELS" in summary
-    assert "ne pas monter --max-nan-fraction" in summary
+    assert "STRUCTURAL" in summary
+    assert "do not raise --max-nan-fraction" in summary
 
 
 def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
@@ -367,21 +367,21 @@ def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
                  "largest_2017", "uber_tlc_hourly", "m5"]:
         assert not is_eval_overlap(name), f"{name} must be kept"
 
-    # beijing_air_quality / china_air_quality — position INVERSÉE le 2026-08-19
-    # (G8.1, décision utilisateur). L'ancien raisonnement (« = kdd_cup_2018 »)
-    # était trop large : kdd_cup_2018 évalue Pékin 2017-2018 et un chevauchement
-    # PARTIEL de fenêtres est concevable, mais `Salesforce/GiftEvalPretrain` —
-    # le corpus de pré-entraînement PUBLIÉ PAR LES AUTEURS du benchmark —
-    # contient les deux sous-ensembles : aucune entrée du leaderboard n'est
-    # pénalisée pour les avoir vus. Les exclure nous handicapait unilatéralement
-    # (E17 : l'écart au leaderboard suit la couverture du corpus).
-    # Le risque résiduel est consigné au §5 du registre expérimental ; si un
-    # relecteur le conteste, retirer les deux d'EVAL_SAFE_OVERRIDES ET remettre
-    # l'assertion inverse ici — les deux doivent bouger ensemble.
+    # beijing_air_quality / china_air_quality - position REVERSED on
+    # 2026-08-19 (G8.1, decision). The old reasoning ("= kdd_cup_2018")
+    # was too broad: kdd_cup_2018 evaluates Beijing 2017-2018 and a PARTIAL
+    # window overlap is conceivable, but `Salesforce/GiftEvalPretrain` - the
+    # pretraining corpus PUBLISHED BY THE AUTHORS of the benchmark - contains
+    # both subsets: no leaderboard entry is penalized for having seen them.
+    # Excluding them handicapped us unilaterally (E17: the gap to the
+    # leaderboard follows corpus coverage).
+    # The residual risk is recorded in section 5 of the experiment registry;
+    # if a reviewer contests it, remove both from EVAL_SAFE_OVERRIDES AND
+    # restore the inverse assertion here - the two must move together.
     for name in ["beijing_air_quality", "china_air_quality"]:
         assert not is_eval_overlap(name), \
-            f"{name} est réadmis par EVAL_SAFE_OVERRIDES (sanctionné par GiftEvalPretrain)"
-    # ...mais le dataset d'ÉVAL correspondant reste rigoureusement exclu :
+            f"{name} is readmitted by EVAL_SAFE_OVERRIDES (sanctioned by GiftEvalPretrain)"
+    # ...but the corresponding EVAL dataset stays strictly excluded:
     assert is_eval_overlap("kdd_cup_2018_with_missing")
 
     # The union is what the converter uses; the two sources stay separable
@@ -436,7 +436,7 @@ def test_use_mmap_defaults_off_and_rejects_object_arrays(tmp_path):
 def test_pack_series_returns_numeric_when_lengths_are_uniform():
     """
     B22. np.array(list_of_arrays, dtype=object) does NOT give a ragged 1-D array
-    when every series has the same length — it silently gives a 2-D OBJECT array,
+    when every series has the same length - it silently gives a 2-D OBJECT array,
     and np.stack on that preserves dtype=object. The value then reaches
     torch.from_numpy, which rejects object arrays outright.
 
@@ -498,7 +498,7 @@ def test_temperature_sampler_constructs():
     removed it, at which point `super().__init__(None)` reaches
     `object.__init__` and raises "takes exactly one argument". Killed a real
     run, and could not be reproduced locally because the local torch still had
-    the old signature — hence this direct construction test.
+    the old signature - hence this direct construction test.
     """
     from timejepa.data.datamodule import TemperatureSampler
     s = TemperatureSampler(dataset_sizes=[1000, 50000, 300], batch_size=64,
@@ -508,25 +508,25 @@ def test_temperature_sampler_constructs():
 
 
 @pytest.mark.parametrize("name", [
-    # datasets d'évaluation GIFT-Eval
+    # GIFT-Eval evaluation datasets
     "m4_yearly", "m4_hourly", "m4_daily", "m4_monthly", "m4_quarterly", "m4_weekly",
     "SZ_TAXI", "LOOP_SEATTLE", "M_DENSE", "covid_deaths", "hospital", "restaurant",
     "saugeenday", "us_births", "car_parts_with_missing", "hierarchical_sales",
     "kdd_cup_2018_with_missing", "temperature_rain_with_missing",
-    # datasets d'évaluation Nixtla
+    # Nixtla evaluation datasets
     "traffic_hourly", "traffic_weekly", "weather", "oikolab_weather",
     "cdc_fluview_ilinet",
-    # datasets d'évaluation Monash locale
-    # (solar_power RÉADMIS 2026-08-24 — corpus v3, trois vérifications dans
-    #  lotsa.py : GiftEvalPretrain le sanctionne, absent de Nixtla, la suite
-    #  Monash locale qui le bloquait est dépréciée au profit de GIFT.)
+    # local Monash evaluation datasets
+    # (solar_power READMITTED 2026-08-24 - v3 corpus, three checks in
+    #  lotsa.py: GiftEvalPretrain sanctions it, absent from Nixtla, the local
+    #  Monash suite that blocked it is deprecated in favor of GIFT.)
     "wiki-rolling_nips", "extended_web_traffic_with_missing",
     "kaggle_web_traffic_weekly",
 ])
 def test_eval_datasets_stay_excluded_from_pretraining(name):
-    """Un seul de ces noms au pretrain invaliderait tous les chiffres du projet."""
+    """A single one of these names at pretrain would invalidate every number in the project."""
     from timejepa.data.lotsa import is_eval_overlap
-    assert is_eval_overlap(name), f"{name} FUIT dans le corpus de pré-entraînement"
+    assert is_eval_overlap(name), f"{name} LEAKS into the pretraining corpus"
 
 
 @pytest.mark.parametrize("name", [
@@ -541,19 +541,19 @@ def test_eval_datasets_stay_excluded_from_pretraining(name):
 ])
 def test_safe_overrides_are_readmitted(name):
     """
-    Ces sous-ensembles sont dans GiftEvalPretrain (corpus sanctionné par le
-    benchmark) et n'ont de contrepartie dans AUCUNE de nos trois suites d'éval.
-    Les exclure coûtait de la couverture fréquentielle pour rien (E17).
+    These subsets are in GiftEvalPretrain (corpus sanctioned by the benchmark)
+    and have a counterpart in NONE of our three eval suites. Excluding them
+    cost frequency coverage for nothing (E17).
     """
     from timejepa.data.lotsa import is_eval_overlap
-    assert not is_eval_overlap(name), f"{name} devrait être réadmis"
+    assert not is_eval_overlap(name), f"{name} should be readmitted"
 
 
 def test_overrides_match_exactly_never_as_substring():
     """
-    Un override doit être une égalité de nom, jamais une sous-chaîne : sinon
-    'taxi_30min' réadmettrait 'sz_taxi_30min_variant' et rouvrirait par
-    l'override le trou que le motif ferme.
+    An override must be a name equality, never a substring: otherwise
+    'taxi_30min' would readmit 'sz_taxi_30min_variant' and the override would
+    reopen the hole the pattern closes.
     """
     from timejepa.data.lotsa import is_eval_overlap
     assert is_eval_overlap("taxi_30min_extended")

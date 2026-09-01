@@ -1,84 +1,85 @@
 # @package _global_
 #
-# G4.6 — TRANSFERT VERS DES DONNÉES INÉDITES, arm PRÉ-ENTRAÎNÉ.
-# Config jumelle : tiny_geo_scratch_lowdata (identique, sans poids pré-entraînés).
+# G4.6 - TRANSFER TO UNSEEN DATA, PRETRAINED arm.
+# Twin config: tiny_geo_scratch_lowdata (identical, without pretrained weights).
 #
 #   python scripts/train.py --config-name tiny_geo_lowdata \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_tiny_geo/pretrain_True/<ckpt>"' \
 #       wandb.run_name=lowdata-pretrained
 #
-# ⚠️ Le chemin du checkpoint est le SEUL élément à fournir à la main. S'il manque,
-# ce run devient un doublon du scratch et l'expérience ne mesure rien.
+# WARNING: the checkpoint path is the ONLY element to supply by hand. If it is
+# missing, this run becomes a duplicate of the scratch arm and the experiment
+# measures nothing.
 #
-# Pourquoi cette expérience
+# Why this experiment
 # -------------------------
-# E8 a mesuré une ÉGALITÉ entre pré-entraîné et scratch à corpus de finetune
-# complet (MASE moyenne 1.193 vs 1.187). Ce résultat ne réfute pas le pari du
-# projet, et ne POUVAIT pas le faire : le corpus de pretrain et celui de finetune
-# étaient LES MÊMES 24 datasets. Quand les deux coïncident, le modèle supervisé
-# voit exactement les mêmes octets, le pretraining se réduit à une initialisation,
-# et l'égalité est le résultat par défaut. La trajectoire l'a confirmé — départ
-# plus rapide pour le pré-entraîné, écart refermé à ~10k steps.
+# E8 measured a TIE between pretrained and scratch with the full finetune
+# corpus (mean MASE 1.193 vs 1.187). That result does not refute the project's
+# bet, and COULD not: the pretrain corpus and the finetune corpus were THE
+# SAME 24 datasets. When the two coincide, the supervised model sees exactly
+# the same bytes, pretraining reduces to an initialization, and a tie is the
+# default outcome. The trajectory confirmed it - faster start for the
+# pretrained arm, gap closed by ~10k steps.
 #
-# La valeur d'un modèle de fondation est de transférer vers des données qu'il n'a
-# jamais vues. C'est ce que teste cette config.
+# A foundation model's value is transferring to data it has never seen. That
+# is what this config tests.
 #
-# Le corpus : ce que le pretrain n'a PAS pu voir
+# The corpus: what the pretrain could NOT have seen
 # ----------------------------------------------
-# Le pretrain tiny_geo exige une fenêtre de 1024+256 = 1280 pas. SIX datasets de
-# `data.datasets` sont donc écartés à la source par le filtre de longueur (B17) —
-# l'encodeur ne les a JAMAIS vus, pas même partiellement :
+# The tiny_geo pretrain requires a window of 1024+256 = 1280 steps. SIX
+# datasets from `data.datasets` are therefore dropped at the source by the
+# length filter (B17) - the encoder NEVER saw them, not even partially:
 #
-#   m4-hourly            1008 pas   <- retenu ici
-#   nn5-daily             791 pas   <- retenu ici (et fréquence QUOTIDIENNE,
-#                                      quasi absente du corpus sous-quotidien)
-#   fred-md               728 pas   (exclu ici : < 768 — macro MENSUELLE)
-#   rain-temperature      725 pas   (exclu ici : < 768)
-#   rideshare             541 pas   (exclu)
-#   wikipedia-weekly      114 pas   (exclu)
+#   m4-hourly            1008 steps  <- kept here
+#   nn5-daily             791 steps  <- kept here (and DAILY frequency,
+#                                      nearly absent from the sub-daily corpus)
+#   fred-md               728 steps  (excluded here: < 768 - MONTHLY macro)
+#   rain-temperature      725 steps  (excluded here: < 768)
+#   rideshare             541 steps  (excluded)
+#   wikipedia-weekly      114 steps  (excluded)
 #
-# ✅ VÉRIFIÉ sur le log du pretrain tiny_geo (2026-08-10) :
-#   "6/23 dataset(s) skipped (1280 timesteps required)" liste exactement ces six.
-# Ils figurent bien dans `data.datasets`, mais le filtre de longueur (B17) les
-# écarte AU CHARGEMENT — 0 fenêtre créée, l'encodeur ne les a jamais vus. C'est
-# ce qui rend l'expérience possible : le corpus held-out est un effet de bord de
-# la géométrie du pretrain, pas une exclusion à écrire à la main.
+# VERIFIED on the tiny_geo pretrain log (2026-08-10):
+#   "6/23 dataset(s) skipped (1280 timesteps required)" lists exactly these six.
+# They do appear in `data.datasets`, but the length filter (B17) drops them AT
+# LOAD TIME - 0 windows created, the encoder never saw them. That is what
+# makes the experiment possible: the held-out corpus is a side effect of the
+# pretrain geometry, not a hand-written exclusion.
 #
-# Variante à 4 datasets, si l'on préfère la DIVERSITÉ au contexte
+# 4-dataset variant, if DIVERSITY is preferred over context
 # ---------------------------------------------------------------
 #   model.seq_length=384 'data.datasets_finetune=[m4-hourly,nn5-daily,fred-md,rain-temperature]'
-# (384+256 = 640 <= 725, tout passe). Fait entrer la macro mensuelle et le
-# climatique — quatre régimes au lieu de deux. Coût : contexte plus court, donc
-# pénalité pour les DEUX arms (comparaison appariée, donc lecture préservée).
-# ⚠️ Change aussi le régime : rain-temperature apporte 32 072 séries, l'expérience
-# cesse alors d'être « peu de données » et devient purement « données inédites ».
+# (384+256 = 640 <= 725, everything fits). Brings in monthly macro and
+# climate - four regimes instead of two. Cost: shorter context, so a penalty
+# for BOTH arms (paired comparison, so the reading is preserved).
+# WARNING: it also changes the regime: rain-temperature brings 32,072 series,
+# so the experiment stops being "low data" and becomes purely "unseen data".
 #
-# La géométrie suit du corpus
+# The geometry follows from the corpus
 # ---------------------------
-# seq_length 512 (au lieu de 1024) parce que m4-hourly ne fait que 1008 pas :
-# 512 + 256 = 768 <= 791 fait entrer m4-hourly ET nn5-daily. Passer à 640 ne
-# garderait que m4-hourly ; descendre à 384 ferait entrer rain-temperature mais
-# à un contexte que le balayage (E7/E9) montre pénalisant.
-# 512 est dans la plage vue au pretrain (context_lengths va de 128 à 1024), donc
-# l'arm pré-entraîné n'est pas hors distribution — c'est bien le TRANSFERT DE
-# DONNÉES qui est testé, pas une extrapolation de géométrie.
+# seq_length 512 (instead of 1024) because m4-hourly is only 1008 steps:
+# 512 + 256 = 768 <= 791 brings in m4-hourly AND nn5-daily. Going to 640 would
+# keep only m4-hourly; dropping to 384 would bring in rain-temperature but at
+# a context the sweep (E7/E9) shows to be penalizing.
+# 512 is within the range seen at pretrain (context_lengths goes from 128 to
+# 1024), so the pretrained arm is not out of distribution - it really is DATA
+# TRANSFER being tested, not a geometry extrapolation.
 #
-# Effet de bord voulu : ~12 k fenêtres d'entraînement contre ~8 M pour le corpus
-# complet. L'expérience est donc à la fois « données inédites » ET « peu de
-# données » — les deux régimes où le SSL doit payer s'il vaut quelque chose.
+# Intended side effect: ~12k training windows versus ~8M for the full corpus.
+# So the experiment is both "unseen data" AND "low data" - the two regimes
+# where SSL must pay off if it is worth anything.
 #
-# Budget d'entraînement
+# Training budget
 # ---------------------
-# max_epochs 200 : une époque est ici minuscule. L'early stopping (patience 25)
-# coupe quand ça ne progresse plus. Les DEUX arms ont le même budget — condition
-# pour que le résultat prouve quelque chose. Si le scratch s'arrête tôt, lui
-# redonner des époques avant de conclure.
+# max_epochs 200: an epoch is tiny here. Early stopping (patience 25) cuts
+# when progress stalls. BOTH arms get the same budget - a condition for the
+# result to prove anything. If the scratch arm stops early, give it more
+# epochs before concluding.
 #
-# Axe secondaire, si le résultat est ambigu
+# Secondary axis, if the result is ambiguous
 # -----------------------------------------
-# `data.stride` (défaut 8) règle la densité d'échantillonnage des fenêtres et
-# donc le volume, à corpus constant. Le monter (128, 512) sur les DEUX arms trace
-# une courbe performance-vs-volume : la figure naturelle pour cette question.
+# `data.stride` (default 8) sets the window sampling density and thus the
+# volume, at constant corpus. Raising it (128, 512) on BOTH arms traces a
+# performance-vs-volume curve: the natural figure for this question.
 defaults:
   - tiny_geo
   - _self_
@@ -89,18 +90,18 @@ model:
 
 training:
   mode: "finetune"
-  # Obligatoire : gradual_unfreeze gèlerait l'encodeur pendant la première époque,
-  # ce qui n'a aucun sens pour le jumeau scratch (poids aléatoires). Les deux arms
-  # doivent partager le mode.
+  # Required: gradual_unfreeze would freeze the encoder during the first
+  # epoch, which makes no sense for the scratch twin (random weights). Both
+  # arms must share the mode.
   finetune_mode: "full_finetune"
   max_epochs: 200
-  # La liste de tiny_geo monte à 1024 ; à seq_length 512 les longueurs supérieures
-  # ne seraient de toute façon jamais éligibles. Explicité pour que le log
-  # geometry/context_len reste lisible.
+  # The tiny_geo list goes up to 1024; at seq_length 512 the larger lengths
+  # would never be eligible anyway. Made explicit so the geometry/context_len
+  # log stays readable.
   context_lengths: [128, 192, 256, 384, 512]
 
 data:
-  # Les DEUX datasets que le pretrain n'a pas pu voir et qui tiennent dans 768 pas.
+  # The TWO datasets the pretrain could not have seen that fit in 768 steps.
   datasets_finetune: ["m4-hourly", "nn5-daily"]
 
 wandb:

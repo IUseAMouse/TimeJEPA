@@ -1,6 +1,5 @@
-##############################################################################################
-# Note : now deprecated since I don't do masked reconstruction anymore, keeping it as legacy
-##############################################################################################
+# DEPRECATED (2026-08-19 audit) - masked-reconstruction path, unused since the
+# JEPA objective replaced it. Kept per the no-delete policy; do not import.
 """
 Masking strategies for JEPA pretraining.
 

@@ -1,6 +1,6 @@
 # @package _global_
 #
-# EXPERIMENT — deeper predictor, patching UNCHANGED (16 / 8)
+# EXPERIMENT - deeper predictor, patching UNCHANGED (16 / 8)
 #
 # The control for the patch-size experiments. The diagnostic established THAT
 # skill tracks the seasonal period in patch positions; the MECHANISM I proposed
@@ -14,7 +14,7 @@
 # than patch geometry, deepening the predictor should recover ETTm1 skill while
 # leaving the patch size alone.
 #
-# Run this ALONGSIDE tiny_patch32/64, not instead of them — together they
+# Run this ALONGSIDE tiny_patch32/64, not instead of them - together they
 # separate two explanations that the ETTm diagnostic cannot distinguish:
 #
 #   patch32/64 improves, this does not  -> the ratio is the driver
@@ -23,7 +23,7 @@
 #   neither improves                    -> the mechanism is something else
 #
 # Cost: the predictor goes from 2 to 4 layers, so roughly +0.4M parameters on a
-# 1.6M model. Not free, and a confound to keep in mind — a gain could be raw
+# 1.6M model. Not free, and a confound to keep in mind - a gain could be raw
 # capacity rather than depth specifically.
 defaults:
   - tiny

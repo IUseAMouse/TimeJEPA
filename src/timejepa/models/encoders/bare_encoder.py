@@ -10,9 +10,9 @@ from ..components.attention import TransformerBlock
 
 class BareTransformerEncoder(nn.Module):
     """
-    Encoder sans patching, juste transformer blocks.
+    Encoder without patching, just transformer blocks.
 
-    Pour JEPA où le patching est géré en amont pour appliquer les masks.
+    For JEPA, where patching is handled upstream so masks can be applied.
 
     Args:
         d_model: Model dimension

@@ -1,3 +1,4 @@
+# ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
 Build the P0.8 before/after report from re-evaluation JSONs.
 
@@ -69,47 +70,47 @@ def build_report(df: pd.DataFrame) -> str:
     out: List[str] = []
     A = out.append
 
-    A("# P0.8 — Rapport de ré-évaluation\n")
-    A("Tous les chiffres proviennent des **mêmes checkpoints** et des **mêmes fenêtres**.")
-    A("Seul le protocole d'évaluation change.\n")
-    A("- `legacy` : `skip_revin=True` — le protocole qui a produit `TimeJEPA_2ndbatch_results/`")
-    A("- `fixed`  : `skip_revin=False` — RevIN actif, le régime dans lequel le modèle a été entraîné\n")
-    A("> ⚠️ **ETTh1 / ETTh2** : `datasetsforecast.LongHorizon` ne livre qu'une seule série (`OT`)")
-    A("> pour ces groupes, là où les tableaux publiés moyennent les 7 canaux ETT.")
-    A("> Ces colonnes ne sont **pas** comparables à la littérature.\n")
+    A("# P0.8 - Re-evaluation report\n")
+    A("All numbers come from the **same checkpoints** and the **same windows**.")
+    A("Only the evaluation protocol changes.\n")
+    A("- `legacy`: `skip_revin=True` - the protocol that produced `TimeJEPA_2ndbatch_results/`")
+    A("- `fixed` : `skip_revin=False` - RevIN active, the regime the model was trained in\n")
+    A("> Note: **ETTh1 / ETTh2**: `datasetsforecast.LongHorizon` only ships one series (`OT`)")
+    A("> for these groups, where published tables average the 7 ETT channels.")
+    A("> These columns are **not** comparable to the literature.\n")
 
     # ---- 1. Impact of the fix -------------------------------------------------
-    A("\n## 1. Impact du fix de normalisation\n")
+    A("\n## 1. Impact of the normalization fix\n")
     d = df.dropna(subset=["mse_legacy", "mse_fixed"]).copy()
     if not d.empty:
         d["mse_delta"] = (d["mse_fixed"] - d["mse_legacy"]) / d["mse_legacy"]
         d["mase_delta"] = (d["mase_fixed"] - d["mase_legacy"]) / d["mase_legacy"]
 
         piv = d.pivot_table(index="dataset", columns="horizon", values="mse_delta", aggfunc="mean")
-        A("Variation relative de la MSE (négatif = le fix améliore) :\n")
-        A("| dataset | " + " | ".join(f"h={c}" for c in piv.columns) + " | moyenne |")
+        A("Relative MSE change (negative = the fix improves):\n")
+        A("| dataset | " + " | ".join(f"h={c}" for c in piv.columns) + " | mean |")
         A("|---|" + "---|" * (len(piv.columns) + 1))
         for ds, r in piv.iterrows():
-            flag = " ⚠️" if ds in UNIVARIATE_ONLY else ""
+            flag = " (!)" if ds in UNIVARIATE_ONLY else ""
             A(f"| {ds}{flag} | " + " | ".join(fmt_pct(v) for v in r) + f" | {fmt_pct(r.mean())} |")
 
-        A(f"\n**Effet global : MSE {fmt_pct(d['mse_delta'].mean())}, "
-          f"MASE {fmt_pct(d['mase_delta'].mean())} (moyenne sur tout).**")
+        A(f"\n**Overall effect: MSE {fmt_pct(d['mse_delta'].mean())}, "
+          f"MASE {fmt_pct(d['mase_delta'].mean())} (mean over everything).**")
         n_better = int((d["mse_delta"] < 0).sum())
-        A(f"\nLe fix améliore {n_better}/{len(d)} des couples (dataset, horizon).")
+        A(f"\nThe fix improves {n_better}/{len(d)} of the (dataset, horizon) pairs.")
 
     # ---- 2. vs baselines ------------------------------------------------------
-    A("\n\n## 2. TimeJEPA vs baselines (MASE, plus bas = mieux)\n")
-    A("MASE = 1.0 signifie « aussi bon que seasonal naive ».\n")
+    A("\n\n## 2. TimeJEPA vs baselines (MASE, lower = better)\n")
+    A("MASE = 1.0 means \"as good as seasonal naive\".\n")
     cols = ["mase_fixed"] + [f"mase_{b}" for b in BASELINE_ORDER]
     g = df.groupby("dataset")[cols].mean()
     g.columns = ["TimeJEPA", "SeasonalNaive", "NaiveLast", "ContextMean", "LinearTrend"]
     g["winner"] = g.idxmin(axis=1)
 
-    A("| dataset | TimeJEPA | SeasonalNaive | NaiveLast | ContextMean | LinearTrend | meilleur |")
+    A("| dataset | TimeJEPA | SeasonalNaive | NaiveLast | ContextMean | LinearTrend | best |")
     A("|---|---|---|---|---|---|---|")
     for ds, r in g.iterrows():
-        flag = " ⚠️" if ds in UNIVARIATE_ONLY else ""
+        flag = " (!)" if ds in UNIVARIATE_ONLY else ""
         cells = " | ".join(
             "n/a" if pd.isna(r[c]) else f"{r[c]:.3f}"
             for c in ["TimeJEPA", "SeasonalNaive", "NaiveLast", "ContextMean", "LinearTrend"]
@@ -118,23 +119,23 @@ def build_report(df: pd.DataFrame) -> str:
         A(f"| {ds}{flag} | {cells} | {mark} |")
 
     wins = int((g["winner"] == "TimeJEPA").sum())
-    A(f"\n**TimeJEPA est le meilleur sur {wins}/{len(g)} datasets.**")
+    A(f"\n**TimeJEPA is the best on {wins}/{len(g)} datasets.**")
 
     beats_sn = int((g["TimeJEPA"] < g["SeasonalNaive"]).sum())
-    A(f"\nIl bat seasonal naive sur {beats_sn}/{len(g)} datasets.")
+    A(f"\nIt beats seasonal naive on {beats_sn}/{len(g)} datasets.")
 
     # ---- 3. Horizon degradation ----------------------------------------------
-    A("\n\n## 3. Dégradation par horizon (skill vs seasonal naive)\n")
-    A("Positif = TimeJEPA gagne. Négatif = il perd.\n")
+    A("\n\n## 3. Degradation per horizon (skill vs seasonal naive)\n")
+    A("Positive = TimeJEPA wins. Negative = it loses.\n")
     piv = df.pivot_table(index="dataset", columns="horizon", values="skill_vs_sn", aggfunc="mean")
     A("| dataset | " + " | ".join(f"h={c}" for c in piv.columns) + " |")
     A("|---|" + "---|" * len(piv.columns))
     for ds, r in piv.iterrows():
-        flag = " ⚠️" if ds in UNIVARIATE_ONLY else ""
+        flag = " (!)" if ds in UNIVARIATE_ONLY else ""
         A(f"| {ds}{flag} | " + " | ".join(fmt_pct(v) for v in r) + " |")
 
     # ---- 4. Per checkpoint ----------------------------------------------------
-    A("\n\n## 4. Par checkpoint\n")
+    A("\n\n## 4. Per checkpoint\n")
     c = df.groupby("checkpoint").agg(
         mase_legacy=("mase_legacy", "mean"),
         mase_fixed=("mase_fixed", "mean"),
@@ -143,18 +144,18 @@ def build_report(df: pd.DataFrame) -> str:
         r2=("r2_fixed", "mean"),
         wql=("wql_fixed", "mean"),
     ).sort_values("mase_fixed")
-    A("| checkpoint | MASE legacy | MASE fixed | MASE seasonal-naive | skill | R² | WQL |")
+    A("| checkpoint | MASE legacy | MASE fixed | MASE seasonal-naive | skill | R2 | WQL |")
     A("|---|---|---|---|---|---|---|")
     for name, r in c.iterrows():
         A(f"| {name} | {r.mase_legacy:.3f} | **{r.mase_fixed:.3f}** | {r.mase_sn:.3f} | "
           f"{fmt_pct(r.skill)} | {r.r2:.3f} | {r.wql:.3f} |")
 
     # ---- 5. GIFT-Eval framing -------------------------------------------------
-    A("\n\n## 5. Cadrage GIFT-Eval\n")
-    A("GIFT-Eval normalise par seasonal naive (MASE = CRPS = 1.00 par construction).")
-    A("Une MASE brute n'est donc **pas** comparable à sa leaderboard : ici `exchange`")
-    A("a une MASE de ~9 avec m=1 sur h=96, ce qui écrase toute moyenne brute.")
-    A("Les ratios ci-dessous sont la seule grandeur comparable.\n")
+    A("\n\n## 5. GIFT-Eval framing\n")
+    A("GIFT-Eval normalizes by seasonal naive (MASE = CRPS = 1.00 by construction).")
+    A("A raw MASE is therefore **not** comparable to its leaderboard: here `exchange`")
+    A("has a MASE of ~9 with m=1 at h=96, which crushes any raw mean.")
+    A("The ratios below are the only comparable quantity.\n")
 
     df = df.copy()
     df["mase_ratio"] = df["mase_fixed"] / df["mase_seasonal_naive"]
@@ -169,20 +170,20 @@ def build_report(df: pd.DataFrame) -> str:
     best_ratio = per_ckpt["mase_ratio"].min()
     best_wql_ratio = per_ckpt["wql_ratio"].min()
 
-    A("\n**Positionnement (normalisé seasonal naive = 1.00) :**\n")
+    A("\n**Positioning (normalized seasonal naive = 1.00):**\n")
     A("| | MASE | CRPS/WQL |")
     A("|---|---|---|")
-    A("| Seasonal Naive (référence) | 1.00 | 1.00 |")
-    A(f"| **TimeJEPA (meilleur ckpt)** | **{best_ratio:.2f}** | **{best_wql_ratio:.2f}** |")
+    A("| Seasonal Naive (reference) | 1.00 | 1.00 |")
+    A(f"| **TimeJEPA (best ckpt)** | **{best_ratio:.2f}** | **{best_wql_ratio:.2f}** |")
     A("| Toto-2.0-4m (~4M params) | 0.76 | 0.52 |")
     A("| Toto-2.0-22m | 0.72 | 0.50 |")
-    A("| Top-5 GIFT-Eval | 0.61–0.66 | 0.42–0.47 |")
-    A("\n*Calculé sur les 8 datasets long-horizon Nixtla à h=96, pas sur les 97 configs")
-    A("de GIFT-Eval. Ordre de grandeur indicatif, pas un classement.*")
-    A("\n*Le WQL d'un modèle ponctuel égale sa ND par construction : c'est le score qu'il")
-    A("obtiendrait sur GIFT-Eval sans tête probabiliste (cf. P2.1). L'écart entre la")
-    A("colonne MASE et la colonne CRPS mesure exactement ce que coûte l'absence de tête")
-    A("probabiliste.*")
+    A("| Top-5 GIFT-Eval | 0.61-0.66 | 0.42-0.47 |")
+    A("\n*Computed on the 8 Nixtla long-horizon datasets at h=96, not on the 97")
+    A("GIFT-Eval configs. Indicative order of magnitude, not a ranking.*")
+    A("\n*A point model's WQL equals its ND by construction: the score it would")
+    A("get on GIFT-Eval without a probabilistic head (cf. P2.1). The gap between")
+    A("the MASE column and the CRPS column measures exactly what the missing")
+    A("probabilistic head costs.*")
 
     return "\n".join(out)
 
@@ -209,7 +210,7 @@ def main():
     out_md.write_text(report)
 
     print(report)
-    print(f"\n\n→ {out_md}\n→ {out_csv}")
+    print(f"\n\n-> {out_md}\n-> {out_csv}")
 
 
 if __name__ == "__main__":

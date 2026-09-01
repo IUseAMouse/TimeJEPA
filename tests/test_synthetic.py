@@ -1,11 +1,11 @@
 """
-Tests du générateur synthétique (G8 / P2.5, src/timejepa/data/synthetic.py).
+Tests for the synthetic generator (G8 / P2.5, src/timejepa/data/synthetic.py).
 
-Deux catégories : le CONTRAT de sortie (format identique aux corpus convertis,
-sinon le datamodule casse en silence), et les PROPRIÉTÉS statistiques que le
-générateur prétend avoir — une famille « sub-horaire » doit réellement mettre
-son énergie spectrale dans les périodes 24-150, sinon elle ne bouche pas le
-trou d'E17 et personne ne s'en apercevrait avant une éval GIFT complète.
+Two categories: the output CONTRACT (format identical to converted corpora,
+otherwise the datamodule breaks silently), and the statistical PROPERTIES the
+generator claims to have - a "sub-hourly" family must really put its spectral
+energy in periods 24-150, otherwise it does not fill the E17 hole and nobody
+would notice before a full GIFT eval.
 """
 
 import sys
@@ -25,15 +25,15 @@ from timejepa.data.synthetic import (                                     # noqa
 
 
 # ---------------------------------------------------------------------------
-# Contrat de sortie
+# Output contract
 # ---------------------------------------------------------------------------
 
 def test_output_matches_converted_corpus_format(tmp_path):
-    """Même contrat que write_dense_npy : [n, L] float32 dense, fini, memmappable."""
+    """Same contract as write_dense_npy: [n, L] float32 dense, finite, memmappable."""
     spec = SyntheticSpec("t", chunk_length=1280)
     p = write_synthetic_family(tmp_path / "t.npy", spec, n_chunks=8, seed=0,
                                log_every=0)
-    a = np.load(p, mmap_mode="r")            # memmap = le mode du pretrain LOTSA
+    a = np.load(p, mmap_mode="r")            # memmap = the LOTSA pretrain mode
     assert a.shape == (8, 1280)
     assert a.dtype == np.float32
     assert np.isfinite(a).all()
@@ -47,7 +47,7 @@ def test_generation_is_reproducible():
 
 
 def test_series_are_diverse_not_templates():
-    """Deux tirages ne doivent pas être corrélés — sinon on génère N fois la même série."""
+    """Two draws must not be correlated - otherwise we generate the same series N times."""
     rng = np.random.default_rng(0)
     spec = SyntheticSpec("t", chunk_length=2048)
     xs = [sample_series(spec, rng) for _ in range(12)]
@@ -57,21 +57,21 @@ def test_series_are_diverse_not_templates():
             a = (xs[i] - xs[i].mean()) / (xs[i].std() + 1e-8)
             b = (xs[j] - xs[j].mean()) / (xs[j].std() + 1e-8)
             corrs.append(abs(float(np.mean(a * b))))
-    assert np.median(corrs) < 0.3, f"séries quasi identiques (|corr| médian {np.median(corrs):.2f})"
+    assert np.median(corrs) < 0.3, f"series nearly identical (median |corr| {np.median(corrs):.2f})"
 
 
 def test_scales_vary_revin_style():
-    """Le synthétique ne doit pas être reconnaissable à une normalisation implicite."""
+    """The synthetic data must not be recognizable by an implicit normalization."""
     rng = np.random.default_rng(1)
     spec = SyntheticSpec("t", chunk_length=512)
     stds = [float(sample_series(spec, rng).std()) for _ in range(30)]
     means = [abs(float(sample_series(spec, rng).mean())) for _ in range(30)]
-    assert max(stds) / max(min(stds), 1e-8) > 5, "échelles trop homogènes"
-    assert max(means) > 50, "niveaux trop centrés — un corpus réel ne l'est pas"
+    assert max(stds) / max(min(stds), 1e-8) > 5, "scales too homogeneous"
+    assert max(means) > 50, "levels too centered - a real corpus is not"
 
 
 # ---------------------------------------------------------------------------
-# Propriétés spectrales revendiquées
+# Claimed spectral properties
 # ---------------------------------------------------------------------------
 
 def _dominant_period(x: np.ndarray) -> float:
@@ -84,23 +84,23 @@ def _dominant_period(x: np.ndarray) -> float:
 
 def test_subhourly_family_puts_energy_in_short_periods():
     """
-    La famille censée boucher le trou 10T/15T (E17) doit avoir sa période
-    dominante dans [24, 150] pas la plupart du temps. Tolérance : tendance et
-    dérive lisse peuvent dominer sur quelques tirages, c'est voulu.
+    The family meant to fill the 10T/15T hole (E17) must have its dominant
+    period in [24, 150] steps most of the time. Tolerance: trend and smooth
+    drift may dominate on a few draws, by design.
     """
     spec = next(f for f in DEFAULT_FAMILIES if f.name == "synthetic_subhourly")
     rng = np.random.default_rng(3)
     periods = [_dominant_period(sample_series(spec, rng)) for _ in range(40)]
     in_band = sum(1 for p in periods if 20 <= p <= 300)
-    assert in_band >= 24, f"seulement {in_band}/40 tirages dans la bande sub-horaire"
+    assert in_band >= 24, f"only {in_band}/40 draws in the sub-hourly band"
 
 
 def test_lowfreq_family_has_long_chunks_and_short_cycles():
     """
-    Audit 2026-08-20 (T4) : à 1280, la famille donnait 1 fenêtre/morceau et
-    s'épuisait à ~2 % de l'époque. À 8192 elle pèse comme les autres ET devient
-    éligible aux paires k1>1. Ce sont les PÉRIODES courtes (4-52) qui portent la
-    « basse fréquence », pas la longueur du morceau.
+    Audit 2026-08-20 (T4): at 1280, the family gave 1 window/chunk and ran out
+    at ~2% of the epoch. At 8192 it weighs like the others AND becomes
+    eligible for k1>1 pairs. It is the short PERIODS (4-52) that carry the
+    "low frequency", not the chunk length.
     """
     spec = next(f for f in DEFAULT_FAMILIES if f.name == "synthetic_lowfreq")
     assert spec.chunk_length == 8192
@@ -112,13 +112,13 @@ def test_lowfreq_family_has_long_chunks_and_short_cycles():
 
 def test_long_chunks_unlock_decimation_factors():
     """
-    Le point de la longueur 8192 (G9) : la décimation exige 1280·f <= L.
-    À 2048 (morceaux réels), aucun f>=2 n'est possible ; à 8192, f jusqu'à 6.
-    Depuis l'audit T4, les TROIS familles sont à 8192 — toutes éligibles.
+    The point of length 8192 (G9): decimation requires 1280*f <= L.
+    At 2048 (real chunks), no f>=2 is possible; at 8192, f up to 6.
+    Since the T4 audit, ALL THREE families are at 8192 - all eligible.
     """
     for spec in DEFAULT_FAMILIES:
-        assert spec.chunk_length == 8192, f"{spec.name} devrait être à 8192 (T4)"
+        assert spec.chunk_length == 8192, f"{spec.name} should be at 8192 (T4)"
         eligible = [f for f in (1, 2, 3, 4, 6) if 1280 * f <= spec.chunk_length]
         assert eligible == [1, 2, 3, 4, 6]
     assert [f for f in (1, 2, 3, 4, 6) if 1280 * f <= 2048] == [1], \
-        "si ceci casse, la contrainte de géométrie a changé — mettre à jour G9"
+        "if this breaks, the geometry constraint changed - update G9"

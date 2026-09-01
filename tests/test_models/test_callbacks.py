@@ -10,7 +10,7 @@ from timejepa.training.callbacks import EMACallback, GradientClipCallback
 
 # EMACallback no longer owns the momentum schedule (it delegates to
 # TargetEncoder._compute_ema_decay and reads max_steps from the trainer), and
-# GradientClipCallback only monitors gradient norms — clipping is handled by
+# GradientClipCallback only monitors gradient norms - clipping is handled by
 # `trainer.gradient_clip_val`. Tests written against the old signatures are
 # marked deprecated rather than deleted.
 DEPRECATED_CALLBACK_API = pytest.mark.skip(

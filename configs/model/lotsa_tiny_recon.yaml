@@ -1,13 +1,13 @@
 # @package _global_
 #
-# G6 — ABLATION D'OBJECTIF : reconstruction contre extrapolation latente.
+# G6 - OBJECTIVE ABLATION: reconstruction vs latent extrapolation.
 #
-#   # pretrain de l'arm reconstruction
+#   # pretrain of the reconstruction arm
 #   python scripts/train.py --config-name lotsa_tiny_recon wandb.run_name=recon-pretrain
 #
-#   # finetune zero-shot — protocole IDENTIQUE à l'arm JEPA, nom de sortie distinct
-#   # (lotsa_tiny_zeroshot enverrait les checkpoints dans le répertoire de l'arm
-#   #  JEPA : même model.name, donc même dossier. Voir lotsa_tiny_recon_zeroshot.)
+#   # zero-shot finetune - protocol IDENTICAL to the JEPA arm, distinct output name
+#   # (lotsa_tiny_zeroshot would send checkpoints into the JEPA arm's directory:
+#   #  same model.name, so same folder. See lotsa_tiny_recon_zeroshot.)
 #   python scripts/train.py --config-name lotsa_tiny_recon_zeroshot \
 #       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_recon/pretrain_True/<ckpt> \
 #       wandb.run_name=recon-zeroshot
@@ -16,79 +16,74 @@
 #   python scripts/evaluate.py --config-name lotsa_tiny_eval \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_recon_zs/pretrain_False/<ckpt>
 #
-# Pourquoi cette expérience est la plus importante qui reste
+# Why this is the most important experiment left
 # ---------------------------------------------------------
-# E12 a établi que pré-entraîner améliore le transfert (−8,7 %). E14 a établi
-# qu'un corpus plus large et plus divers le creuse (ETTm1, −16,8 %). Aucun des
-# deux ne dit quoi que ce soit de la LOSS : le bras de comparaison d'E12 est
-# l'ABSENCE de pré-entraînement, pas un objectif concurrent.
+# E12 established that pretraining improves transfer (-8.7%). E14 established
+# that a larger, more diverse corpus widens it (ETTm1, -16.8%). Neither says
+# anything about the LOSS: E12's comparison arm is the ABSENCE of pretraining,
+# not a competing objective.
 #
-# Autrement dit, « l'extrapolation latente bat la reconstruction » — la thèse du
-# projet — figure au §4 du registre, la liste de ce qui n'est PAS établi. Rien
-# dans les résultats actuels n'exclut qu'un objectif de reconstruction, à budget
-# identique, fasse aussi bien ou mieux. C'est l'hypothèse par défaut d'un
-# relecteur, puisque c'est ce que font Moirai et Moment, et que ça marche.
+# In other words, "latent extrapolation beats reconstruction" - the project's
+# thesis - sits in section 4 of the registry, the list of what is NOT
+# established. Nothing in the current results rules out that a reconstruction
+# objective, at identical budget, does as well or better. That is a reviewer's
+# default hypothesis, since it is what Moirai and Moment do, and it works.
 #
-# Ce qui change, et c'est UNE seule variable
+# What changes, and it is ONE variable
 # ------------------------------------------
-#   JEPA       : le prédicteur régresse vers target_encoder(patchs futurs)
-#   cet arm    : le prédicteur régresse vers les patchs futurs BRUTS
+#   JEPA      : the predictor regresses toward target_encoder(future patches)
+#   this arm  : the predictor regresses toward the RAW future patches
 #
-# La tâche reste passé -> futur. Le corpus, la géométrie, le budget,
-# l'optimiseur, le scheduler, le stride, les plafonds : tous hérités de
-# lotsa_tiny sans exception. Seul l'espace dans lequel le prédicteur est noté
-# bouge, de latent à observations.
+# The task stays past -> future. Corpus, geometry, budget, optimizer,
+# scheduler, stride, caps: all inherited from lotsa_tiny without exception.
+# Only the space the predictor is scored in moves, from latent to observations.
 #
-# On ne teste PAS la reconstruction masquée façon Moirai, et c'est délibéré :
-# elle changerait deux variables à la fois (l'espace de la cible ET la forme de
-# la tâche, extrapolation -> interpolation), ce qui rendrait le résultat
-# ininterprétable. L'objectif retenu ici est par ailleurs celui de TimesFM,
-# donc une baseline que les relecteurs identifient.
+# We do NOT test Moirai-style masked reconstruction, deliberately: it would
+# change two variables at once (the target space AND the task shape,
+# extrapolation -> interpolation), making the result uninterpretable. The
+# objective used here is also TimesFM's, so a baseline reviewers recognize.
 #
-# Pourquoi Huber et pas MSE — mesuré, pas supposé
+# Why Huber and not MSE - measured, not assumed
 # -----------------------------------------------
-# RevIN normalise la cible avec les statistiques du CONTEXTE, et son échelle est
-# sqrt(var + 1e-5). Sur un contexte quasi constant (capteur à plat, compteur
-# hors service, solaire la nuit), ce plancher vaut 0.00316 : le moindre
-# mouvement dans la fenêtre future atterrit à des MILLIERS de sigma. Mesuré sur
-# le premier run de cet arm : target_std à 3000 et target_var à 4e7, contre ~1
-# sur un batch sain, avec pred_std qui grimpait de 1 à 6 en les poursuivant.
+# RevIN normalizes the target with the CONTEXT statistics, and its scale is
+# sqrt(var + 1e-5). On a near-constant context (flat sensor, dead meter, solar
+# at night), that floor is 0.00316: the slightest move in the future window
+# lands at THOUSANDS of sigma. Measured on this arm's first run: target_std at
+# 3000 and target_var at 4e7, versus ~1 on a healthy batch, with pred_std
+# climbing from 1 to 6 chasing them.
 #
-# Sous MSE, un tel batch pèse plus que des dizaines de millions de batchs
-# normaux : l'objectif devient celui des fenêtres dégénérées. L'arm JEPA ne
-# montrait rien de tel parce que ses cibles sont des sorties d'encodeur, que le
-# LayerNorm garde en O(1) — la pathologie était donc DANS LES DONNÉES depuis le
-# début, simplement absorbée.
+# Under MSE, such a batch outweighs tens of millions of normal batches: the
+# objective becomes that of the degenerate windows. The JEPA arm showed nothing
+# like this because its targets are encoder outputs, kept O(1) by LayerNorm -
+# so the pathology was IN THE DATA from the start, simply absorbed.
 #
-# Huber borne la contribution de chaque élément au gradient et conserve toutes
-# les fenêtres, donc les deux arms voient exactement les mêmes données.
-# `train_loss/target_absmax` garde l'amplitude visible plutôt que masquée par la
-# loss robuste.
+# Huber bounds each element's contribution to the gradient and keeps all
+# windows, so both arms see exactly the same data. `train_loss/target_absmax`
+# keeps the amplitude visible rather than hidden by the robust loss.
 #
-# ⚠️ Cet arm diffère donc de JEPA par la FORME de la loss autant que par
-# l'espace de la cible. Dit plutôt que caché : une MSE non bornée en espace des
-# valeurs n'est pas un objectif bien posé ici, le « strictement toutes choses
-# égales » n'était pas disponible.
+# WARNING: this arm therefore differs from JEPA in the SHAPE of the loss as
+# much as in the target space. Said rather than hidden: an unbounded MSE in
+# value space is not a well-posed objective here, so "strictly all else equal"
+# was not available.
 #
-# Comment lire le résultat — les deux issues sont utiles
+# How to read the result - both outcomes are useful
 # -----------------------------------------------------
-# Le run est falsifiable dans les deux sens, et c'est le but :
-#   * JEPA gagne  -> la thèse du papier tient, et on a enfin le contrôle qui la
-#                    soutient plutôt qu'une intuition.
-#   * recon gagne -> le levier réel est le corpus et l'échelle (E14), pas la
-#                    loss. On recadre le papier là-dessus AVANT la review, pas
-#                    pendant.
-# ⚠️ La comparaison ne vaut que si les deux arms sont évalués avec le MÊME
-# finetune et le MÊME protocole : lotsa_tiny_zeroshot puis lotsa_tiny_eval.
-# Comparer ce pretrain à un finetune Monash de l'autre arm ne mesurerait rien.
+# The run is falsifiable both ways, and that is the point:
+#   * JEPA wins  -> the paper's thesis holds, and we finally have the control
+#                   backing it rather than an intuition.
+#   * recon wins -> the real lever is corpus and scale (E14), not the loss.
+#                   Reframe the paper on that BEFORE review, not during.
+# WARNING: the comparison only holds if both arms are evaluated with the SAME
+# finetune and the SAME protocol: lotsa_tiny_zeroshot then lotsa_tiny_eval.
+# Comparing this pretrain to a Monash finetune of the other arm would measure
+# nothing.
 #
-# ⚠️ Ce qui n'est PAS comparable entre les deux arms : les `val_loss` de
-# pretrain. L'un est une MSE en espace latent, l'autre en espace des valeurs —
-# des grandeurs sans rapport, sur des cibles différentes. Seules les MASE/WQL
-# après finetune se comparent. Même remarque pour le rang effectif : il reste
-# loggué (l'encodeur reste un encodeur) mais sa calibration Monash/LOTSA ne
-# s'applique pas ici, aucune alarme d'effondrement n'y étant attendue — les
-# cibles brutes sont fixes, il n'y a rien à effondrer.
+# WARNING: NOT comparable between the two arms: the pretrain `val_loss`. One is
+# an MSE in latent space, the other in value space - unrelated quantities, on
+# different targets. Only the post-finetune MASE/WQL compare. Same remark for
+# effective rank: it stays logged (the encoder remains an encoder) but its
+# Monash/LOTSA calibration does not apply here, no collapse alarm being
+# expected - raw targets are fixed, there is nothing to collapse.
 defaults:
   - lotsa_tiny
   - _self_
@@ -97,18 +92,18 @@ model:
   name: "timejepa_lotsa_tiny_recon"
 
 training:
-  # Le seul drapeau qui distingue cet arm. Absent de toutes les autres configs,
-  # dont le comportement est donc inchangé au bit près.
+  # The only flag distinguishing this arm. Absent from every other config,
+  # whose behavior is therefore bit-for-bit unchanged.
   reconstruction_target: true
 
   loss:
-    # `_compute_loss` court-circuite `jepa_loss` en mode reconstruction et
-    # applique un HUBER nu : les termes anti-effondrement existent parce que les
-    # cibles latentes sont APPRISES et peuvent dégénérer, ce qui n'est pas le
-    # cas de patchs bruts. Les ajouter régulariserait contre un mode d'échec
-    # inexistant et confondrait la comparaison.
-    # Cette ligne ne pilote donc rien — elle évite qu'un lecteur (ou le log de
-    # démarrage, qui imprime `loss_type`) croie que SIGReg tourne encore.
+    # `_compute_loss` bypasses `jepa_loss` in reconstruction mode and applies a
+    # bare HUBER: the anti-collapse terms exist because latent targets are
+    # LEARNED and can degenerate, which is not the case for raw patches.
+    # Adding them would regularize against a nonexistent failure mode and
+    # confound the comparison.
+    # So this line drives nothing - it prevents a reader (or the startup log,
+    # which prints `loss_type`) from believing SIGReg is still running.
     type: "smooth_l1"
 
 wandb:

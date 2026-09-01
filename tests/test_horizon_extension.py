@@ -1,11 +1,11 @@
 """
-Tests de l'extension d'horizon (chantier 2, grow_future_query_table).
+Tests for the horizon extension (workstream 2, grow_future_query_table).
 
-La table de requêtes du prédicteur est le SEUL paramètre du modèle dont la
-forme dépende de prediction_length. L'extension doit : préserver bit-à-bit les
-lignes apprises, n'initialiser que les neuves, refuser les fusions qui n'ont
-pas de sens, et rester STRICTEMENT opt-in — sans le flag, un mismatch reste un
-échec bruyant (le refus P3.2), jamais une table aléatoire silencieuse.
+The predictor's query table is the ONLY model parameter whose shape depends
+on prediction_length. The extension must: preserve the learned rows bit for
+bit, initialize only the new ones, refuse merges that make no sense, and stay
+STRICTLY opt-in - without the flag, a mismatch remains a loud failure (the
+P3.2 refusal), never a silent random table.
 """
 
 import sys
@@ -37,15 +37,15 @@ def test_grow_table_copies_prefix_bit_exact():
     merged = grow_future_query_table(big, sd)
     n = sd[KEY].shape[1]
     assert merged[KEY].shape == dict(big.state_dict())[KEY].shape
-    assert torch.equal(merged[KEY][:, :n, :], sd[KEY]), "lignes apprises altérées"
+    assert torch.equal(merged[KEY][:, :n, :], sd[KEY]), "learned rows altered"
     assert torch.equal(merged[KEY][:, n:, :],
                        dict(big.state_dict())[KEY][:, n:, :]), \
-        "les lignes neuves doivent venir de l'init du MODÈLE (reproductible)"
+        "the new rows must come from the MODEL's init (reproducible)"
 
 
 def test_grow_table_refuses_shrink_and_dmodel_mismatch():
     small, big = _model(96), _model(512)
-    with pytest.raises(ValueError, match="plus longue"):
+    with pytest.raises(ValueError, match="longer than"):
         grow_future_query_table(small, dict(big.state_dict()))
     other = _model(96, d_model=64)
     with pytest.raises(ValueError, match="d_model"):
@@ -65,7 +65,7 @@ def _save_pretrain_ckpt(model, path):
 
 
 def test_finetune_512_without_flag_raises(tmp_path):
-    """Chemin historique préservé : mismatch non intentionnel = échec bruyant."""
+    """Historical path preserved: an unintentional mismatch = loud failure."""
     ckpt = tmp_path / "p96.ckpt"
     _save_pretrain_ckpt(_model(96), ckpt)
     module = FinetuneModule(model=_model(512))
@@ -74,21 +74,21 @@ def test_finetune_512_without_flag_raises(tmp_path):
 
 
 def test_finetune_512_with_flag_loads_clean(tmp_path):
-    """Avec le flag : zéro clé cœur droppée, forward sur l'horizon long passe."""
+    """With the flag: zero core keys dropped, forward on the long horizon passes."""
     ckpt = tmp_path / "p96.ckpt"
     small = _model(96)
     _save_pretrain_ckpt(small, ckpt)
 
     big = _model(512)
     module = FinetuneModule(model=big, extend_horizon_queries=True)
-    module.load_pretrained_encoder(str(ckpt))     # ne lève pas
+    module.load_pretrained_encoder(str(ckpt))     # does not raise
 
-    # les lignes pré-entraînées ont bien voyagé
+    # the pretrained rows did travel
     n = dict(small.state_dict())[KEY].shape[1]
     assert torch.equal(dict(big.state_dict())[KEY][:, :n, :],
                        dict(small.state_dict())[KEY])
 
-    # et le forward finetune produit l'horizon 512 (63 patchs cibles)
+    # and the finetune forward produces the 512 horizon (63 target patches)
     with torch.no_grad():
         out = big.forward_finetune(torch.randn(2, 384, 1))
     assert out["forecast"].shape[1] == 512
@@ -96,11 +96,12 @@ def test_finetune_512_with_flag_loads_clean(tmp_path):
 
 def test_ctor_with_pretrained_path_loads_before_horizon_attr(tmp_path):
     """
-    Régression (2026-08-22) : __init__ appelait load_pretrained_encoder AVANT
-    de poser self.extend_horizon_queries, que le chargeur lit — AttributeError
-    sur TOUT finetune lancé avec +training.pretrained_encoder_path, c.-à-d. le
-    protocole standard. Jamais attrapé car les tests construisaient le module
-    sans chemin. Ce test suit le chemin exact du crash du finetune mix.
+    Regression (2026-08-22): __init__ called load_pretrained_encoder BEFORE
+    setting self.extend_horizon_queries, which the loader reads -
+    AttributeError on EVERY finetune launched with
+    +training.pretrained_encoder_path, i.e. the standard protocol. Never
+    caught because the tests built the module without a path. This test
+    follows the exact path of the mix finetune crash.
     """
     import torch
     from timejepa.models import JEPATST

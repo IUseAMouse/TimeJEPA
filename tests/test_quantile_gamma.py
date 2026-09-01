@@ -1,13 +1,13 @@
 """
-Tests G4.2 — calibration conforme uniforme des quantiles.
+G4.2 tests - uniform conformal calibration of the quantiles.
 
-Invariants, par gravité :
-1. gamma = 1 partout : sortie BIT-IDENTIQUE (flag-on inerte par défaut).
-2. La médiane (point forecast) n'est JAMAIS modifiée, quel que soit gamma —
-   c'est le contrat MASE-invariant, l'équivalent du gate ESJEPA.
-3. gamma > 0 préserve la monotonie du fan.
-4. gamma_for_level retrouve le facteur exact sur un fan gaussien artificiellement
-   resserré : q_k = 0.5·(vrai q_k) => gamma ≈ 2 (la calibration fonctionne).
+Invariants, by severity:
+1. gamma = 1 everywhere: BIT-IDENTICAL output (flag-on inert by default).
+2. The median (point forecast) is NEVER modified, whatever gamma - the
+   MASE-invariant contract, the equivalent of the ESJEPA gate.
+3. gamma > 0 preserves fan monotonicity.
+4. gamma_for_level recovers the exact factor on an artificially narrowed
+   Gaussian fan: q_k = 0.5*(true q_k) => gamma ~ 2 (the calibration works).
 """
 
 import sys
@@ -27,7 +27,7 @@ def _fake_out(B=2, h=16, Q=9, four_dim=False):
     torch.manual_seed(0)
     med = torch.randn(B, h, 1)
     spread = torch.linspace(-1, 1, Q).view(1, 1, Q) * torch.rand(B, h, 1)
-    q = med + spread                                    # monotone par niveau
+    q = med + spread                                    # monotone per level
     if four_dim:
         q = q.unsqueeze(-1)
     return {"forecast_denorm": med, "quantiles_denorm": q,
@@ -45,8 +45,8 @@ def test_median_never_moves():
     out = _fake_out()
     res = apply_quantile_gamma(out, torch.full((9,), 2.5))
     assert torch.equal(res["forecast_denorm"], out["forecast_denorm"])
-    # le niveau médian du fan (index 4, level 0.5) coïncide avec med => il ne
-    # bouge pas non plus quand gamma_0.5 = 1 (contrat du calibrateur)
+    # the fan's median level (index 4, level 0.5) coincides with med => it
+    # does not move either when gamma_0.5 = 1 (calibrator contract)
     g = torch.full((9,), 2.5); g[4] = 1.0
     res = apply_quantile_gamma(out, g)
     torch.testing.assert_close(res["quantiles_denorm"][..., 4],
@@ -78,13 +78,13 @@ def test_none_gamma_and_missing_quantiles_are_noops():
 
 
 def test_gamma_for_level_recovers_true_factor():
-    """Fan gaussien resserré d'un facteur 2 : la calibration doit rendre ~2,
-    au-dessus (0.9) comme en dessous (0.1) de la médiane."""
+    """Gaussian fan narrowed by a factor 2: the calibration must return ~2,
+    above (0.9) as well as below (0.1) the median."""
     rng = np.random.default_rng(0)
     y = rng.standard_normal(200_000)
     from scipy.stats import norm
     for k in (0.1, 0.9):
-        q_k = 0.5 * norm.ppf(k)          # fan 2x trop étroit, med = 0
+        q_k = 0.5 * norm.ppf(k)          # fan 2x too narrow, med = 0
         r = y / q_k
         g = gamma_for_level(r, k)
         assert abs(g - 2.0) < 0.05, (k, g)
@@ -95,8 +95,8 @@ def test_gamma_for_level_small_sample_is_neutral():
 
 
 # ---------------------------------------------------------------------------
-# Intégration : la boucle de collecte elle-même (bug du 2026-08-26 — l'état
-# des accumulateurs fuyait entre datasets, seul le premier était initialisé).
+# Integration: the collection loop itself (2026-08-26 bug - accumulator state
+# leaked between datasets, only the first was initialized).
 # ---------------------------------------------------------------------------
 
 from types import SimpleNamespace                                    # noqa: E402
@@ -105,8 +105,8 @@ from calibrate_quantiles import calibrate_dataset                    # noqa: E40
 
 
 class _NarrowFanOracle:
-    """Prévoit med=0 et un fan gaussien 2x trop étroit pour des cibles N(0,1) :
-    la calibration doit rendre gamma ≈ 2 aux niveaux 0.1/0.9."""
+    """Predicts med=0 and a Gaussian fan 2x too narrow for N(0,1) targets:
+    the calibration must return gamma ~ 2 at levels 0.1/0.9."""
     patching = SimpleNamespace(stride=8, patch_size=16)
     LEVELS = (0.1, 0.5, 0.9)
     Z = (-1.2816, 0.0, 1.2816)
@@ -129,15 +129,15 @@ def _items(seed, n=64, L=64, h=16):
 def test_calibrate_dataset_two_datasets_no_state_leak():
     m = _NarrowFanOracle()
     dev = torch.device("cpu")
-    for seed in (0, 1):                       # DEUX datasets successifs
+    for seed in (0, 1):                       # TWO successive datasets
         items = _items(seed)
         levels, stats = calibrate_dataset(
             m, lambda j: items[int(j)], np.arange(len(items)), h=16,
             batch_size=16, flip=False, device=dev)
         assert list(levels) == [0.1, 0.5, 0.9]
-        # fan 2x trop étroit => gamma ≈ 2 aux extrêmes, 1.0 épinglé au centre
+        # fan 2x too narrow => gamma ~ 2 at the extremes, 1.0 pinned at center
         assert abs(stats["gamma"][0] - 2.0) < 0.35, stats["gamma"]
         assert abs(stats["gamma"][2] - 2.0) < 0.35, stats["gamma"]
         assert stats["gamma"][1] == 1.0
-        # couverture avant : q90 trop bas => P(y<=q90) ~ Phi(0.64) ~ 0.74
+        # coverage before: q90 too low => P(y<=q90) ~ Phi(0.64) ~ 0.74
         assert 0.6 < stats["coverage_before"][2] < 0.85

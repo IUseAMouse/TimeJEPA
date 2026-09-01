@@ -2,8 +2,8 @@
 Model construction and checkpoint loading for evaluation.
 
 Moved VERBATIM from scripts/evaluate.py (which now imports from here) so that
-every evaluation entry point — the Monash/Nixtla script, the GIFT-Eval harness,
-future ones — loads checkpoints through the same code. Two loaders is how the
+every evaluation entry point - the Monash/Nixtla script, the GIFT-Eval harness,
+future ones - loads checkpoints through the same code. Two loaders is how the
 B20-era bugs happened: a fix lands in one path and the other silently keeps the
 old behaviour.
 """
@@ -49,19 +49,19 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         ema_tau_base=cfg.model.target_encoder.momentum_base,
         ema_tau_end=cfg.model.target_encoder.momentum_final,
         use_revin=cfg.model.encoder.use_revin,
-        # G9.2 — construit le FiLM de conditionnement d'échelle. Absent de
-        # toutes les configs existantes => False => state_dict inchangé.
+        # G9.2 - builds the scale-conditioning FiLM. Absent from all existing
+        # configs => False => state_dict unchanged.
         cross_resolution=bool(cfg.model.get('cross_resolution', False)),
-        # G8.4 — compression robuste arcsinh. Le marqueur robust_scaler.is_robust
-        # rend les checkpoints auto-descriptifs : un mismatch flag/checkpoint
-        # tombe dans le refus P3.2 ci-dessous au lieu de produire des chiffres
-        # silencieusement faux (le flag ne porte AUCUN poids, seul le marqueur
-        # le trahit).
+        # G8.4 - robust arcsinh compression. The robust_scaler.is_robust
+        # marker makes checkpoints self-describing: a flag/checkpoint
+        # mismatch falls into the P3.2 refusal below instead of producing
+        # silently wrong numbers (the flag carries NO weights, only the
+        # marker betrays it).
         robust_scale=bool(cfg.model.get('robust_scale', False)),
-        # ESJEPA — tête z sur le prédicteur + gate d'étalement sur la tête
-        # quantile. Les poids (predictor.z_head.*) rendent les checkpoints
-        # auto-descriptifs sous le préfixe core => refus P3.2 dans les deux
-        # sens. Absent de toutes les configs existantes => False.
+        # ESJEPA - z head on the predictor + spread gate on the quantile
+        # head. The weights (predictor.z_head.*) make checkpoints
+        # self-describing under the core prefix => P3.2 refusal in both
+        # directions. Absent from all existing configs => False.
         error_signal=bool(cfg.model.get('error_signal', False)),
     )
 
@@ -74,9 +74,9 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         num_features=cfg.model.num_channels,
         decoder_type=cfg.model.decoder.type,
         revin=model.revin,
-        # ESJEPA : le décodeur reconstruit ici doit porter le même flag que le
-        # modèle (site 2/3 — les trois sites de construction du ForecastingHead
-        # lisent la même clé de config ; gardé par test).
+        # ESJEPA: the decoder rebuilt here must carry the same flag as the
+        # model (site 2/3 - all three ForecastingHead construction sites read
+        # the same config key; guarded by test).
         error_signal=bool(cfg.model.get('error_signal', False)),
     )
 
@@ -104,7 +104,7 @@ def load_checkpoint(
     LEGITIMATE mismatch this loader ever meets is the decoder swap
     (point head <-> quantile head), and an encoder/predictor mismatch means the
     evaluation would run on freshly initialised weights and produce numbers
-    that are silently wrong — the exact failure mode measured when a
+    that are silently wrong - the exact failure mode measured when a
     prediction_length-256 checkpoint met a 512 model: `filter_loadable`
     dropped `predictor.future_position_embedding`, this function warned, and
     the eval would have scored a random query table. `allow_partial=True` is a
@@ -160,7 +160,7 @@ def load_checkpoint(
     # decoder for the quantile head is exactly such a case.
     cleaned_state_dict, dropped = filter_loadable(model, cleaned_state_dict)
     for key, ckpt_shape, model_shape in dropped:
-        logger.info(f"  ↷ re-initialising {key}: checkpoint {ckpt_shape} vs model {model_shape}")
+        logger.info(f"  re-initialising {key}: checkpoint {ckpt_shape} vs model {model_shape}")
 
     # Load weights
     missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
@@ -173,32 +173,32 @@ def load_checkpoint(
     ]
 
     # Log results
-    logger.info(f"  ✓ Loaded {len(cleaned_state_dict)} keys")
+    logger.info(f"  Loaded {len(cleaned_state_dict)} keys")
 
     if missing:
         non_critical = len(missing) - len(critical_missing)
         logger.info(f"  Expected missing (target_encoder, buffers): {non_critical} keys")
 
-    # P3.2 — refuse rather than warn when the CORE of the model is not the
+    # P3.2 - refuse rather than warn when the CORE of the model is not the
     # checkpoint's. `dropped` covers shape mismatches, `critical_missing`
     # covers absent keys; both paths must be guarded or the table-growth case
     # slips through as a warn.
     core = ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')
     core_bad = ([k for k, _, _ in dropped if k.startswith(core)]
                 + [k for k in critical_missing if k.startswith(core)]
-                # symétrie : un checkpoint qui porte des poids core que le
-                # modèle n'a pas (arcsinh -> modèle nu, ESJEPA
-                # predictor.z_head -> modèle nu, xres w_film -> modèle nu)
-                # arrive en 'unexpected', pas en 'missing' — refuser aussi.
-                # Durcissement 2026-08-23 (était limité à robust_scaler.) :
-                # évaluer un checkpoint d'arm dans un modèle construit sans le
-                # flag, c'est amputer l'architecture entraînée en silence.
-                # Aucun flux flag-off avec checkpoint conforme n'est touché.
+                # symmetry: a checkpoint carrying core weights the model
+                # lacks (arcsinh -> bare model, ESJEPA predictor.z_head ->
+                # bare model, xres w_film -> bare model) lands in
+                # 'unexpected', not 'missing' - refuse too. Hardened
+                # 2026-08-23 (was limited to robust_scaler.): evaluating an
+                # arm checkpoint in a model built without the flag silently
+                # amputates the trained architecture. No flag-off flow with a
+                # conforming checkpoint is affected.
                 + [k for k in unexpected if k.startswith(core)])
     if core_bad and not allow_partial:
         raise RuntimeError(
             f"Checkpoint/model mismatch on core components: {core_bad[:6]}"
-            f"{' …' if len(core_bad) > 6 else ''} — evaluating would score "
+            f"{' ...' if len(core_bad) > 6 else ''} - evaluating would score "
             f"freshly initialised weights and produce silently wrong numbers. "
             f"Either the geometry/config does not match the checkpoint, or you "
             f"want an explicit extension (see grow_future_query_table). "
@@ -206,12 +206,12 @@ def load_checkpoint(
         )
 
     if critical_missing:
-        logger.warning(f"  ⚠️ Potentially missing keys: {critical_missing[:10]}")
+        logger.warning(f"  Potentially missing keys: {critical_missing[:10]}")
         if len(critical_missing) > 10:
             logger.warning(f"     ... and {len(critical_missing) - 10} more")
 
     if unexpected:
-        logger.warning(f"  ⚠️ Unexpected keys: {unexpected[:5]}")
+        logger.warning(f"  Unexpected keys: {unexpected[:5]}")
 
     model = model.to(device)
     model.eval()

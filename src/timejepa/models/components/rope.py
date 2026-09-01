@@ -43,7 +43,7 @@ class RotaryPositionEmbedding(nn.Module):
         self.base = base
         
         # Compute inverse frequencies
-        # θ_i = base^(-2i/dim) for i in [0, dim/2)
+        # theta_i = base^(-2i/dim) for i in [0, dim/2)
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
         

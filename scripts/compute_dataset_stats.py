@@ -22,7 +22,7 @@ def main():
         data_path = data_dir / f"{dataset_name}.npy"
         
         if not data_path.exists():
-            print(f"⚠️  {dataset_name}: NOT FOUND")
+            print(f"{dataset_name}: NOT FOUND")
             continue
         
         # Load
@@ -50,7 +50,7 @@ def main():
     print("="*60)
     print(f"{'TOTAL':25} | {total_series:6} series | {total_points:12,} points")
     print("="*60)
-    print(f"\n📊 D = {total_points:,} total datapoints\n")
+    print(f"\nD = {total_points:,} total datapoints\n")
 
 if __name__ == "__main__":
     main()

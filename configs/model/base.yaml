@@ -1,8 +1,8 @@
-# ⚠️ DEPRECATED (audit du 2026-08-19) — racine ORPHELINE, ne pas utiliser.
-# Dérive mesurée par rapport à tiny.yaml : liste de datasets périmée, clés
-# multi-résolution/context_lengths absentes, blocs recopiés jamais resynchronisés.
-# Les échelles vivantes sont lotsa_mini / lotsa_base (qui héritent de lotsa_tiny
-# et redéfinissent les dimensions). Conservé par politique no-delete (P2.9).
+# DEPRECATED (2026-08-19 audit) - ORPHANED root, do not use. Measured drift
+# vs tiny.yaml: stale dataset list, missing multi-resolution/context_lengths
+# keys, copied blocks never resynced. Kept per the no-delete policy (P2.9);
+# use lotsa_mini / lotsa_base (which inherit from lotsa_tiny and redefine the
+# dimensions).
 # @package _global_
 # configs/model/timejepa_base.yaml
 
@@ -60,7 +60,7 @@ training:
     smooth_l1_beta: 1.0
     # `invariance_loss_weight` was missing here, which made train.py crash on
     # cfg.training.loss.invariance_loss_weight. And with variance/covariance at
-    # 0.0 VICReg degenerated to plain MSE — i.e. no anti-collapse term at all,
+    # 0.0 VICReg degenerated to plain MSE - i.e. no anti-collapse term at all,
     # which is exactly the failure mode observed on noisy series.
     invariance_loss_weight: 25.0
     variance_loss_weight: 15.0
@@ -68,7 +68,7 @@ training:
   
   optimizer:
     name: "adamw"
-    learning_rate: 5.0e-4  # Réduit pour stabilité
+    learning_rate: 5.0e-4  # Reduced for stability
     weight_decay: 0.05
     betas: [0.9, 0.95]
     eps: 1.0e-8
@@ -76,7 +76,7 @@ training:
   
   lr_scheduler:
     type: "cosine"
-    warmup_epochs: 0.15  # Plus de warmup
+    warmup_epochs: 0.15  # More warmup
     min_lr: 1.0e-6
   
   max_epochs: 25
@@ -100,7 +100,7 @@ data:
   datasets_finetune: ["electricity", "m4_hourly", "australian-electricity-demand", "melbourne-pedestrian-count", "london-smart-meters"]
   datasets_eval: ["electricity", "m4_hourly"]
   combine_mode: "concatenate"
-  batch_size: 384  # Réduit pour VRAM
+  batch_size: 384  # Reduced for VRAM
   stride: 8
   normalize_mode: "global"
   normalizer_type: "identity"
@@ -179,7 +179,7 @@ trainer:
   precision: "bf16-mixed"
   max_epochs: ${training.max_epochs}
   gradient_clip_val: ${training.gradient_clip_val}
-  accumulate_grad_batches: 8  # Compense batch_size réduit
+  accumulate_grad_batches: 8  # Compensates for the reduced batch_size
   val_check_interval: 0.05
   log_every_n_steps: ${training.log_every_n_steps}
   deterministic: false

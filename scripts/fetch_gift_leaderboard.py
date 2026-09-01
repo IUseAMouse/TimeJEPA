@@ -1,24 +1,26 @@
-#!/usr/bin/env python
+# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round (the
+# 2026-08-24 leaderboard snapshot vendored under docs/assets/gift_leaderboard/);
+# kept per the no-delete policy.
 """
-Snapshot local du leaderboard GIFT-Eval (espace HF Salesforce/GIFT-Eval).
+Local snapshot of the GIFT-Eval leaderboard (HF space Salesforce/GIFT-Eval).
 
     python scripts/fetch_gift_leaderboard.py            # -> docs/assets/gift_leaderboard/<date>/
 
-Télécharge le all_results.csv officiel de chaque modèle du leaderboard, puis
-recalcule les DEUX agrégats (MASE et CRPS/WQL) avec la formule du leaderboard —
-moyenne géométrique des ratios par config contre le Seasonal_Naive officiel —
-c'est-à-dire exactement la convention de notre harnais (evaluation/gift.py).
+Downloads each leaderboard model's official all_results.csv, then recomputes
+BOTH aggregates (MASE and CRPS/WQL) with the leaderboard formula - geometric
+mean of per-config ratios against the official Seasonal_Naive - i.e. exactly
+our harness's convention (evaluation/gift.py).
 
-Pourquoi vendorer plutôt que consulter le site : (1) les rangs cités dans le
-registre (E17, E19...) doivent rester vérifiables même si le leaderboard bouge ;
-(2) les per-config bruts des concurrents permettent les comparaisons de queue
-(la décomposition E18 contre Moirai_small, TTM, etc.) sans re-scraper.
+Why vendor rather than consult the site: (1) the ranks cited in the registry
+(E17, E19...) must stay verifiable even if the leaderboard moves; (2) the
+competitors' raw per-config files enable tail comparisons (the E18
+decomposition against Moirai_small, TTM, etc.) without re-scraping.
 
-Sorties :
-    docs/assets/gift_leaderboard/<date>/raw/<modèle>.csv    (97 configs officiels)
-    docs/assets/gift_leaderboard/<date>/leaderboard.csv     (rang, MASE ratio, CRPS ratio)
-Un modèle sans le set complet de configs du Seasonal_Naive est agrégé sur
-l'intersection et marqué (n_configs) — dit, pas caché.
+Outputs:
+    docs/assets/gift_leaderboard/<date>/raw/<model>.csv     (official 97 configs)
+    docs/assets/gift_leaderboard/<date>/leaderboard.csv     (rank, MASE ratio, CRPS ratio)
+A model missing the Seasonal_Naive's full config set is aggregated on the
+intersection and marked (n_configs) - stated, not hidden.
 """
 
 import argparse
@@ -45,7 +47,7 @@ def http(url: str) -> bytes:
 
 
 def read_results(blob: bytes) -> dict:
-    """dataset -> (mase, wql), NaN filtrés."""
+    """dataset -> (mase, wql), NaNs filtered out."""
     out = {}
     for row in csv.DictReader(io.StringIO(blob.decode("utf-8"))):
         try:
@@ -62,11 +64,11 @@ def geomean(vals):
 
 def fetch_meta(models, out_dir: Path):
     """
-    Enrichissement (2026-08-24) : les config.json de soumission portent l'ORG
-    officielle, le lien modèle, model_type, testdata_leakage,
-    replication_code_available — et l'API HF du modèle lié donne la taille
-    réelle (safetensors.total). Vendored dans models_meta.csv, à côté du
-    classement, pour gift_rank.py.
+    Enrichment (2026-08-24): submission config.json files carry the official
+    ORG, model link, model_type, testdata_leakage,
+    replication_code_available - and the linked model's HF API gives the real
+    size (safetensors.total). Vendored in models_meta.csv, next to the
+    ranking, for gift_rank.py.
     """
     rows = []
     for i, m in enumerate(models):
@@ -102,22 +104,22 @@ def fetch_meta(models, out_dir: Path):
         w.writerows(rows)
     n_org = sum(1 for r in rows if r["org"])
     n_par = sum(1 for r in rows if r["params_m"])
-    print(f"models_meta.csv : {n_org}/{len(rows)} orgs, {n_par}/{len(rows)} tailles")
+    print(f"models_meta.csv: {n_org}/{len(rows)} orgs, {n_par}/{len(rows)} sizes")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("--out", default=None, help="défaut : docs/assets/gift_leaderboard/<date>")
+    ap.add_argument("--out", default=None, help="default: docs/assets/gift_leaderboard/<date>")
     ap.add_argument("--enrich-only", default=None, metavar="SNAPSHOT_DIR",
-                    help="n'ajoute que models_meta.csv à un snapshot existant "
-                         "(sans re-télécharger les CSV de résultats)")
+                    help="only add models_meta.csv to an existing snapshot "
+                         "(without re-downloading the result CSVs)")
     args = ap.parse_args()
 
     if args.enrich_only:
         snap = Path(args.enrich_only)
         with open(snap / "leaderboard.csv") as f:
             models = [r["model"] for r in csv.DictReader(f)]
-        print(f"{len(models)} modèles du snapshot {snap.name}")
+        print(f"{len(models)} models from snapshot {snap.name}")
         fetch_meta(models, snap)
         return
 
@@ -127,32 +129,32 @@ def main():
 
     models = [e["path"].split("/")[-1] for e in json.loads(http(API))
               if e["type"] == "directory"]
-    print(f"{len(models)} modèles au leaderboard")
+    print(f"{len(models)} models on the leaderboard")
 
     results = {}
     for i, m in enumerate(models):
         try:
             blob = http(f"{SPACE}/results/{urllib.parse.quote(m)}/all_results.csv")
-        except Exception as exc:                       # noqa: BLE001 — on liste, on ne cache pas
-            print(f"  ✗ {m}: {exc}")
+        except Exception as exc:                       # noqa: BLE001 - list it, do not hide it
+            print(f"  x {m}: {exc}")
             continue
         (raw_dir / f"{m}.csv").write_bytes(blob)
         results[m] = read_results(blob)
         if (i + 1) % 20 == 0:
-            print(f"  {i + 1}/{len(models)} téléchargés")
+            print(f"  {i + 1}/{len(models)} downloaded")
 
     sn_key = next((m for m in results if "naive" in m.lower()
                    and "seasonal" in m.lower()), None)
     if sn_key is None:
-        sys.exit(f"Seasonal Naive introuvable parmi : {sorted(results)[:10]}...")
+        sys.exit(f"Seasonal Naive not found among: {sorted(results)[:10]}...")
     sn = results[sn_key]
-    print(f"baseline : {sn_key} ({len(sn)} configs)")
+    print(f"baseline: {sn_key} ({len(sn)} configs)")
 
     rows = []
     for m, res in results.items():
         common = [d for d in sn if d in res]
         if len(common) < 50:
-            print(f"  ⚠ {m}: {len(common)} configs seulement, ignoré du classement")
+            print(f"  warning {m}: only {len(common)} configs, excluded from ranking")
             continue
         rows.append({
             "model": m,
@@ -177,8 +179,8 @@ def main():
 
     fetch_meta(sorted(results), out_dir)
 
-    print(f"\n{len(rows)} modèles classés -> {out_dir / 'leaderboard.csv'}")
-    print("Top 5 CRPS :")
+    print(f"\n{len(rows)} models ranked -> {out_dir / 'leaderboard.csv'}")
+    print("Top 5 CRPS:")
     for r in rows[:5]:
         print(f"  {r['rank_crps']:3d}. {r['model']:32s} CRPS {r['crps_ratio']:.4f}  MASE {r['mase_ratio']:.4f}")
 

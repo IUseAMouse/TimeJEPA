@@ -1,25 +1,25 @@
 # @package _global_
-# Arm G9.0-AUGMENTATION (2026-09-01) — finetune avec entrées décimées, SANS FiLM.
+# G9.0-AUGMENTATION arm (2026-09-01) - finetune with decimated inputs, NO FiLM.
 #
-# Motif MESURÉ (verdict RateIN v3) : la couche d'inférence décime 35 % des
-# instances d'éval (mean-pooling par blocs de k), or v3 n'a JAMAIS vu une
-# série décimée à l'entraînement — spectre coupé, plus lisse : un shift de
-# distribution qu'on inflige au modèle là où il gagne. Cet arm aligne le
-# train sur ce régime : k1=k2 tirés dans les mêmes facteurs que la config
-# xres (comparabilité : la paire (aug seul) vs (xres complet) ne diffère que
-# du bundle FiLM/w/ancre). cross_resolution reste false -> w=1 partout,
-# AUCUN paramètre nouveau : même architecture, éval via lotsa_tiny_v3_eval.
+# MEASURED motive (RateIN v3 verdict): the inference layer decimates 35% of
+# eval instances (mean-pooling in blocks of k), yet v3 NEVER saw a decimated
+# series in training - spectrum cut, smoother: a distribution shift inflicted
+# on the model exactly where it wins. This arm aligns training on that
+# regime: k1=k2 drawn from the same factors as the xres config
+# (comparability: the pair (aug alone) vs (full xres) differs only by the
+# FiLM/w/anchor bundle). cross_resolution stays false -> w=1 everywhere,
+# NO new parameter: same architecture, eval via lotsa_tiny_v3_eval.
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3_aug_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<ckpt>"'
 #
-# Prédictions (chiffres gravés au registre AU LANCEMENT) : P-aug.1 les
-# configs majoritairement décimées à l'éval (bizitobs, solar/10T,
-# electricity/15T, loop/5T…) s'améliorent sous flip+ratein ; P-aug.2 les
-# configs restées à k=1 sont stables (±1 %) ; P-aug.3 l'agrégat flip+ratein
-# bat 0.5588. ÉCHEC-DIAGNOSTIC : si l'agrégat ne bouge pas, voir des entrées
-# décimées ne suffit pas -> le dossier xres-FiLM (conditionnement w) reprend
-# la main sur le résiduel 0.5588->0.5358.
+# Predictions (numbers recorded in the registry AT LAUNCH): P-aug.1 the
+# configs mostly decimated at eval (bizitobs, solar/10T, electricity/15T,
+# loop/5T...) improve under flip+ratein; P-aug.2 the configs kept at k=1 are
+# stable (+/-1%); P-aug.3 the flip+ratein aggregate beats 0.5588.
+# FAILURE-DIAGNOSTIC: if the aggregate does not move, seeing decimated inputs
+# is not enough -> the xres-FiLM case (w conditioning) takes over on the
+# residual 0.5588->0.5358.
 defaults:
   - lotsa_tiny_v3_zeroshot
   - _self_

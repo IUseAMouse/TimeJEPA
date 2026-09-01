@@ -1,17 +1,17 @@
 """
-Tests du TTA (evaluate_gift.tta_forecast) : flip, shifts de translation, et le
-théorème d'invariance d'échelle.
+Tests for TTA (evaluate_gift.tta_forecast): flip, translation shifts, and the
+scale-invariance theorem.
 
-Invariants, par gravité :
-1. Sans options = strictement model.forecast (aucun chemin parasite).
-2. LE THÉORÈME : f(kx) = k·f(x) EXACTEMENT sous RobustScale+RevIN (médiane et
-   MAD 1-homogènes ⇒ entrée normalisée identique) — la TTA d'échelle est un
-   no-op prouvé, seul le SIGNE (flip) porte de l'information.
-3. L'alignement des shifts : sur une rampe avec un oracle de continuation,
-   les variantes décalées réalignées prédisent EXACTEMENT la base — la
-   moyenne est l'identité. Tout décalage d'indice ferait échouer ce test.
-4. Le masque de couverture : les positions de queue (non couvertes par les
-   variantes décalées) ne moyennent que les variantes qui les voient.
+Invariants, by severity:
+1. No options = strictly model.forecast (no parasitic path).
+2. THE THEOREM: f(kx) = k*f(x) EXACTLY under RobustScale+RevIN (median and
+   MAD are 1-homogeneous => identical normalized input) - scale TTA is a
+   proven no-op, only the SIGN (flip) carries information.
+3. Shift alignment: on a ramp with a continuation oracle, the realigned
+   shifted variants predict EXACTLY the base - the average is the identity.
+   Any index offset would fail this test.
+4. The coverage mask: tail positions (not covered by shifted variants) only
+   average the variants that see them.
 """
 
 import sys
@@ -29,9 +29,9 @@ from timejepa.models import JEPATST                                      # noqa:
 
 
 class _RampOracle:
-    """Continuation parfaite d'une rampe de pente 1 : f(ctx)[j] = ctx[-1]+j+1.
-    Avec un vrai décalage d'origine, la variante s prédit t−s+j+1 — le
-    réalignement doit redonner exactement la base."""
+    """Perfect continuation of a slope-1 ramp: f(ctx)[j] = ctx[-1]+j+1.
+    With a true origin shift, variant s predicts t-s+j+1 - realignment must
+    give back exactly the base."""
     patching = SimpleNamespace(stride=8, patch_size=16)
 
     def forecast(self, ctx, n):
@@ -44,8 +44,8 @@ class _RampOracle:
 
 
 class _MarkerOracle:
-    """Renvoie une constante qui identifie la variante par la longueur de son
-    contexte — pour vérifier le masque de couverture position par position."""
+    """Returns a constant identifying the variant by its context length - to
+    verify the coverage mask position by position."""
     patching = SimpleNamespace(stride=8, patch_size=16)
 
     def __init__(self, full_len):
@@ -66,8 +66,8 @@ def test_no_options_is_passthrough():
 
 
 def test_scale_tta_is_a_provable_noop():
-    """f(kx) = k·f(x) au flottant près : l'entrée normalisée est identique
-    (médiane et MAD sont 1-homogènes), la dénormalisation multiplie par k."""
+    """f(kx) = k*f(x) up to float precision: the normalized input is identical
+    (median and MAD are 1-homogeneous), denormalization multiplies by k."""
     m = JEPATST(input_length=384, prediction_length=96, patch_size=16,
                 stride=8, d_model=32, num_layers=1, num_heads=4, d_ff=64,
                 predictor_num_layers=1, predictor_num_heads=4,
@@ -83,13 +83,13 @@ def test_scale_tta_is_a_provable_noop():
 
 def test_shift_alignment_is_exact_on_a_ramp():
     m = _RampOracle()
-    batch = torch.arange(160, dtype=torch.float32).unsqueeze(0)  # rampe
+    batch = torch.arange(160, dtype=torch.float32).unsqueeze(0)  # ramp
     base = m.forecast(batch, n=32)["forecast_denorm"]
     out = tta_forecast(m, batch, h=32, shifts=[2, 4, 6])
-    # variantes s : tronquées de s à droite PUIS ré-alignées au stride à
-    # gauche — sur la rampe, l'oracle réaligné redonne exactement la base
+    # variant s: truncated by s on the right THEN realigned to the stride on
+    # the left - on the ramp, the realigned oracle gives back exactly the base
     torch.testing.assert_close(out["forecast_denorm"], base)
-    # le fan aussi (moyenne pondérée de vecteurs identiques)
+    # the fan too (weighted average of identical vectors)
     fan = out["quantiles_denorm"]
     assert (fan[..., 1:] >= fan[..., :-1]).all()
 
@@ -99,7 +99,7 @@ def test_coverage_mask_counts_only_covering_variants():
     m = _MarkerOracle(full_len=160)
     batch = torch.zeros(1, 160)
     out = tta_forecast(m, batch, h=h, shifts=[s])["forecast_denorm"].squeeze()
-    # positions 0..h−s−1 : moyenne(base=0, shift=1) = 0.5 ; queue : base seule
+    # positions 0..h-s-1: mean(base=0, shift=1) = 0.5; tail: base only
     assert torch.allclose(out[:h - s], torch.full((h - s,), 0.5))
     assert torch.allclose(out[h - s:], torch.zeros(s))
 
@@ -114,8 +114,8 @@ def test_flip_combines_with_shifts():
 
 
 def test_shift_larger_than_horizon_is_dropped():
-    """m4_yearly a h=6 : un shift >= h ne couvre aucune position — il doit
-    être écarté, pas casser l'alignement (bug mesuré 2026-08-25)."""
+    """m4_yearly has h=6: a shift >= h covers no position - it must be
+    dropped, not break the alignment (bug measured 2026-08-25)."""
     m = _RampOracle()
     batch = torch.arange(160, dtype=torch.float32).unsqueeze(0)
     out = tta_forecast(m, batch, h=6, shifts=[7])

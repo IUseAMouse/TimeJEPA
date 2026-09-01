@@ -1,17 +1,17 @@
 """
-Tests de l'arm ESJEPA (ErrorSignal-JEPA, model.error_signal).
+Tests for the ESJEPA arm (ErrorSignal-JEPA, model.error_signal).
 
-Invariants, par gravité :
-1. Flag off = strictement RIEN : state_dict, dicts de sortie, composantes de
-   loss et INFÉRENCE bit-identiques — protège tous les checkpoints reproduits
-   (rétrocompatibilité demandée explicitement par l'utilisateur).
-2. Contrats de checkpoint : refus P3.2 dans les DEUX sens (ckpt ESJEPA vs
-   modèle nu), la voie z SURVIT au finetune, save_pretrained_encoder l'emporte.
-3. Identité à l'init : gate d'étalement zéro-init => le fan est celui de la
-   baseline, la modulation n'apparaît que si le gradient la demande.
-4. La physique de z_target : grille des patchs respectée, déterminisme, AUCUN
-   lookahead (la stat du patch t ne dépend que des valeurs <= sa fin).
-5. Refus bruyants : gardes de construction et de forward bilatérales.
+Invariants, by severity:
+1. Flag off = strictly NOTHING: state_dict, output dicts, loss components and
+   INFERENCE bit-identical - protects all reproduced checkpoints
+   (backward compatibility guaranteed).
+2. Checkpoint contracts: P3.2 refusal in BOTH directions (ESJEPA ckpt vs bare
+   model), the z pathway SURVIVES finetune, save_pretrained_encoder carries it.
+3. Identity at init: zero-init spread gate => the fan is the baseline's,
+   modulation only appears if the gradient asks for it.
+4. The physics of z_target: patch grid respected, determinism, NO lookahead
+   (patch t's stat depends only on values <= its end).
+5. Loud refusals: bilateral construction and forward guards.
 """
 
 import sys
@@ -49,7 +49,7 @@ def _pretrain_batch():
 
 
 # ---------------------------------------------------------------------------
-# 1. Flag off = rien (rétrocompatibilité)
+# 1. Flag off = nothing (backward compatibility)
 # ---------------------------------------------------------------------------
 
 def test_default_state_dict_has_no_z_keys():
@@ -78,9 +78,9 @@ def test_z_loss_component_absent_by_default():
 
 
 def test_legacy_checkpoint_still_loads_and_forecasts():
-    """Rétrocompatibilité d'inférence (demande utilisateur) : un checkpoint
-    d'AVANT l'arm (aucune clé z) chargé dans un modèle flag-off doit passer le
-    contrat de chargement et dérouler un forecast complet, rollout compris."""
+    """Inference backward compatibility: a checkpoint from
+    BEFORE the arm (no z keys) loaded into a flag-off model must pass the
+    loading contract and run a full forecast, rollout included."""
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         ckpt = Path(td) / "legacy.ckpt"
@@ -98,7 +98,7 @@ def test_legacy_checkpoint_still_loads_and_forecasts():
 
 
 # ---------------------------------------------------------------------------
-# 2. Contrats de checkpoint
+# 2. Checkpoint contracts
 # ---------------------------------------------------------------------------
 
 def test_plain_ckpt_refused_by_esjepa_model(tmp_path):
@@ -109,9 +109,9 @@ def test_plain_ckpt_refused_by_esjepa_model(tmp_path):
 
 
 def test_esjepa_ckpt_refused_by_plain_model(tmp_path):
-    """Le sens 'unexpected' : évaluer un checkpoint d'arm en amputant sa voie z
-    serait silencieusement faux — c'est ce test qui motive la généralisation du
-    bras unexpected du refus P3.2 aux préfixes core."""
+    """The 'unexpected' direction: evaluating an arm checkpoint with its z
+    pathway amputated would be silently wrong - this test motivates extending
+    the unexpected branch of the P3.2 refusal to core prefixes."""
     ckpt = tmp_path / "esjepa.ckpt"
     _save(_model(error_signal=True), ckpt)
     with pytest.raises(RuntimeError, match="core components"):
@@ -119,8 +119,8 @@ def test_esjepa_ckpt_refused_by_plain_model(tmp_path):
 
 
 def test_finetune_load_keeps_predictor_z_head(tmp_path):
-    """LE contrat de l'arm : la voie z survit au finetune (contrairement au
-    recon_head pretrain-only de G6)."""
+    """THE arm's contract: the z pathway survives finetune (unlike G6's
+    pretrain-only recon_head)."""
     src = _model(error_signal=True)
     ckpt = tmp_path / "esjepa.ckpt"
     _save(src, ckpt)
@@ -140,7 +140,7 @@ def test_save_pretrained_encoder_carries_z_head(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 3. Identité à l'init (gate zéro-init)
+# 3. Identity at init (zero-init gate)
 # ---------------------------------------------------------------------------
 
 def test_z_gate_identity_at_init():
@@ -151,9 +151,9 @@ def test_z_gate_identity_at_init():
     with torch.no_grad():
         a = head(latents, ctx, z=torch.randn(2, 11, 4))
         b = head(latents, ctx, z=torch.randn(2, 11, 4) * 100)
-    # gate zéro-init : la sortie ignore z EXACTEMENT (pas allclose)
+    # zero-init gate: the output ignores z EXACTLY (not allclose)
     assert torch.equal(a, b)
-    # et le chemin gates=None est identique au chemin gates=exp(0)=1
+    # and the gates=None path is identical to the gates=exp(0)=1 path
     raw = torch.randn(2, 96, head.num_quantiles)
     with torch.no_grad():
         assert torch.equal(head._make_monotone(raw),
@@ -171,13 +171,13 @@ def test_z_gate_actually_widens_when_nonzero():
     width_base = base[..., -1] - base[..., 0]
     width_wide = wide[..., -1] - wide[..., 0]
     assert (width_wide > width_base).all()
-    # la médiane est intouchable par construction
+    # the median is untouchable by construction
     mid = head.median_idx
     assert torch.equal(base[..., mid], wide[..., mid])
 
 
 # ---------------------------------------------------------------------------
-# 4. La physique de z_target
+# 4. The physics of z_target
 # ---------------------------------------------------------------------------
 
 def test_residual_stats_geometry_and_determinism():
@@ -192,8 +192,8 @@ def test_residual_stats_geometry_and_determinism():
 
 
 def test_residual_stats_have_no_lookahead():
-    """La stat du patch 0 (pas 0-15 de la cible) ne doit dépendre d'AUCUNE
-    valeur au-delà de la fin du patch — le lissage est causal."""
+    """The stat of patch 0 (steps 0-15 of the target) must depend on NO value
+    beyond the end of the patch - the smoothing is causal."""
     m = _model(error_signal=True)
     ctx, tgt = _pretrain_batch()
     z_ref = m._residual_stats(ctx, tgt, 11)
@@ -205,8 +205,8 @@ def test_residual_stats_have_no_lookahead():
 
 
 def test_flat_target_stats_are_floored():
-    """Cible constante (solar de nuit) : le plancher 1e-3 borne les
-    log-échelles, pas de -inf."""
+    """Constant target (solar at night): the 1e-3 floor bounds the log
+    scales, no -inf."""
     m = _model(error_signal=True)
     ctx = torch.randn(2, 384, 1)
     tgt = torch.zeros(2, 96, 1)
@@ -215,7 +215,7 @@ def test_flat_target_stats_are_floored():
 
 
 # ---------------------------------------------------------------------------
-# 5. Refus bruyants et gardes
+# 5. Loud refusals and guards
 # ---------------------------------------------------------------------------
 
 def test_return_z_without_head_raises():
@@ -265,7 +265,7 @@ def test_module_rejects_flag_mismatch_with_model():
 
 
 # ---------------------------------------------------------------------------
-# 6. Bout-en-bout de l'arm
+# 6. End-to-end of the arm
 # ---------------------------------------------------------------------------
 
 def test_pretrain_forward_and_loss_carry_z():
@@ -278,7 +278,7 @@ def test_pretrain_forward_and_loss_carry_z():
     loss, components = module._compute_loss(out["predictions"], out["targets"], out)
     assert "z" in components and torch.isfinite(loss)
     loss.backward()
-    # la loss z remonte bien dans le tronc du prédicteur (mécanisme voulu)
+    # the z loss does flow back into the predictor trunk (intended mechanism)
     assert m.predictor.z_head[0].weight.grad is not None
 
 
@@ -290,16 +290,16 @@ def test_rollout_carries_z_through_fan():
         out = m.forecast(ctx, n=192)
     assert out["quantiles_denorm"].shape[1] == 192
     assert torch.isfinite(out["quantiles_denorm"]).all()
-    # single-shot expose z pour le vérificateur G12
+    # single-shot exposes z for the G12 verifier
     with torch.no_grad():
         single = m.forward_finetune(ctx)
     assert single["z"].shape == (2, 11, 4)
 
 
 def test_esjepa_configs_compose_and_build():
-    """Le trio Hydra compose et construit un modèle portant les clés z aux
-    TROIS sites (modèle, décodeur reconstruit train/loading) — y compris la
-    config d'ÉVAL, celle qui a historiquement perdu des flags."""
+    """The Hydra trio composes and builds a model carrying the z keys at the
+    THREE sites (model, decoder rebuilt in train/loading) - including the
+    EVAL config, the one that historically lost flags."""
     from hydra import compose, initialize
     from timejepa.evaluation.loading import create_model_from_config
     with initialize(version_base=None, config_path="../configs/model"):

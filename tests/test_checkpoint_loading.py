@@ -1,14 +1,15 @@
 """
-Tests du contrat de refus de `load_checkpoint` (P3.2, audit du 2026-08-19).
+Tests for the `load_checkpoint` refusal contract (P3.2, 2026-08-19 audit).
 
-Le mode d'échec visé est précis : un checkpoint dont la géométrie ne correspond
-pas au modèle voyait ses clés cœur droppées par `filter_loadable`, puis l'éval
-tournait sur des poids fraîchement initialisés en émettant un simple warning —
-des chiffres silencieusement faux. Mesuré sur le cas prediction_length 256→512
-(`predictor.future_position_embedding` droppée). Depuis P3.2, ce cas REFUSE.
+The targeted failure mode is precise: a checkpoint whose geometry does not
+match the model had its core keys dropped by `filter_loadable`, then the eval
+ran on freshly initialized weights while emitting a mere warning - silently
+wrong numbers. Measured on the prediction_length 256->512 case
+(`predictor.future_position_embedding` dropped). Since P3.2, this case
+REFUSES.
 
-Le seul mismatch légitime — l'échange de tête de décodeur (point ↔ quantile) —
-doit continuer de passer : c'est le workflow réel du round géométrie.
+The only legitimate mismatch - the decoder head swap (point vs quantile) -
+must keep passing: it is the real workflow of the geometry round.
 """
 
 import sys
@@ -32,16 +33,16 @@ def _model(pred_len=96, decoder_type="mlp"):
 
 
 def _save_lightning_style(model, path):
-    """Format Lightning : clés préfixées 'model.', comme les vrais checkpoints."""
+    """Lightning format: keys prefixed with 'model.', like real checkpoints."""
     sd = {f"model.{k}": v for k, v in model.state_dict().items()}
     torch.save({"state_dict": sd}, path)
 
 
 def test_load_refuses_predictor_shape_mismatch(tmp_path):
     """
-    Checkpoint h=96 chargé dans un modèle h=512 : la table de requêtes du
-    prédicteur change de forme. Avant P3.2 : warning + table aléatoire +
-    chiffres faux. Attendu : RuntimeError explicite.
+    An h=96 checkpoint loaded into an h=512 model: the predictor's query
+    table changes shape. Before P3.2: warning + random table + wrong numbers.
+    Expected: an explicit RuntimeError.
     """
     ckpt = tmp_path / "h96.ckpt"
     _save_lightning_style(_model(pred_len=96), ckpt)
@@ -52,13 +53,13 @@ def test_load_refuses_predictor_shape_mismatch(tmp_path):
 
 
 def test_load_still_tolerates_decoder_swap(tmp_path):
-    """Le workflow réel : checkpoint à tête point, éval à tête quantile."""
+    """The real workflow: point-head checkpoint, quantile-head eval."""
     ckpt = tmp_path / "mlp.ckpt"
     _save_lightning_style(_model(decoder_type="mlp"), ckpt)
 
     quantile = _model(decoder_type="quantile")
     loaded = load_checkpoint(quantile, str(ckpt), torch.device("cpu"))
-    # l'encodeur vient bien du checkpoint (pas réinitialisé) :
+    # the encoder really comes from the checkpoint (not reinitialized):
     src = _model(decoder_type="mlp")
     src.load_state_dict(torch.load(ckpt, weights_only=False)["state_dict"]
                         | {}, strict=False)
@@ -66,17 +67,17 @@ def test_load_still_tolerates_decoder_swap(tmp_path):
 
 
 def test_load_tolerates_expected_missing(tmp_path):
-    """target_encoder et les buffers RevIN manquent TOUJOURS — jamais un refus."""
+    """target_encoder and the RevIN buffers are ALWAYS missing - never a refusal."""
     m = _model()
     sd = {f"model.{k}": v for k, v in m.state_dict().items()
           if "target_encoder" not in k and not k.endswith((".mean", ".std"))}
     ckpt = tmp_path / "clean.ckpt"
     torch.save({"state_dict": sd}, ckpt)
-    load_checkpoint(_model(), str(ckpt), torch.device("cpu"))   # ne lève pas
+    load_checkpoint(_model(), str(ckpt), torch.device("cpu"))   # does not raise
 
 
 def test_allow_partial_is_an_explicit_escape_hatch(tmp_path):
-    """Le contournement existe pour le debug manuel, et il est explicite."""
+    """The bypass exists for manual debugging, and it is explicit."""
     ckpt = tmp_path / "h96.ckpt"
     _save_lightning_style(_model(pred_len=96), ckpt)
     big = _model(pred_len=512)

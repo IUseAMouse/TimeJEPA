@@ -1,12 +1,13 @@
 """
-Tests de l'arm JEPA inter-résolution (G9.2, config lotsa_tiny_xres).
+Tests for the cross-resolution JEPA arm (G9.2, config lotsa_tiny_xres).
 
-Trois invariants à protéger, par ordre de gravité :
-1. Les configs EXISTANTES sont inchangées au bit près (state_dict, dict d'item)
-   — c'est ce qui garde les checkpoints reproduits rechargeables.
-2. w=1 est l'identité exacte à l'init (FiLM zéro-init) — c'est ce qui rend le
-   checkpoint xres utilisable au finetune, qui ne passe jamais w.
-3. La physique : la cible est le futur CONTIGU du contexte, jamais un saut.
+Three invariants to protect, in order of severity:
+1. EXISTING configs are bit-for-bit unchanged (state_dict, item dict) - this
+   is what keeps reproduced checkpoints reloadable.
+2. w=1 is the exact identity at init (zero-init FiLM) - this is what makes
+   the xres checkpoint usable at finetune, which never passes w.
+3. The physics: the target is the CONTIGUOUS future of the context, never a
+   jump.
 """
 
 import sys
@@ -41,17 +42,17 @@ def _dataset(tmp_path, n_series=3, length=2048, **kw):
 
 
 # ---------------------------------------------------------------------------
-# 1. Les configs existantes ne bougent pas
+# 1. Existing configs do not move
 # ---------------------------------------------------------------------------
 
 def test_default_state_dict_has_no_w_film():
-    """Protège le rechargement de TOUS les checkpoints reproduits."""
+    """Protects reloading of ALL reproduced checkpoints."""
     keys = set(_model(cross_resolution=False).state_dict())
     assert not any("w_film" in k for k in keys)
 
 
 def test_default_item_dict_unchanged(tmp_path):
-    """Sans flag : mêmes clés qu'avant, jamais de 'w' — collate intact."""
+    """Without the flag: same keys as before, never a 'w' - collate intact."""
     ds = _dataset(tmp_path)
     item = ds.get_item(0, allow_multi_resolution=True)
     assert set(item) == {"context", "target", "series_id", "start_idx",
@@ -59,11 +60,11 @@ def test_default_item_dict_unchanged(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 2. w=1 est l'identité, et le refus est bruyant
+# 2. w=1 is the identity, and the refusal is loud
 # ---------------------------------------------------------------------------
 
 def test_w_identity_at_init():
-    """FiLM zéro-init : w quelconque = identité à l'initialisation (eval)."""
+    """Zero-init FiLM: any w = identity at initialization (eval)."""
     m = _model(cross_resolution=True).eval()
     ctx, tgt = torch.randn(3, 384, 1), torch.randn(3, 96, 1)
     with torch.no_grad():
@@ -74,7 +75,7 @@ def test_w_identity_at_init():
 
 
 def test_w_without_film_raises():
-    """Un w≠1 perdu en silence = un arm qui entraîne sans conditionnement."""
+    """A w!=1 silently lost = an arm training without conditioning."""
     m = _model(cross_resolution=False)
     with pytest.raises(ValueError, match="use_w_film"):
         m.forward_pretrain(torch.randn(2, 384, 1), torch.randn(2, 96, 1),
@@ -83,7 +84,7 @@ def test_w_without_film_raises():
 
 
 def test_module_rejects_xres_with_contextualized_targets():
-    """[ctx@k1‖cible@k2] n'a pas de sens physique : refus à la construction."""
+    """[ctx@k1||target@k2] has no physical meaning: refused at construction."""
     with pytest.raises(ValueError, match="contextualized_targets"):
         JEPAPretrainModule(model=_model(cross_resolution=True),
                            cross_resolution=True,
@@ -91,28 +92,28 @@ def test_module_rejects_xres_with_contextualized_targets():
 
 
 # ---------------------------------------------------------------------------
-# 3. La physique des paires (k1, k2)
+# 3. The physics of the (k1, k2) pairs
 # ---------------------------------------------------------------------------
 
 def test_pair_headroom_2048_only_k1_equals_1(tmp_path):
     """
-    Sur morceaux 2048 avec ctx 1024 / pred 256 : ctx·k1 + pred·k2 ≤ 2048
-    n'autorise que k1=1 (k2 jusqu'à 4). Les morceaux 8192 sont le seul moyen
-    d'ouvrir k1>1 — c'est la raison d'être du corpus mixte de l'arm.
+    On 2048 chunks with ctx 1024 / pred 256: ctx*k1 + pred*k2 <= 2048 only
+    allows k1=1 (k2 up to 4). The 8192 chunks are the only way to open k1>1 -
+    that is the reason the arm's mixed corpus exists.
     """
     ds = _dataset(tmp_path, cross_resolution=True,
                   multi_resolution_factors=[1, 2, 4], p_multi_resolution=1.0)
     np.random.seed(0)
     pairs = {ds._sample_resolution_pair(2048, 0) for _ in range(200)}
-    assert all(k1 == 1 for k1, _ in pairs), f"k1>1 impossible à 2048 : {pairs}"
-    assert any(k2 > 1 for _, k2 in pairs), "aucune paire non triviale tirée"
-    # à 8192, l'espace complet s'ouvre
+    assert all(k1 == 1 for k1, _ in pairs), f"k1>1 impossible at 2048: {pairs}"
+    assert any(k2 > 1 for _, k2 in pairs), "no nontrivial pair drawn"
+    # at 8192, the full space opens
     pairs_big = {ds._sample_resolution_pair(8192, 0) for _ in range(300)}
-    assert any(k1 > 1 for k1, _ in pairs_big), "8192 doit ouvrir k1>1"
+    assert any(k1 > 1 for k1, _ in pairs_big), "8192 must open k1>1"
 
 
 def test_target_is_physically_contiguous(tmp_path):
-    """Le premier point brut de la cible est series[start + ctx·k1], toujours."""
+    """The target's first raw point is series[start + ctx*k1], always."""
     ds = _dataset(tmp_path, cross_resolution=True,
                   multi_resolution_factors=[1, 2, 4], p_multi_resolution=1.0)
     series = ds.normalized_data[0]
@@ -126,12 +127,12 @@ def test_target_is_physically_contiguous(tmp_path):
         start = item["start_idx"]
         expected_first = series[start + 1024 * k1]
         assert tgt[0] == pytest.approx(float(expected_first)), \
-            "la cible doit commencer exactement où le contexte s'arrête"
-        assert len(ctx) == 1024 and len(tgt) == 256, "géométrie rendue constante"
+            "the target must start exactly where the context stops"
+        assert len(ctx) == 1024 and len(tgt) == 256, "geometry rendered constant"
 
 
 def test_item_carries_w_and_batch_collates(tmp_path):
-    """La clé 'w' est par item, float, et le collate par défaut l'empile."""
+    """The 'w' key is per item, float, and the default collate stacks it."""
     from torch.utils.data import DataLoader
 
     ds = _dataset(tmp_path, cross_resolution=True,
@@ -147,11 +148,11 @@ def test_item_carries_w_and_batch_collates(tmp_path):
 
 
 def test_coverage_log_reports_pair_eligibility(tmp_path, caplog):
-    """Le log de couverture doit dire la vérité sur l'éligibilité des paires."""
+    """The coverage log must tell the truth about pair eligibility."""
     import logging
     with caplog.at_level(logging.INFO, logger="timejepa.data.dataset"):
         _dataset(tmp_path, cross_resolution=True,
                  multi_resolution_factors=[1, 2, 4], p_multi_resolution=0.5)
     text = caplog.text
-    assert "Inter-résolution" in text
-    assert "STÉRILE" not in text, "2048 permet k1=1<k2 : pas stérile"
+    assert "Cross-resolution" in text
+    assert "STERILE" not in text, "2048 allows k1=1<k2: not sterile"

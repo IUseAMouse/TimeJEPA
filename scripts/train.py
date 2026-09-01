@@ -19,15 +19,15 @@ from timejepa.data.datamodule import MultiDatasetMonashDataModule
 from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
 from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.callbacks import EMACallback
-from timejepa.models import JEPATST  # noqa: F401 — re-export historique
-from timejepa.models.decoders import ForecastingHead  # chemin finetune (l.162)
-# Construction du modèle : UNE seule source de vérité, partagée avec evaluate.py
-# et evaluate_gift.py. L'audit du 2026-08-19 a trouvé 4 copies de cette fonction
-# dont une déjà divergente — toute nouvelle option de constructeur (conditionnement
-# du prédicteur de G9.2, etc.) ne doit plus être posée qu'à UN endroit.
-# Seule différence avec l'ancienne copie locale : le ForecastingHead est construit
-# avec cfg.model.decoder.d_model (== encoder.d_model dans toutes les configs,
-# vérifié) et le bloc de prints de fondation est remplacé par ceux de JEPATST.
+from timejepa.models import JEPATST  # noqa: F401 - historical re-export
+from timejepa.models.decoders import ForecastingHead  # finetune path (l.162)
+# Model construction: ONE source of truth, shared with evaluate.py and
+# evaluate_gift.py. The 2026-08-19 audit found 4 copies of this function, one
+# already divergent - any new constructor option (G9.2 predictor
+# conditioning, etc.) must now live in ONE place only. Only difference vs the
+# old local copy: the ForecastingHead is built with cfg.model.decoder.d_model
+# (== encoder.d_model in all configs, verified) and the foundation print
+# block is replaced by JEPATST's own.
 from timejepa.evaluation.loading import create_model_from_config
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,8 @@ def main(cfg: DictConfig):
         balanced_sampling=cfg.data.balanced_sampling,
         sampling_temperature=cfg.data.sampling_temperature,
         max_oversample_ratio=cfg.data.max_oversample_ratio,
-        # G10.2 : étalement uniforme du plafond sur l'époque (opt-in, absent de
-        # toutes les configs existantes => False => itération bit-identique).
+        # G10.2: uniform spreading of the cap over the epoch (opt-in, absent
+        # from all existing configs => False => bit-identical iteration).
         ration_oversample=bool(cfg.data.get('ration_oversample', False)),
         batch_size=cfg.data.batch_size,
         stride=cfg.data.stride,
@@ -93,20 +93,20 @@ def main(cfg: DictConfig):
         ),
         p_multi_resolution=(
             float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain
-            # G9.3 (2026-08-31) : le finetune peut EXERCER les paires xres —
-            # la loi de câblage (E18b/E21) dit qu'une capacité de pretrain ne
-            # survit au finetune que si le finetune la traverse. Clés dédiées
-            # *_finetune, défauts 0/[1] = bit-identique à l'existant.
+            # G9.3 (2026-08-31): finetune can EXERCISE the xres pairs - the
+            # wiring law (E18b/E21) says a pretrain capability only survives
+            # finetune if finetune passes through it. Dedicated *_finetune
+            # keys, defaults 0/[1] = bit-identical to the existing behavior.
             else float(cfg.data.get('p_multi_resolution_finetune', 0.0))
         ),
-        # G9.2 : contexte à k1, cible à k2, clé 'w' par item. Même clé de
-        # config que le modèle et le module (model.cross_resolution) — dans
-        # les DEUX modes depuis G9.3 (hors train, le dataset émet w=1).
+        # G9.2: context at k1, target at k2, per-item 'w' key. Same config
+        # key as the model and the module (model.cross_resolution) - in BOTH
+        # modes since G9.3 (outside train, the dataset emits w=1).
         cross_resolution=bool(cfg.model.get('cross_resolution', False)),
         seed=cfg.data.seed,
-        # Hardcoded to 8 before. With 20+ datasets held in memory — several of
+        # Hardcoded to 8 before. With 20+ datasets held in memory - several of
         # them numpy object arrays, whose per-element refcount updates defeat
-        # fork's copy-on-write — 8 train workers plus 8 persistent validation
+        # fork's copy-on-write - 8 train workers plus 8 persistent validation
         # workers were enough to get the run OOM-killed by the host kernel
         # (a bare "Killed", no traceback). Make it tunable.
         num_workers=int(cfg.data.get('num_workers', 4)),
@@ -147,13 +147,13 @@ def main(cfg: DictConfig):
             # G6 ablation arm; absent from every other config, so they are
             # unaffected. See configs/model/lotsa_tiny_recon.yaml.
             reconstruction_target=cfg.training.get('reconstruction_target', False),
-            # G9.2 — arm inter-résolution ; une seule clé de config
-            # (model.cross_resolution) pilote le modèle, le module ET le
-            # datamodule, pour qu'ils ne puissent pas diverger.
+            # G9.2 - cross-resolution arm; a single config key
+            # (model.cross_resolution) drives the model, the module AND the
+            # datamodule, so they cannot diverge.
             cross_resolution=cfg.model.get('cross_resolution', False),
-            # ESJEPA — arm ErrorSignal ; même principe : une seule clé
-            # (model.error_signal) pilote le modèle (têtes) ET le module
-            # (loss z). lambda_z est un réglage d'entraînement, il vit sous
+            # ESJEPA - ErrorSignal arm; same principle: a single key
+            # (model.error_signal) drives the model (heads) AND the module
+            # (z loss). lambda_z is a training knob, it lives under
             # training.loss.
             error_signal=cfg.model.get('error_signal', False),
             lambda_z=float(cfg.training.loss.get('lambda_z', 0.1)),
@@ -183,14 +183,14 @@ def main(cfg: DictConfig):
         
         warmup_epochs = cfg.training.lr_scheduler.warmup_epochs
 
-        # ESJEPA — garde finetune : un z entraîné au pretrain puis
-        # silencieusement inconsommé par un décodeur point est exactement la
-        # dégradation que le projet refuse (le ForecastingHead lève aussi,
-        # ceci rend le message actionnable au niveau config).
+        # ESJEPA - finetune guard: a z trained at pretrain then silently left
+        # unconsumed by a point decoder is exactly the degradation this
+        # project refuses (the ForecastingHead also raises; this makes the
+        # message actionable at config level).
         if cfg.model.get('error_signal', False) and cfg.model.decoder.type != 'quantile':
             raise ValueError(
-                "model.error_signal=true exige model.decoder.type='quantile' "
-                "au finetune — la voie z module l'étalement du fan quantile."
+                "model.error_signal=true requires model.decoder.type='quantile' "
+                "at finetune - the z path modulates the quantile fan spread."
             )
 
         model.decoder = ForecastingHead(
@@ -201,15 +201,15 @@ def main(cfg: DictConfig):
             num_features=cfg.model.num_channels,
             decoder_type=cfg.model.decoder.type,
             revin=model.revin,
-            # Site 3/3 de construction du ForecastingHead — même clé de config
-            # que le modèle et l'éval (loading.py), gardé par test.
+            # ForecastingHead construction site 3/3 - same config key as the
+            # model and the eval (loading.py), guarded by a test.
             error_signal=bool(cfg.model.get('error_signal', False)),
         )
         
         pl_module = FinetuneModule(
             model=model,
-            # Chantier 2 : extension de la table de requêtes (horizon natif),
-            # absent de toutes les configs existantes donc inertes pour elles.
+            # Workstream 2: query-table extension (native horizon), absent
+            # from all existing configs so inert for them.
             extend_horizon_queries=cfg.training.get('extend_horizon_queries', False),  
             
             # Pretrained weights & Strategy
@@ -219,9 +219,9 @@ def main(cfg: DictConfig):
             
             # Loss
             loss_type=cfg.training.loss.finetune_type,
-            # G9.3 — ancre d'invariance (backlog E18b) : garder λ·MSE(ẑ, z_tgt)
-            # au finetune pour que le drift ne détruise ni le juge ni la
-            # cohérence xres. Défaut 0.0 = bit-identique.
+            # G9.3 - invariance anchor (E18b backlog): keep lambda*MSE(z_pred,
+            # z_tgt) at finetune so drift destroys neither the judge nor xres
+            # coherence. Default 0.0 = bit-identical.
             lambda_anchor=float(cfg.training.loss.get('lambda_anchor', 0.0)),
             
             # Optimizer
@@ -269,7 +269,7 @@ def main(cfg: DictConfig):
         # B21: the config carried auto_insert_metric_name: false but it was
         # never forwarded, so Lightning kept its default (True) and prefixed
         # each metric name AGAIN on top of the template's own text. Result:
-        # "epochepoch=00_val_lossval_loss=0.3445.ckpt" — doubled names, and
+        # "epochepoch=00_val_lossval_loss=0.3445.ckpt" - doubled names, and
         # '=' characters that Hydra's override grammar then choked on for
         # every downstream finetune and eval command.
         auto_insert_metric_name=bool(
@@ -311,7 +311,7 @@ def main(cfg: DictConfig):
     # Trainer
     #
     # `limit_val_batches` matters a lot here. The validation split is 2% of the
-    # windows, which on the full 24-dataset corpus is over a million samples —
+    # windows, which on the full 24-dataset corpus is over a million samples -
     # 2109 batches. With val_check_interval=0.1 that is ~21k validation batches
     # per epoch, more compute than the training itself, and it keeps a second
     # set of dataloader workers alive alongside the training ones. A few hundred
@@ -344,8 +344,8 @@ def main(cfg: DictConfig):
     logger.info("STARTING TRAINING")
     logger.info("=" * 80)
     
-    # Reprise d'un run interrompu (optimizer/scheduler/step restaurés par
-    # Lightning) : '+training.resume_ckpt="<ckpt>"'. Défaut None = inchangé.
+    # Resume an interrupted run (optimizer/scheduler/step restored by
+    # Lightning): '+training.resume_ckpt="<ckpt>"'. Default None = unchanged.
     trainer.fit(pl_module, datamodule=datamodule,
                 ckpt_path=cfg.training.get("resume_ckpt", None))
     

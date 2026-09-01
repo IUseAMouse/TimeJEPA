@@ -1,14 +1,15 @@
 # @package _global_
-# Éval des checkpoints ESJEPA (GIFT / Nixtla).
+# Eval of the ESJEPA checkpoints (GIFT / Nixtla).
 #
 #   python scripts/evaluate_gift.py --config-name lotsa_tiny_esjepa_eval \
 #       '+checkpoint_path="checkpoints/timejepa_lotsa_tiny_esjepa_zs/pretrain_False/<ckpt>"'
 #
-# ⚠️ error_signal DOIT être re-porté ici (précédent lotsa_tiny_xres_eval) :
-# la tête z est un POIDS du prédicteur (predictor.z_head.*) — sans le flag, la
-# construction du modèle n'aurait pas les clés et le refus P3.2 tomberait
-# (c'est voulu : évaluer un checkpoint ESJEPA en amputant sa voie z serait
-# silencieusement faux). robust_scale est hérité de lotsa_tiny_mix_eval.
+# WARNING: error_signal MUST be re-carried here (lotsa_tiny_xres_eval
+# precedent): the z head is a WEIGHT of the predictor (predictor.z_head.*) -
+# without the flag, model construction would lack the keys and the P3.2
+# refusal would trigger (intended: evaluating an ESJEPA checkpoint with its z
+# pathway amputated would be silently wrong). robust_scale is inherited from
+# lotsa_tiny_mix_eval.
 defaults:
   - lotsa_tiny_mix_eval
   - _self_

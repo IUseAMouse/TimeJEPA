@@ -1,9 +1,10 @@
 """
-Tests des MÉTRIQUES ET RÉGULARISEURS (extraits de test_p0_regressions.py,
-audit du 2026-08-19 — déplacés à l'identique, aucun test réécrit).
+Tests for the METRICS AND REGULARIZERS (extracted from
+test_p0_regressions.py, 2026-08-19 audit - moved verbatim, no test
+rewritten).
 
-Couvre : P0.4 (baselines), P0.5 (métriques sans échelle : MASE poolé, WQL),
-P1.1/P1.2 (anti-effondrement : VICReg par position, SIGReg).
+Covers: P0.4 (baselines), P0.5 (scale-free metrics: pooled MASE, WQL),
+P1.1/P1.2 (anti-collapse: per-position VICReg, SIGReg).
 """
 
 import sys
@@ -119,7 +120,7 @@ def test_mase_survives_flat_windows():
     """
     Real data contains near-constant windows (ETTm2, electricity). With the
     classic mean-of-per-window-ratios, their seasonal difference is ~0 and the
-    ratio blows up to ~1/eps, dominating the average — observed in practice as
+    ratio blows up to ~1/eps, dominating the average - observed in practice as
     MASE ~1e4 for every model AND for seasonal naive itself.
     """
     torch.manual_seed(0)
@@ -136,7 +137,7 @@ def test_mase_survives_flat_windows():
 
 
 def test_mase_all_flat_falls_back_to_mae():
-    """If every window is constant, a scaled error is undefined — report MAE."""
+    """If every window is constant, a scaled error is undefined - report MAE."""
     ctx = torch.full((8, 100), 3.0)
     tgt = torch.zeros(8, 24)
     pred = torch.ones(8, 24)
@@ -177,7 +178,7 @@ def test_sigreg_penalises_collapse_hardest():
 def test_sigreg_catches_what_vicreg_cannot():
     """
     A bimodal embedding has healthy per-coordinate variance and a near-diagonal
-    covariance, so VICReg is satisfied. SIGReg is not — that is the reason to
+    covariance, so VICReg is satisfied. SIGReg is not - that is the reason to
     have it as an alternative.
     """
     from timejepa.training.utils.metrics import sigreg_loss, vicreg_loss

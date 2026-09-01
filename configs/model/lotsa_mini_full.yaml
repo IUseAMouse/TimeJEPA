@@ -1,18 +1,18 @@
 # @package _global_
 #
-# G7 — PRETRAIN du MINI (~5M) sur le corpus LOTSA COMPLET.
+# G7 - PRETRAIN of the MINI (~5M) on the FULL LOTSA corpus.
 #
 #   python scripts/train.py --config-name lotsa_mini_full wandb.run_name=mini-full
 #
-# Hérite de lotsa_mini (architecture 192/4+3, LR 4e-4, batch 384) et ne change
-# que ce que lotsa_tiny_full change pour le tiny : le corpus et le budget
-# d'époques. Toute divergence supplémentaire entre les régimes tiny-full et
-# mini-full rendrait leur comparaison ininterprétable — c'est la courbe
-# d'échelle du papier, elle ne vaut que si SEULE la taille du modèle bouge.
+# Inherits from lotsa_mini (192/4+3 architecture, LR 4e-4, batch 384) and only
+# changes what lotsa_tiny_full changes for the tiny: the corpus and the epoch
+# budget. Any additional divergence between the tiny-full and mini-full
+# regimes would make their comparison uninterpretable - this is the paper's
+# scaling curve, it only holds if ONLY the model size moves.
 #
-# max_epochs: 2 — même logique qu'E13a/lotsa_tiny_full : le cosinus est étalé
-# sur max_epochs, et sur le corpus complet une époque est déjà énorme. Voir
-# l'en-tête de lotsa_tiny_full pour l'audit d'équilibre À FAIRE avant tout run.
+# max_epochs: 2 - same logic as E13a/lotsa_tiny_full: the cosine is stretched
+# over max_epochs, and on the full corpus one epoch is already huge. See the
+# lotsa_tiny_full header for the balance audit TO DO before any run.
 defaults:
   - lotsa_mini
   - _self_
@@ -24,27 +24,26 @@ data:
   data_dir: "data/processed/lotsa_full"
 
 training:
-  # Même régime à passe unique que lotsa_tiny_full — voir son en-tête pour le
-  # raisonnement (E13b : au-delà d'une époque, sur-apprentissage mesuré ; et
-  # `max_epochs` pilote le recuit cosinus).
+  # Same single-pass regime as lotsa_tiny_full - see its header for the
+  # reasoning (E13b: beyond one epoch, measured overfitting; and `max_epochs`
+  # drives the cosine annealing).
   max_epochs: 1
 
 trainer:
   val_check_interval: 0.05
 
 early_stopping:
-  # DÉSACTIVÉ sur les runs à passe unique, et c'est délibéré.
+  # DISABLED on single-pass runs, deliberately.
   #
-  # Le cosinus est étalé sur `max_epochs: 1` : la valeur du modèle est à la FIN
-  # de la passe, quand le recuit s'achève. Couper avant, c'est livrer un modèle
-  # jamais recuit — le défaut exact qu'E13a a mesuré.
+  # The cosine is stretched over `max_epochs: 1`: the model's value is at the
+  # END of the pass, when annealing completes. Stopping early ships a model
+  # that was never annealed - the exact defect E13a measured.
   #
-  # Avec val_check_interval=0.05 il n'y a que ~20 validations, donc patience=25
-  # ne se déclencherait de toute façon jamais : mieux vaut l'écrire que de
-  # dépendre de cette coïncidence. Quiconque affinerait la validation (0.01 →
-  # 100 points) rallumerait sinon un arrêt sur un creux de bruit, ce qu'E12 a
-  # déjà payé une fois — la val_loss y désignait le modèle qui généralise LE
-  # MOINS bien.
+  # With val_check_interval=0.05 there are only ~20 validations, so patience=25
+  # would never trigger anyway: better to write it down than to depend on that
+  # coincidence. Anyone refining validation (0.01 -> 100 points) would
+  # otherwise re-enable stopping on a noise dip, which E12 already paid for
+  # once - its val_loss picked the model that generalizes the LEAST well.
   enabled: false
 
 wandb:

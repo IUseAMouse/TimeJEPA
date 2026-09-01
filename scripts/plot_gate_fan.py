@@ -1,21 +1,21 @@
-#!/usr/bin/env python
+# Paper figure generator (gate-fan surgery figure).
 """
-Figure papier : le fan AVEC et SANS le gate z, sur une fenêtre GIFT réelle.
+Paper figure: the fan WITH and WITHOUT the z gate, on a real GIFT window.
 
     python scripts/plot_gate_fan.py \\
         --checkpoint checkpoints/champions/esjepa45_mase0.8739_crps0.5981.ckpt \\
         --model-config lotsa_tiny_esjepa_eval \\
         --config solar/10T/short --window 5
 
-L'artefact expérimental à montrer (E21, review 2026-08-31 : « une figure
-vaudrait plus que le paragraphe ») : à checkpoint IDENTIQUE, couper le gate
-(chirurgie z_gate -> 0 à l'éval, aucun réentraînement) fait exploser le fan
-vers son enveloppe worst-case (+18.7 pts de CRPS agrégé, couverture
-0.790 -> 0.968) pendant que la MÉDIANE ne bouge pas d'un bit — l'invariance
-structurelle de la médiane, visible à l'œil sur une seule fenêtre.
+The experimental artifact to show (E21, review 2026-08-31: "a figure would be
+worth more than the paragraph"): with an IDENTICAL checkpoint, cutting the
+gate (z_gate -> 0 surgery at eval, no retraining) blows the fan up to its
+worst-case envelope (+18.7 pts of aggregate CRPS, coverage 0.790 -> 0.968)
+while the MEDIAN does not move a bit - the median's structural invariance,
+visible by eye on a single window.
 
-Sortie : paper/figures/gate_fan_<config>.pdf (et .png), deux panneaux
-partageant l'axe : vérité + médiane + bande q10-q90, gate ON / gate OFF.
+Output: paper/figures/gate_fan_<config>.pdf (and .png), two panels sharing
+the axis: truth + median + q10-q90 band, gate ON / gate OFF.
 """
 
 import argparse
@@ -46,11 +46,11 @@ def fan_for(model, ctx: np.ndarray, h: int, device) -> np.ndarray:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--checkpoint", required=True,
-                    help="checkpoint FINETUNÉ d'un arm z (le gate doit exister)")
+                    help="FINETUNED checkpoint of a z arm (the gate must exist)")
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--config", default="solar/10T/short",
-                    help="config GIFT (solar/10T : là où le gate resserre de -30%%)")
-    ap.add_argument("--window", type=int, default=0, help="index d'instance")
+                    help="GIFT config (solar/10T: where the gate tightens by -30%%)")
+    ap.add_argument("--window", type=int, default=0, help="instance index")
     ap.add_argument("--gift-root", default="data/gift_eval")
     ap.add_argument("--out", default="paper/figures")
     args = ap.parse_args()
@@ -65,8 +65,8 @@ def main():
 
     gate = model.decoder.decoder.z_gate
     if float(gate.weight.abs().sum()) == 0.0:
-        raise SystemExit("z_gate à zéro : ce checkpoint n'a pas de gate appris "
-                         "(il faut un checkpoint d'arm z finetuné).")
+        raise SystemExit("z_gate is zero: this checkpoint has no learned gate "
+                         "(a finetuned z-arm checkpoint is required).")
 
     h = gift.prediction_length(args.config)
     series = gift.load_series(Path(args.gift_root), args.config)
@@ -78,14 +78,14 @@ def main():
 
     fan_on = fan_for(model, ctx, h, device)
     saved = (gate.weight.detach().clone(), gate.bias.detach().clone())
-    with torch.no_grad():                       # chirurgie, puis restauration
+    with torch.no_grad():                       # surgery, then restore
         gate.weight.zero_(); gate.bias.zero_()
     fan_off = fan_for(model, ctx, h, device)
     with torch.no_grad():
         gate.weight.copy_(saved[0]); gate.bias.copy_(saved[1])
 
     med_delta = float(np.abs(fan_on[:, 4] - fan_off[:, 4]).max())
-    print(f"médiane |on-off| max : {med_delta:.2e}  (doit être ~0 — invariance)")
+    print(f"median |on-off| max: {med_delta:.2e}  (must be ~0 - invariance)")
 
     import matplotlib
     matplotlib.use("Agg")
@@ -104,13 +104,13 @@ def main():
         ax.set_title(title, fontsize=10)
         ax.tick_params(labelsize=8)
     axes[0].legend(fontsize=8, frameon=False)
-    fig.suptitle(f"{args.config} — same checkpoint, gate surgery only "
-                 f"(median identical, |Δ| ≤ {med_delta:.1e})", fontsize=9)
+    fig.suptitle(f"{args.config} - same checkpoint, gate surgery only "
+                 f"(median identical, |delta| <= {med_delta:.1e})", fontsize=9)
     fig.tight_layout()
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     stem = out / f"gate_fan_{args.config.replace('/', '_')}"
     fig.savefig(f"{stem}.pdf"); fig.savefig(f"{stem}.png", dpi=200)
-    print(f"Figure : {stem}.pdf")
+    print(f"Figure: {stem}.pdf")
 
 
 if __name__ == "__main__":

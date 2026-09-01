@@ -1,38 +1,38 @@
 # @package _global_
 #
-# G4.5 — BASELINE SANS PRETRAINING. Le contrôle du pari central de TimeJEPA.
+# G4.5 - NO-PRETRAINING BASELINE. The control for TimeJEPA's central bet.
 #
 #   python scripts/train.py --config-name tiny_geo_scratch wandb.run_name=geo-scratch
-#   # arm 32/16 : --config-name tiny_geo_scratch model.patch_length=32 model.stride=16 \
+#   # 32/16 arm: --config-name tiny_geo_scratch model.patch_length=32 model.stride=16 \
 #   #             model.name=timejepa_tiny_geo_p32_scratch
 #
 #   python scripts/evaluate.py --config-name tiny_geo_scratch \
 #       +checkpoint_path=checkpoints/timejepa_tiny_geo_scratch/pretrain_False/<ckpt>
 #
-# ⚠️ PAS de +training.pretrained_encoder_path — c'est TOUT l'objet de la config.
-# Sans ce flag, le finetune part d'une init aléatoire : même architecture, même
-# budget, mêmes données, entraînée supervisée de bout en bout.
+# WARNING: NO +training.pretrained_encoder_path - that is the WHOLE point of
+# this config. Without the flag, the finetune starts from random init: same
+# architecture, same budget, same data, trained supervised end to end.
 #
-# Pourquoi ce run existe
+# Why this run exists
 # ----------------------
-# Tout ce qui a été montré jusqu'ici : la recette JEPA *fonctionne*. Jamais
-# montré : qu'elle *bat l'alternative*. Si le pipeline pretrain->finetune ne bat
-# pas ce baseline, le pari central est infirmé quel que soit le reste ; s'il le
-# bat, c'est la preuve qui manque au papier. À faire AVANT LOTSA : scaler les
-# données n'a de sens que si l'objectif de pretrain qu'elles nourrissent a
-# prouvé sa valeur.
+# Everything shown so far: the JEPA recipe *works*. Never shown: that it
+# *beats the alternative*. If the pretrain->finetune pipeline does not beat
+# this baseline, the central bet is refuted regardless of the rest; if it
+# does, it is the proof the paper is missing. To do BEFORE LOTSA: scaling the
+# data only makes sense if the pretrain objective it feeds has proven its
+# value.
 #
-# Règles de lecture (les respecter, sinon le résultat ne prouve rien)
+# Reading rules (follow them, or the result proves nothing)
 # -------------------------------------------------------------------
-# - full_finetune est OBLIGATOIRE : gradual_unfreeze gèlerait des poids
-#   aléatoires pendant la première époque. Fixé ci-dessous, ne pas surcharger.
-# - Être GÉNÉREUX avec le baseline : mêmes epochs, même early stopping
-#   (patience 25). S'il s'arrête court, lui redonner des époques avant de
-#   conclure. Une victoire contre un baseline sous-entraîné ne prouve rien.
-# - Juger sur l'éval benchmark (skill / WQL / couverture), pas sur la val_loss.
-# - Le LR du finetune est calibré pour un encodeur pré-entraîné ; si le scratch
-#   plafonne visiblement, tester training.optimizer.learning_rate=3e-4 et
-#   garder le MEILLEUR des deux — toujours au bénéfice du baseline.
+# - full_finetune is MANDATORY: gradual_unfreeze would freeze random weights
+#   during the first epoch. Set below, do not override.
+# - Be GENEROUS with the baseline: same epochs, same early stopping
+#   (patience 25). If it stops short, give it more epochs before concluding.
+#   A win against an undertrained baseline proves nothing.
+# - Judge on the benchmark eval (skill / WQL / coverage), not on val_loss.
+# - The finetune LR is calibrated for a pretrained encoder; if the scratch arm
+#   visibly plateaus, try training.optimizer.learning_rate=3e-4 and keep the
+#   BEST of the two - always in the baseline's favor.
 defaults:
   - tiny_geo
   - _self_

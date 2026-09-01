@@ -24,8 +24,8 @@ class JEPAPretrainModule(pl.LightningModule):
     
     Training workflow:
         1. Get batch with 'context' (past) and 'target' (future)
-        2. Context → Online Encoder → context representations
-        3. Target → Target Encoder (EMA) → target representations
+        2. Context -> Online Encoder -> context representations
+        3. Target -> Target Encoder (EMA) -> target representations
         4. Predictor predicts target representations from context
         5. Loss: MSE between predicted and actual target representations
         6. Update online encoder + predictor via backprop
@@ -45,15 +45,15 @@ class JEPAPretrainModule(pl.LightningModule):
         # predictor output (the encoder output is what downstream consumes).
         regularize_context: bool = True,
 
-        # I-JEPA-style targets: encode [context ‖ target] and slice, instead of
+        # I-JEPA-style targets: encode [context + target] and slice, instead of
         # encoding the future window in isolation.
         contextualized_targets: bool = True,
 
-        # ABLATION ARM (G6) — regress onto the RAW future patches instead of the
+        # ABLATION ARM (G6) - regress onto the RAW future patches instead of the
         # target encoder's latents. This is the control the whole thesis needs:
         # every other pretraining result in the project compares JEPA against NO
         # pretraining (E12), never against a competing objective, so "latent
-        # extrapolation beats reconstruction" sits in §4 of the log — the list of
+        # extrapolation beats reconstruction" sits in section 4 of the log - the list of
         # things NOT established.
         #
         # It changes exactly ONE variable. The task stays past -> future, the
@@ -65,21 +65,21 @@ class JEPAPretrainModule(pl.LightningModule):
         # Off by default => every existing config is bit-identical.
         reconstruction_target: bool = False,
 
-        # G9.2 — arm JEPA inter-résolution : lit `w = k2/k1` par item dans le
-        # batch et le transmet au prédicteur (FiLM). Exige des cibles
-        # STANDALONE : `contextualized_targets` concatène [ctx‖cible] en pas
-        # d'échantillon, ce qui n'a pas de sens physique quand les deux vivent
-        # sur des grilles différentes — la garde ci-dessous refuse la
-        # combinaison plutôt que de laisser tourner une éval physiquement
-        # fausse. Off par défaut => configs existantes bit-identiques.
+        # G9.2 - cross-resolution JEPA arm: reads `w = k2/k1` per item from
+        # the batch and forwards it to the predictor (FiLM). Requires
+        # STANDALONE targets: `contextualized_targets` concatenates
+        # [ctx + target] in sample steps, which has no physical meaning when
+        # the two live on different grids - the guard below refuses the
+        # combination rather than let a physically wrong eval run. Off by
+        # default => existing configs bit-identical.
         cross_resolution: bool = False,
 
-        # ESJEPA — arm ErrorSignal : loss auxiliaire smooth_l1(z_pred, z_target)
-        # sur les statistiques du résidu de lissage (le modèle expose
-        # z_predictions/z_targets quand il est construit avec
-        # model.error_signal=true). lambda_z dose la voie z contre l'invariance
-        # (4 dims contre 128 — témoin de siphonnage : train_loss/invariance vs
-        # baseline). Off par défaut => configs existantes bit-identiques.
+        # ESJEPA - ErrorSignal arm: auxiliary loss smooth_l1(z_pred, z_target)
+        # on the smoothing-residual statistics (the model exposes
+        # z_predictions/z_targets when built with model.error_signal=true).
+        # lambda_z doses the z path against invariance (4 dims vs 128 -
+        # siphoning witness: train_loss/invariance vs baseline). Off by
+        # default => existing configs bit-identical.
         error_signal: bool = False,
         lambda_z: float = 0.1,
 
@@ -145,28 +145,28 @@ class JEPAPretrainModule(pl.LightningModule):
         self.cross_resolution = bool(cross_resolution)
         if self.cross_resolution and contextualized_targets:
             raise ValueError(
-                "cross_resolution=True exige contextualized_targets=false : la "
-                "cible contextualisée concatène [contexte‖cible] en pas "
-                "d'échantillon, physiquement faux quand contexte et cible sont "
-                "à des résolutions différentes. Poser "
-                "training.contextualized_targets: false dans la config de l'arm."
+                "cross_resolution=True requires contextualized_targets=false: "
+                "the contextualized target concatenates [context + target] in "
+                "sample steps, physically wrong when context and target are at "
+                "different resolutions. Set "
+                "training.contextualized_targets: false in the arm config."
             )
 
         self.error_signal = bool(error_signal)
         self.lambda_z = float(lambda_z)
         if self.error_signal and reconstruction_target:
             raise ValueError(
-                "error_signal=True est incompatible avec "
-                "reconstruction_target=True : l'arm reconstruction remplace "
-                "l'objectif latent entier (_compute_loss court-circuite "
-                "jepa_loss), une loss z par-dessus serait incohérente."
+                "error_signal=True is incompatible with "
+                "reconstruction_target=True: the reconstruction arm replaces "
+                "the whole latent objective (_compute_loss bypasses "
+                "jepa_loss), a z loss on top would be incoherent."
             )
         if self.error_signal and not getattr(model, 'error_signal', False):
             raise ValueError(
-                "error_signal=True côté module mais le modèle a été construit "
-                "sans model.error_signal — les clés z_predictions/z_targets "
-                "n'existeraient pas. Les deux flags viennent de la même clé "
-                "de config (model.error_signal), vérifier la plomberie."
+                "error_signal=True on the module but the model was built "
+                "without model.error_signal - the z_predictions/z_targets "
+                "keys would not exist. Both flags come from the same config "
+                "key (model.error_signal), check the plumbing."
             )
 
         # Reconstruction head: d_model -> patch_size * num_features, i.e. exactly
@@ -180,7 +180,7 @@ class JEPAPretrainModule(pl.LightningModule):
         if self.reconstruction_target:
             proj = model.patching.projection
             self.recon_head = nn.Linear(proj.out_features, proj.in_features)
-            print("  ⚠️  ABLATION: reconstruction target (raw patches), NOT latent")
+            print("  WARNING: ABLATION: reconstruction target (raw patches), NOT latent")
 
         self.context_lengths = list(context_lengths) if context_lengths else None
         self.p_random_context = float(p_random_context)
@@ -215,7 +215,7 @@ class JEPAPretrainModule(pl.LightningModule):
         Sample the input geometry ONCE PER BATCH.
 
         Per-batch (not per-sample) keeps every tensor rectangular, so no padding
-        or attention masking is needed — the encoder is length-agnostic (RoPE,
+        or attention masking is needed - the encoder is length-agnostic (RoPE,
         no learned positional table) and simply sees a different patch count.
 
         Context is cropped from the LEFT (keep the most recent history, which is
@@ -247,7 +247,7 @@ class JEPAPretrainModule(pl.LightningModule):
         Two details that matter and are easy to get wrong:
         * The raw patches are taken in the model's NORMALISED space. RevIN stores
           the context statistics on the module during `forward_pretrain`, and
-          `forward_pretrain` normalises the target with those same statistics —
+          `forward_pretrain` normalises the target with those same statistics -
           scoring against un-normalised values would make the loss track each
           series' scale instead of its shape.
         * The patch spans are those of the standalone target window, which is
@@ -286,7 +286,7 @@ class JEPAPretrainModule(pl.LightningModule):
         if self.reconstruction_target:
             # Deliberately NOT routed through jepa_loss: the anti-collapse terms
             # exist because latent targets are LEARNED and can degenerate. Raw
-            # patches are fixed, so there is nothing to collapse — adding SIGReg
+            # patches are fixed, so there is nothing to collapse - adding SIGReg
             # here would regularise against a non-existent failure mode.
             #
             # Huber rather than MSE, and this is not a detail. RevIN normalises
@@ -300,13 +300,13 @@ class JEPAPretrainModule(pl.LightningModule):
             # Under MSE one such batch outweighs tens of millions of normal ones
             # and the objective becomes whatever the degenerate windows say. The
             # JEPA arm never showed this because its targets are encoder outputs
-            # — LayerNorm keeps them O(1) — so the pathology was always in the
+            # - LayerNorm keeps them O(1) - so the pathology was always in the
             # data and was simply absorbed. Huber bounds each element's gradient
             # contribution, which is the standard answer for heavy-tailed
             # regression targets and keeps every window in the training set,
             # so both arms still see EXACTLY the same data.
             #
-            # ⚠️ This does make the arm differ from JEPA in loss SHAPE as well as
+            # NOTE: this does make the arm differ from JEPA in loss SHAPE as well as
             # target space. Stated in the log rather than hidden: an unbounded
             # value-space MSE is not a well-posed objective here, so "pure
             # like-for-like" was never actually on the table.
@@ -333,13 +333,13 @@ class JEPAPretrainModule(pl.LightningModule):
             return_components=True,
         )
 
-        # ESJEPA — loss z auxiliaire. smooth_l1 : les deux premières
-        # composantes sont des log-échelles (le log rend le multiplicatif
-        # additif et ~gaussien) et Huber borne la contribution des patches à
-        # résidu extrême (bitbrains) — même raisonnement que l'arm recon
-        # ci-dessus. Pas d'anti-collapse : la cible est FIXE (données) ; le
-        # mode d'échec réel (z_pred → moyenne marginale) est surveillé par le
-        # témoin esjepa/z_pred_std_ratio, pas régularisé.
+        # ESJEPA - auxiliary z loss. smooth_l1: the first two components are
+        # log-scales (the log makes the multiplicative additive and
+        # ~Gaussian) and Huber bounds the contribution of extreme-residual
+        # patches (bitbrains) - same reasoning as the recon arm above. No
+        # anti-collapse: the target is FIXED (data); the real failure mode
+        # (z_pred -> marginal mean) is watched by the esjepa/z_pred_std_ratio
+        # witness, not regularized.
         if self.error_signal and 'z_predictions' in outputs:
             z_loss = torch.nn.functional.smooth_l1_loss(
                 outputs['z_predictions'], outputs['z_targets'])
@@ -378,11 +378,11 @@ class JEPAPretrainModule(pl.LightningModule):
         self.log('geometry/horizon_len', float(target.shape[1]),
                  on_step=True, on_epoch=False, logger=True)
 
-        # Observabilité des augmentations d'entrée (demande utilisateur,
-        # 2026-08-19) : plutôt que de deviner ce qui est actif, le run le dit.
-        # `resolution_factor` est émis par le dataset depuis toujours mais
-        # n'était consommé nulle part ; `w` n'existe que sur l'arm
-        # inter-résolution. Moyennés sur l'epoch pour être lisibles dans wandb.
+        # Input-augmentation observability (2026-08-19): rather
+        # than guessing what is active, the run says it. `resolution_factor`
+        # has always been emitted by the dataset but was consumed nowhere;
+        # `w` only exists on the cross-resolution arm. Averaged over the
+        # epoch to be readable in wandb.
         rf = batch.get('resolution_factor')
         if rf is not None and torch.is_tensor(rf):
             rf = rf.float()
@@ -393,13 +393,13 @@ class JEPAPretrainModule(pl.LightningModule):
         w = batch.get('w') if self.cross_resolution else None
         if w is not None:
             w = w.float()
-            # Témoins de l'arm xres — l'audit du 2026-08-20 (T1) a montré que
-            # w_neq1_frac SEUL rassure à tort : il est dominé par les paires
-            # k1=1<k2 (éligibles sur tous les morceaux 2048), alors que k1>1
-            # exige des morceaux 8192 et que w<1 (k1>k2) n'existe QUE là. En
-            # mode cross_resolution, `aug/multires_frac` (plus haut) = fraction
-            # k1>1 ; `w_lt1_frac` est la moitié de la distribution que le FiLM
-            # ne verrait jamais sans les morceaux longs.
+            # xres arm witnesses - the 2026-08-20 audit (T1) showed that
+            # w_neq1_frac ALONE falsely reassures: it is dominated by k1=1<k2
+            # pairs (eligible on all 2048 chunks), while k1>1 requires 8192
+            # chunks and w<1 (k1>k2) exists ONLY there. In cross_resolution
+            # mode, `aug/multires_frac` (above) = the k1>1 fraction;
+            # `w_lt1_frac` is the half of the distribution the FiLM would
+            # never see without the long chunks.
             self.log('aug/w_neq1_frac', (w != 1).float().mean(),
                      on_step=False, on_epoch=True, logger=True, sync_dist=True)
             self.log('aug/w_lt1_frac', (w < 1).float().mean(),
@@ -418,11 +418,11 @@ class JEPAPretrainModule(pl.LightningModule):
         # Compute JEPA loss
         loss, components = self._compute_loss(predictions, targets, outputs)
 
-        # Audit 2026-08-20 (C4) — LE témoin de convergence de l'arm xres : la
-        # loss par item, conditionnée sur w. Si `wneq1` stagne pendant que `w1`
-        # descend, les items inter-résolution ne convergent pas et l'arm échoue
-        # de manière DIAGNOSTIQUÉE (au lieu de dégrader la moyenne en silence).
-        # Coût : une MSE élément-par-élément sans réduction, négligeable.
+        # Audit 2026-08-20 (C4) - THE convergence witness of the xres arm:
+        # per-item loss conditioned on w. If `wneq1` stalls while `w1` drops,
+        # the cross-resolution items are not converging and the arm fails in
+        # a DIAGNOSED way (instead of silently degrading the mean). Cost: one
+        # elementwise MSE with no reduction, negligible.
         if w is not None and bool((w != 1).any()):
             with torch.no_grad():
                 per_item = (predictions - targets).pow(2).mean(dim=(1, 2))
@@ -466,8 +466,8 @@ class JEPAPretrainModule(pl.LightningModule):
 
         # NOTE: validation deliberately uses the NATIVE geometry, never the
         # randomized one, so val_loss stays comparable across epochs and runs.
-        # (Sur l'arm inter-résolution, le split de validation n'applique pas
-        # les augmentations — w y vaut donc toujours 1 quand il existe.)
+        # (On the cross-resolution arm, the validation split applies no
+        # augmentations - w is therefore always 1 when it exists.)
         w = batch.get('w') if self.cross_resolution else None
         outputs = self.model.forward_pretrain(
             context, target, contextualized_targets=self.contextualized_targets,
@@ -476,7 +476,7 @@ class JEPAPretrainModule(pl.LightningModule):
 
         predictions, targets = self._scored_pair(target, outputs)
 
-        # Same objective as training — see _compute_loss
+        # Same objective as training - see _compute_loss
         loss, components = self._compute_loss(predictions, targets, outputs)
 
         # Logging
@@ -506,7 +506,7 @@ class JEPAPretrainModule(pl.LightningModule):
 
             # Effective rank: a collapsed encoder concentrates all its energy in
             # a handful of directions. Computed on the first validation batch
-            # only — it is a diagnostic, not a per-batch quantity, and running an
+            # only - it is a diagnostic, not a per-batch quantity, and running an
             # eigendecomposition on every batch is pure overhead.
             if batch_idx == 0:
                 eff_rank = self._effective_rank(ctx)
@@ -514,16 +514,16 @@ class JEPAPretrainModule(pl.LightningModule):
                     self.log('collapse/effective_rank', eff_rank, on_step=False,
                              on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
-        # ESJEPA — les deux témoins de l'arm (équivalents de aug/w_neq1_frac
-        # pour xres : s'ils sont mauvais, le run ne mesure rien) :
-        # * esjepa/z_corr : Spearman entre la log-RMS PRÉDITE (z_pred[...,0])
-        #   et la log-RMS RÉALISÉE du résidu — LE témoin de non-stérilité.
-        #   Prédiction P1 posée avant le run : > 0.3 ; ≈ 0 = l'hétéro-
-        #   scédasticité n'est pas prévisible depuis le contexte, l'arm meurt
-        #   AU PRETRAIN.
-        # * esjepa/z_pred_std_ratio : std(z_pred)/std(z_target) — le témoin du
-        #   collapse-vers-la-moyenne-marginale (l'analogue du pred_var 0.6 /
-        #   target_var 0.95 qui a motivé tout l'arm).
+        # ESJEPA - the arm's two witnesses (the aug/w_neq1_frac equivalents
+        # for xres: if they are bad, the run measures nothing):
+        # * esjepa/z_corr: Spearman between the PREDICTED log-RMS
+        #   (z_pred[...,0]) and the REALIZED log-RMS of the residual - THE
+        #   non-sterility witness. Prediction P1 set before the run: > 0.3;
+        #   ~0 = heteroscedasticity is not predictable from the context, the
+        #   arm dies AT PRETRAIN.
+        # * esjepa/z_pred_std_ratio: std(z_pred)/std(z_target) - the
+        #   collapse-to-marginal-mean witness (the analogue of pred_var 0.6 /
+        #   target_var 0.95 that motivated the whole arm).
         if self.error_signal and 'z_predictions' in outputs:
             with torch.no_grad():
                 zp = outputs['z_predictions'][..., 0].reshape(-1).float()
@@ -540,9 +540,8 @@ class JEPAPretrainModule(pl.LightningModule):
     @staticmethod
     @torch.no_grad()
     def _spearman(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        """Corrélation de Spearman (Pearson des rangs), sans scipy — les
-        ex-aequo reçoivent des rangs d'ordre d'apparition, suffisant pour un
-        témoin de monitoring."""
+        """Spearman correlation (Pearson of ranks), no scipy - ties get
+        appearance-order ranks, good enough for a monitoring witness."""
         ra = a.argsort().argsort().float()
         rb = b.argsort().argsort().float()
         ra = ra - ra.mean()
@@ -562,7 +561,7 @@ class JEPAPretrainModule(pl.LightningModule):
           128x128 matrix instead of a 32000x128 one.
 
         - Wrapped in try/except. Iterative eigensolvers can fail to converge on
-          near-degenerate input — which is *exactly* the collapsed case this
+          near-degenerate input - which is *exactly* the collapsed case this
           metric exists to detect. A monitoring metric that crashes the run at
           the precise moment the thing it monitors happens would be worse than
           useless.
@@ -679,4 +678,4 @@ class JEPAPretrainModule(pl.LightningModule):
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         self.model.save_pretrained_encoder(str(save_path))
-        print(f"✅ Saved pretrained encoder to {save_path}")
+        print(f"Saved pretrained encoder to {save_path}")

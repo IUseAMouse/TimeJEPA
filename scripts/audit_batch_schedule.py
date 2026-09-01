@@ -1,28 +1,27 @@
-#!/usr/bin/env python
 """
-Audit de la COMPOSITION DES BATCHS au fil de l'époque (TemperatureSampler).
+Audit of BATCH COMPOSITION over the epoch (TemperatureSampler).
 
     python scripts/audit_batch_schedule.py --config-name lotsa_tiny_mix_zeroshot
     python scripts/audit_batch_schedule.py --config-name lotsa_tiny_mix --mode pretrain
 
-Pourquoi (2026-08-24) : l'hypothèse « la composition des batchs est stable sur
-l'époque » est FAUSSE par construction — `TemperatureSampler.__iter__` retire
-une famille de TOUS les batchs restants dès qu'elle atteint son plafond
-`max_oversample_ratio` (le `continue` de datamodule.py), et le batch RÉTRÉCIT
-(les slots perdus ne sont pas réalloués). Les petites familles, suréchantillonnées
-par T=0.5, s'éteignent tôt ; la fin d'époque est dominée par les grosses
-familles. Candidat mécanisme de la dérive GIFT de fin de finetune (G7.3c : les
-deux runs mix s'infléchissent au MÊME step — l'extinction est déterministe).
+Why (2026-08-24): the assumption "batch composition is stable over the epoch"
+is FALSE by construction - `TemperatureSampler.__iter__` removes a family
+from ALL remaining batches once it hits its `max_oversample_ratio` cap (the
+`continue` in datamodule.py), and the batch SHRINKS (lost slots are not
+reallocated). Small families, oversampled by T=0.5, die out early; the end of
+the epoch is dominated by the big families. Candidate mechanism for the
+end-of-finetune GIFT drift (G7.3c: both mix runs bend at the SAME step -
+extinction is deterministic).
 
-Le script itère le sampler RÉEL (aucune donnée lue : il ne produit que des
-indices) et rapporte :
-  * l'extinction de chaque famille plafonnée (batch, % de l'époque) ;
-  * la composition par décile d'époque (taille de batch, part des familles
-    plafonnées vs libres, part des 5 plus grosses) ;
-  * le résumé du déséquilibre début/fin.
+The script iterates the REAL sampler (no data read: it only produces
+indices) and reports:
+  * the extinction of each capped family (batch, % of the epoch);
+  * composition per epoch decile (batch size, capped vs free family share,
+    share of the 5 largest);
+  * the start/end imbalance summary.
 
-NB : lancé mono-process, world_size=1 — le NOMBRE de batchs diffère d'un run
-3-GPU (÷3) mais le PROFIL de composition en % d'époque est identique.
+NB: run single-process, world_size=1 - the NUMBER of batches differs from a
+3-GPU run (/3) but the composition PROFILE in % of the epoch is identical.
 """
 
 import argparse
@@ -35,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def build_datamodule(cfg, is_pretrain: bool, force_ration: bool = False):
-    """Réplique la construction de scripts/train.py (mêmes clés de config)."""
+    """Replicates the scripts/train.py construction (same config keys)."""
     from omegaconf import OmegaConf
     from timejepa.data.datamodule import MultiDatasetMonashDataModule
 
@@ -81,10 +80,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--config-name", default="lotsa_tiny_mix_zeroshot")
     ap.add_argument("--mode", choices=["auto", "pretrain", "finetune"], default="auto",
-                    help="auto = lu depuis training.mode de la config")
+                    help="auto = read from the config's training.mode")
     ap.add_argument("--deciles", type=int, default=10)
     ap.add_argument("--ration", action="store_true",
-                    help="force le rationnement G10.2 (pour comparer sans toucher la config)")
+                    help="force G10.2 rationing (to compare without touching the config)")
     args = ap.parse_args()
 
     from hydra import compose, initialize
@@ -99,8 +98,8 @@ def main():
 
     sampler = getattr(dm, "_train_sampler", None)
     if sampler is None:
-        sys.exit("✗ pas de TemperatureSampler (balanced_sampling désactivé ?) — "
-                 "rien à auditer, le DataLoader shuffle uniformément.")
+        sys.exit("no TemperatureSampler (balanced_sampling disabled?) - "
+                 "nothing to audit, the DataLoader shuffles uniformly.")
 
     names = list(getattr(dm, "dataset_names_order", []) or
                  [f"dataset_{i}" for i in range(sampler.num_datasets)])
@@ -112,12 +111,12 @@ def main():
     capped = np.array([r >= sampler.max_oversample_ratio - 1e-9
                        for r in sampler.oversample_ratios])
 
-    print(f"\n{'='*74}\nAUDIT DU SCHEDULE DE BATCHS — {args.config_name} "
+    print(f"\n{'='*74}\nBATCH SCHEDULE AUDIT - {args.config_name} "
           f"({'pretrain' if is_pretrain else 'finetune'})")
-    print(f"{sampler.num_datasets} familles | {n_batches} batchs/époque "
-          f"(world_size=1) | batch nominal {sampler.actual_batch_size} | "
-          f"T={sampler.temperature} | plafond {sampler.max_oversample_ratio}x | "
-          f"rationnement {'ACTIF' if getattr(sampler, 'ration_oversample', False) else 'inactif'}")
+    print(f"{sampler.num_datasets} families | {n_batches} batches/epoch "
+          f"(world_size=1) | nominal batch {sampler.actual_batch_size} | "
+          f"T={sampler.temperature} | cap {sampler.max_oversample_ratio}x | "
+          f"rationing {'ACTIVE' if getattr(sampler, 'ration_oversample', False) else 'inactive'}")
     print(f"{'='*74}")
 
     dec_counts = np.zeros((n_dec, sampler.num_datasets), dtype=np.int64)
@@ -135,22 +134,22 @@ def main():
         if b_idx + 1 >= n_batches:
             break
 
-    # extinction réelle = premier batch où la famille manque ET ne revient plus
-    print("\nEXTINCTIONS (famille plafonnée retirée des batchs restants) :")
+    # real extinction = first batch where the family is missing and never returns
+    print("\nEXTINCTIONS (capped family removed from the remaining batches):")
     ext_rows = [(names[i], b, 100.0 * b / n_batches)
                 for i, b in sorted(extinction.items(), key=lambda kv: kv[1])
                 if capped[i]]
     if not ext_rows:
-        print("  aucune — toutes les familles couvrent l'époque entière")
+        print("  none - every family covers the whole epoch")
     for name, b, pct in ext_rows[:25]:
-        print(f"  {name:<42s} éteinte au batch {b:>6d}  ({pct:5.1f} % de l'époque)")
+        print(f"  {name:<42s} extinct at batch {b:>6d}  ({pct:5.1f} % of the epoch)")
     if len(ext_rows) > 25:
-        print(f"  … et {len(ext_rows) - 25} autres")
+        print(f"  ... and {len(ext_rows) - 25} more")
 
     top5 = np.argsort(sizes)[-5:]
-    print(f"\nCOMPOSITION PAR DÉCILE (part du batch, moyenne du décile) :")
-    print(f"  {'décile':<8s}{'taille batch':>13s}{'plafonnées':>12s}"
-          f"{'libres':>9s}{'top-5 tailles':>15s}")
+    print(f"\nCOMPOSITION PER DECILE (batch share, decile mean):")
+    print(f"  {'decile':<8s}{'batch size':>13s}{'capped':>12s}"
+          f"{'free':>9s}{'top-5 sizes':>15s}")
     for d in range(n_dec):
         tot = dec_counts[d].sum()
         if tot == 0:
@@ -164,30 +163,30 @@ def main():
     first, last = dec_counts[0] / max(dec_counts[0].sum(), 1), \
         dec_counts[-1] / max(dec_counts[-1].sum(), 1)
     movers = np.argsort(np.abs(last - first))[::-1][:8]
-    print("\nPLUS GROS MOUVEMENTS début -> fin d'époque :")
+    print("\nBIGGEST MOVES start -> end of epoch:")
     for i in movers:
         print(f"  {names[i]:<42s} {first[i]:6.2%} -> {last[i]:6.2%}"
-              f"  ({'plafonnée' if capped[i] else 'libre'})")
+              f"  ({'capped' if capped[i] else 'free'})")
 
-    # Table complète — L'instrument du dimensionnement v3 (« le batch cible
-    # d'abord ») : part de batch moyenne sur l'époque, par famille, triée.
-    # Ajoutée 2026-08-27 : l'audit ne montrait ni les parts synthétiques ni
-    # la longue traîne, exactement ce que l'étape 2 du runbook doit lire.
+    # Full table - THE instrument of the v3 sizing ("target batch first"):
+    # mean batch share over the epoch, per family, sorted. Added 2026-08-27:
+    # the audit showed neither the synthetic shares nor the long tail,
+    # exactly what step 2 of the runbook must read.
     total_counts = dec_counts.sum(axis=0)
     tot = max(total_counts.sum(), 1)
     order = np.argsort(total_counts)[::-1]
-    print(f"\nPART DE BATCH PAR FAMILLE (moyenne époque, {len(names)} familles) :")
-    print(f"  {'famille':<42s}{'fenêtres':>12s}{'part':>8s}  statut")
+    print(f"\nBATCH SHARE PER FAMILY (epoch mean, {len(names)} families):")
+    print(f"  {'family':<42s}{'windows':>12s}{'share':>8s}  status")
     synth_total = 0.0
     for i in order:
         share = total_counts[i] / tot
         if names[i].startswith("synthetic"):
             synth_total += share
         print(f"  {names[i]:<42s}{sampler.samples_per_dataset[i]:>12,d}"
-              f"{share:>8.2%}  {'plafonnée' if capped[i] else 'libre'}"
-              f"{'   ← SYNTH' if names[i].startswith('synthetic') else ''}")
-    print(f"\n  TOTAL SYNTHÉTIQUE : {synth_total:.1%} du batch"
-          f"  (cible v3 : 40-50 %)")
+              f"{share:>8.2%}  {'capped' if capped[i] else 'free'}"
+              f"{'   <- SYNTH' if names[i].startswith('synthetic') else ''}")
+    print(f"\n  SYNTHETIC TOTAL: {synth_total:.1%} of the batch"
+          f"  (v3 target: 40-50%)")
 
 
 if __name__ == "__main__":

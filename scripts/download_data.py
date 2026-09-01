@@ -110,7 +110,7 @@ def download_and_process_dataset(
     # 5. Save
     try:
         save_processed_data(series_list, output_path, compress=compress)
-        logger.info(f"✓ Successfully processed {dataset_name}")
+        logger.info(f"Successfully processed {dataset_name}")
         return output_path
     except Exception as e:
         logger.error(f"Failed to save processed data: {e}")

@@ -1,30 +1,31 @@
 # @package _global_
 #
-# G5 — PRETRAIN LOTSA, échelle base (36,4 M paramètres).
+# G5 - LOTSA PRETRAIN, base scale (36.4M parameters).
 #
 #   make train CONFIG=lotsa_base ARGS="trainer.accumulate_grad_batches=6 wandb.run_name=lotsa-base"
 #
-# 36 M paramètres, l'ordre de grandeur de TiRex (~35 M) qui tient le haut
-# du classement GIFT-Eval. C'est le palier où la comparaison au SOTA
-# devient frontale plutôt que catégorielle — et où le coût de calcul
-# cesse d'être anecdotique : ~7x tiny en paramètres, et l'attention
-# domine à 127 patchs.
+# 36M parameters, the order of magnitude of TiRex (~35M) which holds the top
+# of the GIFT-Eval leaderboard. This is the tier where the SOTA comparison
+# becomes head-on rather than categorical - and where compute cost stops
+# being anecdotal: ~7x tiny in parameters, and attention dominates at 127
+# patches.
 #
-# Hérite de `lotsa_tiny` pour TOUT ce qui n'est pas la taille du modèle : corpus
-# converti, memmap, exclusions, stride, géométrie 1024/256, loss sigreg, décodeur
-# quantile. La seule variable est la capacité — c'est ce qui rend la comparaison
-# entre échelles interprétable.
+# Inherits from `lotsa_tiny` for EVERYTHING that is not model size: converted
+# corpus, memmap, exclusions, stride, 1024/256 geometry, sigreg loss,
+# quantile decoder. The only variable is capacity - that is what makes the
+# cross-scale comparison interpretable.
 #
-# Les dimensions sont écrites EXPLICITEMENT plutôt qu'héritées de `base.yaml` :
-# celui-ci porte aussi son propre bloc `data`, qui écraserait le corpus LOTSA.
-# Un test vérifie qu'elles restent identiques à la référence.
+# The dimensions are written EXPLICITLY rather than inherited from
+# `base.yaml`: that file also carries its own `data` block, which would
+# overwrite the LOTSA corpus. A test verifies they stay identical to the
+# reference.
 #
-# Batch et accumulation
+# Batch and accumulation
 # ---------------------
-# batch 128 x accumulation 4 x 3 GPU = 1536 de batch effectif, dans l'ordre
-# de grandeur des 1536 des runs de référence. À VALIDER par un run court : ces
-# valeurs sont un point de départ pour 24 Go à contexte 1024, pas une mesure.
-#   +trainer.max_steps=5000 pour borner le smoke test.
+# batch 128 x accumulation 4 x 3 GPUs = 1536 effective batch, in the order of
+# magnitude of the reference runs' 1536. TO VALIDATE with a short run: these
+# values are a starting point for 24 GB at context 1024, not a measurement.
+#   +trainer.max_steps=5000 to bound the smoke test.
 defaults:
   - lotsa_tiny
   - _self_

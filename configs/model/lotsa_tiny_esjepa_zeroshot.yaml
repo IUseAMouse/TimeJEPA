@@ -1,19 +1,19 @@
 # @package _global_
-# Finetune zero-shot de l'arm ESJEPA — protocole G7.3c (1 époque, cosinus
-# recuit dedans), identique au protocole du contrôle mix pour que le duel
-# reste à une variable.
+# Zero-shot finetune of the ESJEPA arm - G7.3c protocol (1 epoch, cosine
+# annealed within it), identical to the mix control's protocol so the duel
+# stays one-variable.
 #
 #   python scripts/train.py --config-name lotsa_tiny_esjepa_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_esjepa/pretrain_True/last.ckpt"'
 #
-# Le décodeur quantile (hérité) reçoit z via le gate d'étalement zéro-init :
-# le finetune part EXACTEMENT du fan baseline, la modulation n'apparaît que si
-# le gradient la demande. Témoin de stérilité : esjepa/gate_absmean ~0 en fin
-# de finetune = le décodeur ignore z — résultat négatif interprétable (la
-# cross-attention contexte suffit), pas un échec silencieux.
-# Prédictions posées avant le run : P2 = val_wql ↓ vs contrôle à val_mase égal
-# (±0.5 %, quasi garanti par le gate) ; P3 = fan plus large sur les fenêtres à
-# gros résidu réalisé, flares de queue bitbrains ↓.
+# The quantile decoder (inherited) receives z via the zero-init spread gate:
+# the finetune starts EXACTLY from the baseline fan, modulation only appears
+# if the gradient asks for it. Sterility witness: esjepa/gate_absmean ~0 at
+# the end of finetune = the decoder ignores z - an interpretable negative
+# result (context cross-attention suffices), not a silent failure.
+# Predictions stated before the run: P2 = val_wql down vs control at equal
+# val_mase (+/-0.5%, near guaranteed by the gate); P3 = wider fan on windows
+# with large realized residual, bitbrains tail flares down.
 defaults:
   - lotsa_tiny_esjepa
   - _self_
@@ -27,10 +27,10 @@ training:
   max_epochs: 1
 
 checkpoint:
-  # Doctrine G7.3c : sélection par éval GIFT intermédiaire, jamais par
-  # val_loss (E20 : même une val propre et monotone désigne le mauvais
-  # checkpoint) — on garde tout. Le rationnement est hérité de
-  # lotsa_tiny_esjepa (protocole depuis E20).
+  # G7.3c doctrine: selection by intermediate GIFT eval, never by val_loss
+  # (E20: even a clean, monotone val picks the wrong checkpoint) - keep
+  # everything. Rationing is inherited from lotsa_tiny_esjepa (protocol
+  # since E20).
   save_top_k: -1
 
 data:

@@ -1,32 +1,32 @@
 # @package _global_
 #
-# G8 — PRETRAIN tiny sur LOTSA + chronos_extras. UNE variable : le corpus.
+# G8 - tiny PRETRAIN on LOTSA + chronos_extras. ONE variable: the corpus.
 #
-#   # 1. conversion (une fois, CPU, quelques minutes)
+#   # 1. conversion (once, CPU, a few minutes)
 #   python scripts/prepare_chronos.py --out data/processed/chronos_extras
 #
-#   # 2. répertoire mixte par symlinks (JAMAIS de génération dans un corpus en place)
+#   # 2. mixed directory via symlinks (NEVER generate into a corpus in place)
 #   mkdir -p data/processed/lotsa_chronos
 #   ln -s $(pwd)/data/processed/lotsa/*.npy data/processed/lotsa_chronos/
 #   ln -s $(pwd)/data/processed/chronos_extras/*.npy data/processed/lotsa_chronos/
-#   # puis l'AUDIT D'ÉQUILIBRE sur le répertoire mixte (en-tête de lotsa_tiny_full)
+#   # then the BALANCE AUDIT on the mixed directory (lotsa_tiny_full header)
 #
 #   # 3. pretrain
 #   python scripts/train.py --config-name lotsa_tiny_chronos wandb.run_name=chronos-pretrain
 #
-# Pourquoi ce corpus, et pourquoi il est petit
+# Why this corpus, and why it is small
 # --------------------------------------------
-# Vérifié (2026-08-19) : GiftEvalPretrain = LOTSA moins les 18 datasets d'éval,
-# identique à l'octet — ce levier-là est vide. Du corpus Chronos, seuls
-# dominick / ercot / mexico_city_bikes / ushcn_daily sont à la fois nouveaux et
-# sans fuite (allowlist auditée dans prepare_chronos.py). L'apport principal
-# n'est pas le volume : c'est que ces fichiers sont convertis en morceaux de
-# 8192, les premiers du corpus réel où la décimation multi-résolution est
-# POSSIBLE (1280·f ≤ 8192 → f ≤ 6, contre AUCUN f ≥ 2 sur les morceaux 2048).
-# C'est le carburant réel de l'arm inter-résolution (lotsa_tiny_xres).
+# Verified (2026-08-19): GiftEvalPretrain = LOTSA minus the 18 eval datasets,
+# byte-identical - that lever is empty. From the Chronos corpus, only
+# dominick / ercot / mexico_city_bikes / ushcn_daily are both new and
+# leak-free (allowlist audited in prepare_chronos.py). The main contribution
+# is not volume: these files are converted into 8192 chunks, the first in the
+# real corpus where multi-resolution decimation is POSSIBLE
+# (1280*f <= 8192 -> f <= 6, versus NO f >= 2 on the 2048 chunks). That is
+# the real fuel of the cross-resolution arm (lotsa_tiny_xres).
 #
-# La comparaison propre est contre lotsa_tiny (corpus plafonné, E14/E16) :
-# même géométrie, même budget, corpus ∪ chronos_extras.
+# The clean comparison is against lotsa_tiny (capped corpus, E14/E16): same
+# geometry, same budget, corpus + chronos_extras.
 defaults:
   - lotsa_tiny
   - _self_

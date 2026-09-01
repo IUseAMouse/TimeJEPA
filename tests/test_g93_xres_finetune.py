@@ -1,14 +1,14 @@
 """
-G9.3 — la transition xres pretrain -> finetune (2026-08-31).
+G9.3 - the xres pretrain -> finetune transition (2026-08-31).
 
-Invariants protégés :
-1. DÉFAUTS INERTES : sans les nouvelles clés (lambda_anchor=0, pas de w),
-   le finetune est bit-identique à l'existant — la doctrine du repo.
-2. w traverse forecast() et forward_finetune() : identité à l'init
-   (FiLM zéro-init), effet réel une fois le FiLM bruité.
-3. L'ancre : λ>0 fait bouger l'encodeur en full_finetune, refuse
-   linear_probe, et le target est bien la copie de l'online chargé
-   (jamais le deepcopy aléatoire de la construction — le piège n°1).
+Protected invariants:
+1. INERT DEFAULTS: without the new keys (lambda_anchor=0, no w), the
+   finetune is bit-identical to the existing one - the repo's doctrine.
+2. w traverses forecast() and forward_finetune(): identity at init
+   (zero-init FiLM), real effect once the FiLM is perturbed.
+3. The anchor: lambda>0 moves the encoder in full_finetune, refuses
+   linear_probe, and the target really is the copy of the loaded online
+   encoder (never the random deepcopy from construction - trap #1).
 """
 
 import sys
@@ -49,8 +49,8 @@ def _moved(before, module, prefix):
 
 
 def _step(module):
-    # Optimiseur nu (configure_optimizers exige un Trainer pour le scheduler) —
-    # même approche que test_p0_regressions.
+    # Bare optimizer (configure_optimizers requires a Trainer for the
+    # scheduler) - same approach as test_p0_regressions.
     opt = torch.optim.AdamW(module.model.parameters(), lr=1e-3)
     module.model.train()
     loss, _, _ = module._forward_and_loss(torch.randn(4, 512, 1),
@@ -60,13 +60,13 @@ def _step(module):
 
 
 # ---------------------------------------------------------------------------
-# 1. Défauts inertes
+# 1. Inert defaults
 # ---------------------------------------------------------------------------
 
 def test_lambda_zero_is_bit_identical():
     torch.manual_seed(0); m0 = _module(lambda_anchor=0.0)
     torch.manual_seed(0); m1 = _module()
-    m0.model.eval(); m1.model.eval()          # dropout hors jeu : comparaison pure
+    m0.model.eval(); m1.model.eval()          # dropout out of play: pure comparison
     x, y = torch.randn(2, 512, 1), torch.randn(2, 128, 1)
     with torch.no_grad():
         l0, _, _ = m0._forward_and_loss(x, y)
@@ -85,7 +85,7 @@ def test_forward_and_loss_default_w_is_none_path():
 
 
 # ---------------------------------------------------------------------------
-# 2. w traverse le modèle
+# 2. w traverses the model
 # ---------------------------------------------------------------------------
 
 def test_forecast_w_identity_at_init_then_real_after_noise():
@@ -95,15 +95,15 @@ def test_forecast_w_identity_at_init_then_real_after_noise():
     with torch.no_grad():
         base = model.forecast(x)["forecast"]
         same = model.forecast(x, w=w2)["forecast"]
-    # FiLM zéro-init : w quelconque == identité exacte
+    # zero-init FiLM: any w == exact identity
     assert torch.allclose(base, same, atol=0, rtol=0)
-    # FiLM bruité : w=2 doit changer la sortie (le chemin existe vraiment)
+    # perturbed FiLM: w=2 must change the output (the path really exists)
     with torch.no_grad():
         model.predictor.w_film.weight.add_(0.05)
         diff = model.forecast(x, w=w2)["forecast"]
         still = model.forecast(x, w=torch.ones(3))["forecast"]
     assert not torch.allclose(base, diff)
-    assert torch.allclose(base, still)          # w=1 reste le régime T2
+    assert torch.allclose(base, still)          # w=1 stays the T2 regime
 
 
 def test_forecast_w_rejected_without_film():
@@ -117,12 +117,12 @@ def test_rolling_forecast_accepts_w():
     model = _model(cross_resolution=True).eval()
     with torch.no_grad():
         out = model.forecast(torch.randn(2, 512, 1), n=300,
-                             w=torch.ones(2))    # 3 rolls, w répété par niveau
+                             w=torch.ones(2))    # 3 rolls, w repeated per level
     assert out["forecast"].shape[1] == 300
 
 
 # ---------------------------------------------------------------------------
-# 3. L'ancre
+# 3. The anchor
 # ---------------------------------------------------------------------------
 
 def test_anchor_moves_encoder_in_full_finetune():
@@ -132,7 +132,7 @@ def test_anchor_moves_encoder_in_full_finetune():
     assert m._last_anchor is not None and torch.isfinite(m._last_anchor)
     assert _moved(before, m, "online_encoder")
     assert _moved(before, m, "predictor")
-    assert not _moved(before, m, "target_encoder")   # l'ancre est immobile
+    assert not _moved(before, m, "target_encoder")   # the anchor does not move
 
 
 def test_anchor_refuses_linear_probe():
@@ -141,8 +141,9 @@ def test_anchor_refuses_linear_probe():
 
 
 def test_anchor_targets_loaded_online_not_random_copy(tmp_path):
-    # Un « pretrain » sauvé, rechargé au finetune avec λ>0 : le target doit
-    # être la copie de l'ONLINE CHARGÉ (piège n°1 — sinon deepcopy aléatoire).
+    # A saved "pretrain", reloaded at finetune with lambda>0: the target must
+    # be the copy of the LOADED ONLINE encoder (trap #1 - otherwise a random
+    # deepcopy).
     src = _model()
     ckpt = tmp_path / "pre.ckpt"
     torch.save({"state_dict": {f"model.{k}": v
@@ -154,7 +155,7 @@ def test_anchor_targets_loaded_online_not_random_copy(tmp_path):
 
 
 def test_anchor_zero_keeps_target_random_copy_semantics(tmp_path):
-    # λ=0 : AUCUN comportement nouveau, pas même la copie du target.
+    # lambda=0: NO new behavior, not even the target copy.
     src = _model()
     ckpt = tmp_path / "pre.ckpt"
     torch.save({"state_dict": {f"model.{k}": v
