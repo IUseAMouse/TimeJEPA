@@ -1919,6 +1919,28 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (Post-reprise mini : val 0.5495 NOUVEAU PLANCHER ; juge 0.6508, 3e point de
+  la série inversée ; P-J.3 gravée. Nettoyage/merge master clos)** — Checkpoint
+  post-reprise epoch00_valloss0.5495 : le plateau val des checkpoints 20-30 %
+  (0.5545/0.5544/0.5550) est CASSÉ — la décroissance cosine paie, la décision de
+  continuer le pretrain (au lieu de couper à 30 %) est validée par la mesure.
+  **Juge (hybride centered apparié, bras TTM bit-identique 0.7649/0.7258)** :
+  hybride@0.5495 = **0.6508**, meilleur juge mesuré — série à trois points :
+  0.6748 (15 %) → 0.6514 (30 %) → 0.6508 (post-reprise). Le mûrissement s'aplatit
+  (−2.3 pts puis −0.06 pt) : convergence vers ~0.650. Probe PLATE en parallèle (0.241,
+  solar ρ(E,MAE) −0.19) → le découplage probe/juge tient sur trois points appariés.
+  Couverture hybride ~0.595 stable quel que soit le juge (0.598@15 %, 0.595 ici) :
+  propriété du pool TTM, pas du juge. **P-J.3 (gravée AVANT le run final)** :
+  hybride@fin-d'epoch ≤ 0.652 succès, central 0.648±0.003 ; ÉCHEC si > 0.655
+  (le mûrissement s'arrête avant la fin → sélection du juge par hybride sur les
+  checkpoints intermédiaires). **Clôture du chantier nettoyage (décisions utilisateur)** :
+  sota-roadmap réécrite en 31 commits thématiques (arbre byte-identique, auteur unique
+  IUseAMouse, zéro trace de conversation dans code et historique — traces « user
+  decision/option A-B », shebangs et trailers purgés), 348 tests verts, mergée
+  fast-forward dans master et poussée ; historique complet conservé sous le tag LOCAL
+  archive/sota-roadmap-pre-squash (jamais poussé). Les nouveaux commits n'emportent
+  plus de trailer (doctrine ownership). Le crédit de collaboration vit dans la section
+  Acknowledgments du papier, seule place décidée pour lui.
 - **2026-09-01 (Pré-nettoyage : RateIN×w livré (gated), configs G9.0-aug créées, correctif
   v2/v2.1 au registre, crédit Claude au papier)** — Derniers morceaux de code du périmètre
   avant la passe de nettoyage/squash (décision utilisateur). **RateIN×w** : flag
