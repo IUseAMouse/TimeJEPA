@@ -1,0 +1,42 @@
+# @package _global_
+# Finetune zero-shot xres-v3 — LE cœur de G9.3 : les paires (k1,k2) restent
+# ACTIVES au finetune (w≠1 traverse le FiLM et la tête quantile — la pinball
+# supervise un fan au taux k2 sur une cible au taux k2) et l'ancre
+# d'invariance λ·MSE(ẑ, z_tgt) préserve juge et cohérence de taux (E18b).
+#
+#   python scripts/train.py --config-name lotsa_tiny_xres_v3_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_xres_v3/pretrain_True/<dernier ckpt nommé>"'
+#
+# Témoins à vérifier au premier décile : aug/w_neq1_frac > 0 (sinon l'arm est
+# STÉRILE — mode d'échec B5), train_loss/anchor loggée et stable.
+# Prédictions au lancement : P-x.1 cross-freq (10T/15T + décimées) ↓ vs
+# jumeau v3 ; P-x.2 probe-juge du checkpoint FINETUNÉ ≤ 0.30 (vs 0.409
+# mesuré E18b — l'ancre préserve le juge) ; P-x.3 chirurgie w:=1 à l'éval
+# dégrade les configs multi-fréquences (sinon le FiLM est décoratif).
+defaults:
+  - lotsa_tiny_xres_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_xres_v3_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+  max_epochs: 1
+  loss:
+    # λ sous le lambda_z=0.1 qui n'a pas siphonné (E21, témoin inversé) ;
+    # même patron de surveillance : si train_loss dévie > 2 % du jumeau v3 à
+    # étape égale, replier à 0.05.
+    lambda_anchor: 0.1
+
+checkpoint:
+  save_top_k: -1
+
+data:
+  datasets_finetune: null
+  multi_resolution_factors_finetune: [1, 2, 4]
+  p_multi_resolution_finetune: 0.3
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "xres", "robust-scale"]

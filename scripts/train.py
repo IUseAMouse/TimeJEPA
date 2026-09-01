@@ -88,14 +88,21 @@ def main(cfg: DictConfig):
         # the seasonal period in patch positions actually varies during training.
         # Train split only. See scripts/diagnose_ettm.py for why this matters.
         multi_resolution_factors=(
-            list(cfg.data.get('multi_resolution_factors') or [1]) if is_pretrain else [1]
+            list(cfg.data.get('multi_resolution_factors') or [1]) if is_pretrain
+            else list(cfg.data.get('multi_resolution_factors_finetune') or [1])
         ),
         p_multi_resolution=(
-            float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain else 0.0
+            float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain
+            # G9.3 (2026-08-31) : le finetune peut EXERCER les paires xres —
+            # la loi de câblage (E18b/E21) dit qu'une capacité de pretrain ne
+            # survit au finetune que si le finetune la traverse. Clés dédiées
+            # *_finetune, défauts 0/[1] = bit-identique à l'existant.
+            else float(cfg.data.get('p_multi_resolution_finetune', 0.0))
         ),
         # G9.2 : contexte à k1, cible à k2, clé 'w' par item. Même clé de
-        # config que le modèle et le module (model.cross_resolution).
-        cross_resolution=bool(cfg.model.get('cross_resolution', False)) if is_pretrain else False,
+        # config que le modèle et le module (model.cross_resolution) — dans
+        # les DEUX modes depuis G9.3 (hors train, le dataset émet w=1).
+        cross_resolution=bool(cfg.model.get('cross_resolution', False)),
         seed=cfg.data.seed,
         # Hardcoded to 8 before. With 20+ datasets held in memory — several of
         # them numpy object arrays, whose per-element refcount updates defeat
@@ -212,6 +219,10 @@ def main(cfg: DictConfig):
             
             # Loss
             loss_type=cfg.training.loss.finetune_type,
+            # G9.3 — ancre d'invariance (backlog E18b) : garder λ·MSE(ẑ, z_tgt)
+            # au finetune pour que le drift ne détruise ni le juge ni la
+            # cohérence xres. Défaut 0.0 = bit-identique.
+            lambda_anchor=float(cfg.training.loss.get('lambda_anchor', 0.0)),
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,

@@ -1919,6 +1919,151 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (RateIN v3 : CHAMPION 0.8152/0.5588, P-RIN.7 agrégat ✓ ; DÉTECTEUR GELÉ ;
+  les 3 limites résiduelles nommées = le dossier xres)** — Run utilisateur v3 (k par
+  config poolé, 97 configs) : **MASE 0.8152 | CRPS 0.5588** (coverage 0.748, 34/97
+  configs décimées en tout-ou-rien). Trajectoire finale de la campagne RateIN :
+  0.5983 → 0.5793 (v2) → 0.5682 (v2.1) → **0.5588 (v3)**, plafond oracle 0.5358 —
+  **capture 63 %**, 2e prédiction centrale touchée d'affilée (0.5588 ∈ 0.555±0.004).
+  Sous-clauses : ✓ jena/D réparée (k=1), ✓ famille des 22 régressions v2.1 essentiellement
+  éteinte (bitbrains ×5 bit-identiques, covid/electricity/m4 recalés) ; ✗ « aucune config
+  >+2 % » : ett1/H/long 0.271→0.377 (+39 %, 7 séries), ett2/H/medium +13 %,
+  loop_seattle/5T/medium +7 %, sz_taxi/15T/medium +4 % ; ✗ bitbrains ≤0.75 : le pool
+  REFUSE la décimation (bit-identique, ni gain ni perte) ; abandons de gains v2.1
+  par-série : ett1/D 0.289→0.344(=flip), ett2/15T/long 0.095→0.104(=flip). **Les 3
+  limites résiduelles, nommées** : (1) FAMINE petits-n — ett/bizitobs à 2-21 séries, le
+  pooling n'a rien à pooler, le winner's curse revient ; (2) DÉSACCORD backtest↔test —
+  loop_seattle/5T/medium : le pool choisit k4 et le test réalise EXACTEMENT la colonne
+  oracle k4 (0.094), mais le test préfère k1/k12 : le biais de fenêtre (la fin du passé
+  n'est pas le régime du test), irréductible pour TOUT sélecteur causal ; (3) MISMATCH
+  d'objectif — geomean équipondérée des ratios par série ≠ CRPS config pondéré par |y|
+  (bitbrains : k16 aide l'agrégat via les grosses séries, le pool équipondéré dit non).
+  **DÉCISION : détecteur GELÉ à v3** — corriger (3) reviendrait à imiter l'objectif de
+  l'oracle (Goodhart), (1) et (2) sont des limites d'information, pas des bugs. Les modes
+  fft/v2.1-par-série restent en code pour la table d'ablation du papier. Le résiduel
+  0.5588→0.5358 (−4.1 % rel.) est structurellement HORS DE PORTÉE d'une sélection externe
+  causale : c'est l'exhibit chiffré du dossier train-side (G9.0-augmentation d'abord —
+  35 % des instances d'éval sont désormais des entrées décimées JAMAIS VUES au train —,
+  FiLM-w ensuite, qui rend l'adaptivité par instance sans sélection donc sans curse).
+- **2026-09-01 (Diagnostic v2.1 : WINNER'S CURSE par série ; v3 = k par config poolé,
+  P-RIN.7 gravée)** — Le croisement k_hist×per_k_crps (script utilisateur) nomme le
+  mécanisme des 52 % non capturés : l'argmin PAR SÉRIE sur 11 candidats avec 1-2 fenêtres
+  bruitées sélectionne les coups de chance — jena_weather/D +163 % (14/42 instances à k=16,
+  le PIRE k de la table oracle 0.146), et 22 régressions à +4-12 % (bitbrains ×5, covid,
+  electricity ×3, ett ×5, loop ×2…) sont la même erreur à faible dose. Second symptôme :
+  les MÉLANGES de k par série sous-performent le k uniforme sur les paysages accidentés
+  (bitbrains_fast_storage/5T medium : mélange 0.896 vs ≤0.837 pour TOUTE la colonne
+  oracle). **v3 (2e itération post-oracle, mécanisme nommé)** : k PAR CONFIG — ratio
+  pinball k/k=1 par série, geomean entre séries (normalisation ôte échelle/difficulté),
+  argmin + marge 5 % ; variance ÷ n_séries, granularité = celle de l'oracle (qui borne la
+  capture) ; k coté sur <2/3 des séries disqualifié (sous-ensemble biaisé) ; garde par
+  instance inchangée. Précédent : s_Δ par dataset de FlowState, en causal. Smoke : 4/4
+  témoins corrects. **P-RIN.7 (gravée AVANT le run)** : agrégat ≤0.560 succès, central
+  0.555±0.004 (capture ≥65 %) ; plus AUCUNE config >+2 % vs flip apparié ; bitbrains
+  fast_storage/5T medium ≤0.75 (flip 0.801, mélange v2.1 0.896) ; jena/D revient ≤0.055 ;
+  ÉCHEC si >0.5682 → champion reste v2.1 et détecteur GELÉ définitivement, décision
+  G9.3/mini sur les chiffres v2.1.
+- **2026-09-01 (RateIN v2.1 : CHAMPION 0.8154/0.5682, P-RIN.6 RÉUSSIE ; capture 48 % de
+  l'oracle)** — Run utilisateur flip+backtest v2.1 (97 configs) : **MASE 0.8154 | CRPS
+  0.5682** (coverage 0.742, 43/97 majoritairement décimées, 43.9 % k>1). Trajectoire du
+  jour : 0.5983 (flip) → 0.5793 (v2) → **0.5682 (v2.1)**, plafond oracle 0.5358 — capture
+  48 % de l'écart, à 0 GPU d'entraînement. **P-RIN.6 : agrégat ✓** (barre ≤0.575 ET central
+  0.570±0.004 battus) ; **faux positifs coarse-freq réparés ✓** (m4_daily/m4_quarterly/
+  m4_weekly/electricity_W à 0 % k>1, covid 58→32 %) ; **clause bizitobs_application ✗**
+  (CRPS toujours 0.052 ≈ flip, oracle ~0.023 : 100 % k>1 mais TOUJOURS le mauvais k —
+  le plus gros poisson reste au fond). Victoires v2.1 : bizitobs_l2c/5T long 0.571→0.307,
+  electricity/15T long 0.130→0.093, electricity/W 0.109→0.073, solar/10T long 0.477→0.399,
+  loop_seattle/5T long 0.093→0.079, us_births/M 0.022→0.015. Régressions locales à
+  élucider : bitbrains_fast_storage/5T medium 0.727→0.896 (séries spiky — le backtest
+  sur-adapte sa fenêtre ?), bizitobs_l2c/H long 0.321→0.377, saugeen/W 0.419→0.461 (la
+  marge a tué un vrai gain). Discipline : P-RIN.6 non échouée → itérations détecteur encore
+  PERMISES mais chacune doit nommer son mécanisme (pas de descente de gradient sur le test) ;
+  prochaine étape = diagnostic par k_hist (JSON bt) × per_k_crps (JSON oracle) sur les
+  configs à pire capture, PUIS décision : une itération ciblée vs bascule G9.3/mini.
+  Le flip pur n'a plus de run sur le pod, mais per_k_crps["1"] de l'oracle EST le flip
+  apparié — les scripts d'analyse s'appuient dessus.
+- **2026-09-01 (RateIN v2 OFFICIEL : NOUVEAU CHAMPION 0.8393/0.5793 ; oracle-97 corrigé
+  0.7894/0.5358 ; v2.1 livrée, P-RIN.6 gravée)** — Run utilisateur flip+backtest sur les 97
+  configs : **MASE 0.8393 | CRPS 0.5793** (vs 0.8633/0.5983 flip seul, −3.2 % relatifs CRPS,
+  coverage 0.731, 55/97 configs majoritairement décimées, 55.2 % d'instances k>1).
+  **P-RIN.5 RÉUSSIE en v2** (barre ≤0.590, meilleur que le central 0.587±0.004) — après
+  l'échec du v1 FFT (0.6022) : c'est la SÉLECTION qui était mauvaise, pas le mécanisme.
+  Oracle complété sur 97 (les 6 configs réparées disent toutes best_k=1) : plafond vrai
+  **0.7894/0.5358** — le 0.5232/91-configs d'hier était bien gonflé par les exclusions.
+  **Capture v2 ≈ 30 %** de l'écart flip→oracle. Deux ratés diagnostiqués dans les logs :
+  (1) h_bt plafonné à 256 = le collapse de rollout INVISIBLE à la sélection (à h_bt≤256,
+  k=1 ne rollout jamais dans le backtest → bizitobs_application/10S long : 100 % k>1 mais
+  CRPS ≈ flip, mauvais k choisi) ; (2) une seule fenêtre bruitée = faux positifs sur les
+  fréquences grossières (m4_daily 3.89 vs flip 3.48, m4_weekly 2.73 vs 2.47, covid 58 %
+  k>1). **v2.1** (une itération déclarée, principielle — fidélité à la tâche + réduction de
+  variance, pas de tuning) : h_bt = h réel (repli si historique court), jusqu'à 2 fenêtres
+  moyennées, marge no-op 5 % (esprit 1-SE ; les vrais gains oracle sont à +20-50 %). Smoke :
+  electricity/H revient bit-identique au flip (faux positif tué), bizitobs long décime,
+  solar plein gain, us_births k=1. **P-RIN.6 (gravée AVANT le run v2.1)** : agrégat flip+bt
+  ≤ 0.575 succès, central 0.570±0.004 ; m4_daily/m4_weekly/covid_deaths/electricity_D
+  reviennent à ±1 % du flip seul ; bizitobs_application/10S capture ≥ 50 % de son gain
+  oracle ; ÉCHEC si > 0.579 (v2.1 pas mieux que v2) → stop itérations détecteur, décision
+  G9.3/xres sur les chiffres v2. **TTM brut (--ttm-only)** : 0.7475 vs SN officielle (96
+  configs) vs claim leaderboard 0.7240 — l'écart est l'APPROXIMATION DU WRAPPER, pas un
+  handicap TimeJEPA : le wrapper saute toute instance à cible partiellement NaN (le
+  protocole officiel ne saute que les 100 % NaN) + les contextes où TTM émet des NaN →
+  comptes effondrés (hierarchical_sales/D 0 inst → nan → exclu, temperature_rain 3460 vs
+  96212, kdd/H long 2 inst) ; le chemin TimeJEPA suit le protocole transcrit avec les
+  dénominateurs SN officiels (drift SN locale/officielle affiché à chaque run : 0.8393 vs
+  0.8388). L'hybride papier reste valide (apparié par construction). CRPS point TTM jamais
+  citable.
+- **2026-09-01 (VERDICT RateIN v1 + ORACLE : le mécanisme est ÉNORME, le détecteur FFT
+  est le maillon faible ; v2 backtest livré)** — Runs utilisateur sur le champion v3.
+  **ORACLE-k : 34/91 configs gagnent > 5 %** (bizitobs jusqu'à +57 %, solar/10T +44-47 %,
+  electricity/15T +14-24 %, loop_seattle/5T +21 %) — l'échec-diagnostic est ÉVITÉ de très
+  loin, la géométrie d'échelle EST le mécanisme dominant de la queue. ⚠️ L'agrégat oracle
+  (0.7836/0.5232) n'est PAS comparable au flip-only (0.8633/0.5983) : 6 configs ont
+  crashé (IndexError, historiques courts décimés à vide — corrigé par garde k=1) et leur
+  exclusion (m4_yearly 4.14 de MASE incluse) gonfle l'agrégat ; comparer sur
+  l'intersection. L'oracle révèle aussi un SECOND mécanisme que la période ne voit pas :
+  bizitobs/H gagne +40 % à k=16 sur un cycle de 24 — c'est le COLLAPSE DE ROLLOUT (h'=30
+  en un forward), pas la canonicalisation. **Détecteur FFT v1 : P-RIN.1 ✓ (solar réalisé
+  0.608→0.562), P-RIN.3 ✓ (bizitobs_l2c réalisé 0.605→0.367), P-RIN.4 ✗✗ (D/W/M
+  sur-décimés : us_births/D 0.583→1.530, m4_daily 3.48→4.56 — le pic annuel des séries
+  journalières déclenche k=8-16 là où l'oracle dit k=1), P-RIN.5 ✗ (agrégat 0.6022 >
+  flip-only 0.5983 : les catastrophes coarse-freq mangent les gains).**
+  **RateIN v2 livré (+ratein=backtest)** : le k par SÉRIE choisi par BACKTEST CAUSAL —
+  rejouer les k candidats sur les h_bt derniers pas du passé (jamais le test, la fenêtre
+  précède la première cible d'éval), garder le meilleur pinball ; batché, ~|K| mini-passes
+  d'une fenêtre par série ; la logique calibration-T d'E18h appliquée à k. Capture LES
+  DEUX mécanismes sans métadonnée. Smoke : us_births/D reste k=1 (0.634 vs 1.530 en v1),
+  solar garde son plein gain (0.485). Modes exposés : fft (v1) / backtest (v2) / oracle ;
+  garde anti-crash partout ; relancer la commande oracle complète les 6 configs
+  manquantes (marqueurs). Déclencheur G9.3 : ARMÉ (jus oracle + v1 qui bute), mais le
+  backtest passe d'abord — s'il capture l'essentiel de l'oracle, la falsification de
+  xres continue à 0 GPU.
+- **2026-09-01 (G9.3 IMPLÉMENTÉ : RateIN@éval + xres-amendé ; prédictions P-RIN gravées
+  AVANT tout run complet)** — Verdict de prémisse (agent architecte, mandat « contredire
+  xres si l'analyse y mène ») : xres-nu a 3 défauts structurels (w=1 à l'éval GIFT ⇒
+  capacité jamais utilisée ; gradient de pente FiLM nul au finetune, log₂(1)=0 — la loi
+  de câblage E18b s'applique ; gamme w ≤ [1/7,7] apprise ~sur synthétique), et FlowState/
+  TinyCast gagnent par CANONICALISATION D'ENTRÉE. Livré : **(A) RateIN@éval**
+  (src/timejepa/evaluation/ratein.py + +ratein=true/oracle dans evaluate_gift) —
+  détection de période causale (rfft + seuil de Fisher sur MAXIMA LOCAUX, zéro param,
+  précédent TinyCast), règle « la PLUS PETITE période significative » (itérée UNE fois
+  après smoke 2 séries : le pic dominant hebdo de electricity décimait la structure
+  intra-journalière — itération DÉCLARÉE, pas de tuning au-delà), décimation seule vers
+  [16,48] pas/cycle, h'=⌈h/k⌉, réinterp du fan, k=1 bit-identique (épinglé). Smoke
+  exploratoire (2 séries) : solar/10T/short CRPS 0.786→0.516. **(B) G9.3 xres-amendé** :
+  w plombé dans forward_finetune/forecast (défaut = T2 exact), paires xres au finetune
+  (clés *_finetune, défauts inertes), ancre λ·MSE avec target_encoder ← copy_from(online
+  chargé) (piège n°1 : sans la copie, l'ancre pointe vers le deepcopy ALÉATOIRE de la
+  construction), refus linear_probe+λ>0, témoins aug/w_* + train_loss/anchor au
+  finetune ; trio de configs lotsa_tiny_xres_v3 GARDÉ PAR DÉCLENCHEUR (queue post-mini
+  encore inter-fréquences ET oracle RateIN > +5 % quelque part mais bute). 24 tests
+  neufs verts (test_ratein 15, test_g93_xres_finetune 9).
+  **PRÉDICTIONS RateIN (avant le run complet, champion v3, procédure ×flip+ratein)** :
+  P-RIN.1 solar/10T CRPS −10 à −25 % ; P-RIN.2 ett/electricity 15T −5 à −15 % ;
+  P-RIN.3 bizitobs_l2c/5T long/medium −20 à −40 % ; P-RIN.4 configs H/D/W/M/Q/A : k=1
+  choisi ≥ 95 % des instances ; P-RIN.5 agrégat ×flip ≤ 0.590 succès, central
+  0.587 ± 0.004. **ÉCHEC-DIAGNOSTIC (le test de falsification de xres, 0 GPU)** : si
+  l'ORACLE-k lui-même ne gagne > 5 % sur AUCUNE config, la géométrie d'échelle n'est pas
+  le mécanisme de la queue ⇒ G9.3/xres NON financé, la piste se clôt proprement.
 - **2026-08-31 (RECADRAGE MAJEUR : « plafond de capacité » → « plafond de RECETTE » —
   amendé AVANT les résultats forecast de mini)** — Deux reviews externes + vérification à
   la source (arXiv fetchés, les chiffres des reviews étaient directionnels mais imprécis).

@@ -68,6 +68,13 @@ class FinetuneModule(pl.LightningModule):
         context_lengths: Optional[List[int]] = None,
         p_random_context_finetune: float = 0.0,
 
+        # G9.3 — ancre d'invariance (backlog E18b) : λ·MSE(ẑ, z_tgt) gardé au
+        # finetune, target encoder GELÉ. Sans elle, le finetune détruit le juge
+        # (rang 0.235 -> 0.409, E18b) et éroderait la cohérence xres — la loi
+        # de câblage (E18b/E21) : une capacité survit ssi le finetune la
+        # traverse. Défaut 0.0 = bit-identique à l'existant.
+        lambda_anchor: float = 0.0,
+
         # Chantier 2 (horizon natif) — fusionner la table de requêtes d'un
         # checkpoint à horizon COURT dans un modèle à horizon LONG au lieu de la
         # dropper. Opt-in : sans ce flag, un mismatch reste un échec bruyant
@@ -108,11 +115,30 @@ class FinetuneModule(pl.LightningModule):
         # premier finetune post-h512 (mix, 2026-08-22) car tiny-full tournait
         # sur le commit pré-h512.
         self.extend_horizon_queries = bool(extend_horizon_queries)
+        self.lambda_anchor = float(lambda_anchor)
+        if self.lambda_anchor > 0 and finetune_mode == 'linear_probe':
+            # L'ancre vise encoder/predictor ; en linear_probe ils sont gelés :
+            # le terme serait une CONSTANTE ajoutée à la loss (val_loss faussée,
+            # zéro gradient utile). Refus bruyant plutôt que silence.
+            raise ValueError(
+                "lambda_anchor > 0 avec finetune_mode='linear_probe' : l'ancre "
+                "n'aurait aucun gradient (tout est gelé) et fausserait val_loss.")
 
         # Load pretrained weights if provided
         if pretrained_encoder_path is not None:
             self.load_pretrained_encoder(pretrained_encoder_path)
-        
+        if self.lambda_anchor > 0:
+            # PIÈGE n°1 de l'ancre : load_pretrained_encoder SAUTE les clés
+            # target_encoder (voir plus bas), donc self.model.target_encoder
+            # est encore le deepcopy de l'online À LA CONSTRUCTION — des poids
+            # ALÉATOIRES. Ancrer dessus, c'est ancrer vers du bruit. On copie
+            # l'online fraîchement chargé : la même approximation que la sonde
+            # d'énergie (probe_energy.py, « l'encodeur online remplace le
+            # target ») — exacte à tau -> 1 en fin de pretrain.
+            self.model.target_encoder.copy_from(self.model.online_encoder)
+            logger.info("✓ Ancre G9.3 : target_encoder <- copie de l'online "
+                        f"chargé (lambda_anchor={self.lambda_anchor})")
+
         # Apply finetuning strategy
         self.finetune_mode = finetune_mode
         self.unfreeze_after_epoch = unfreeze_after_epoch
@@ -257,7 +283,8 @@ class FinetuneModule(pl.LightningModule):
         else:
             raise ValueError(f"Unknown loss_type: {self.loss_type}")
 
-    def _forward_and_loss(self, context: torch.Tensor, target: torch.Tensor):
+    def _forward_and_loss(self, context: torch.Tensor, target: torch.Tensor,
+                          w: Optional[torch.Tensor] = None):
         """
         Shared by train/val/test.
 
@@ -265,8 +292,16 @@ class FinetuneModule(pl.LightningModule):
         fan, not a point loss on the median — otherwise the outer quantiles would
         receive no gradient at all. The reported point metrics still use the
         median, which is the MAE-optimal estimate and what MASE scores.
+
+        G9.3 : `w` (paires xres du batch, None sinon) est relayé au forecast —
+        la pinball supervise alors un fan au taux k2 sur une cible au taux k2
+        (transformations pointwise, repère valide). L'ancre d'invariance, si
+        active, est calculée sur le TARGET BRUT (capturé avant les transforms
+        ci-dessous, qui RÉASSIGNENT target) et APRÈS la pinball (l'ordre des
+        fits revin/robust_scaler — mêmes stats, mais on ne dépend pas de ça).
         """
-        results = self.model.forecast(context)
+        raw_target = target
+        results = self.model.forecast(context, w=w)
 
         # G8.4 — si le modèle compresse (arcsinh robuste), la cible doit subir
         # la MÊME compression avec les stats du contexte (posées par forecast()
@@ -285,6 +320,24 @@ class FinetuneModule(pl.LightningModule):
             loss = head.loss(results['quantiles'], target)
         else:
             loss = self.compute_loss(results['forecast'], target)
+
+        self._last_anchor = None
+        if self.lambda_anchor > 0:
+            # MSE d'invariance SEULE, pas de SIGReg : la cible (target gelé)
+            # est fixe, rien ne peut s'effondrer — l'argument déjà écrit pour
+            # l'arm reconstruction. `targets` sort de forward_pretrain déjà
+            # no_grad + detach. w : mêmes règles que forward_finetune (T2 —
+            # w=1 explicite si le FiLM existe, jamais None sur un modèle xres).
+            w_anchor = w
+            if w_anchor is None and hasattr(self.model.predictor, 'w_film'):
+                w_anchor = torch.ones(context.shape[0], device=context.device)
+            pre = self.model.forward_pretrain(
+                context, raw_target,
+                contextualized_targets=False, w=w_anchor)
+            anchor = torch.nn.functional.mse_loss(
+                pre['predictions'], pre['targets'])
+            loss = loss + self.lambda_anchor * anchor
+            self._last_anchor = anchor.detach()
 
         return loss, results, target
     
@@ -315,6 +368,19 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
 
+        # G9.3 — paires xres au finetune : w par item quand le dataset l'émet
+        # (cross_resolution + p_multi_resolution_finetune > 0), None sinon.
+        w = batch.get('w')
+        if w is not None:
+            w = w.float()
+            # Témoins (patron du pretrain) : sans eux, aucun moyen de vérifier
+            # depuis W&B que les paires sont actives — la stérilité silencieuse
+            # est le mode d'échec n°1 des arms de ce projet (B5).
+            self.log('aug/w_neq1_frac', (w != 1).float().mean(),
+                     on_step=True, on_epoch=False, logger=True)
+            self.log('aug/w_mean', w.mean(),
+                     on_step=True, on_epoch=False, logger=True)
+
         # Train only — validation_step and test_step keep the native geometry.
         context = self._maybe_crop_context(context)
         # Same observability as the pretrain: without this line there is no way
@@ -322,11 +388,14 @@ class FinetuneModule(pl.LightningModule):
         self.log('geometry/context_len', float(context.shape[1]),
                  on_step=True, on_epoch=False, logger=True)
 
-        loss, results, target = self._forward_and_loss(context, target)
+        loss, results, target = self._forward_and_loss(context, target, w=w)
         predictions = results['forecast']
 
         # Logging
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        if self._last_anchor is not None:
+            self.log('train_loss/anchor', self._last_anchor,
+                     on_step=True, on_epoch=True, logger=True, sync_dist=True)
         
         if batch_idx % self.log_every_n_steps == 0:
             with torch.no_grad():
@@ -346,10 +415,14 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        loss, results, target = self._forward_and_loss(context, target)
+        loss, results, target = self._forward_and_loss(
+            context, target, w=batch.get('w'))
         predictions = results['forecast']
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        if self._last_anchor is not None:
+            self.log('val_loss/anchor', self._last_anchor,
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
 
         # WQL is the metric GIFT-Eval ranks on, so track it directly rather than
         # inferring it from the point losses.
@@ -378,7 +451,8 @@ class FinetuneModule(pl.LightningModule):
         if target.ndim == 2:
             target = target.unsqueeze(-1)
         
-        loss, results, target = self._forward_and_loss(context, target)
+        loss, results, target = self._forward_and_loss(
+            context, target, w=batch.get('w'))
         predictions = results['forecast']
 
         self.log('test_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)

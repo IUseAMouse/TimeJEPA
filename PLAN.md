@@ -1222,6 +1222,18 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
       dégénérée. Arm additif, aucune config existante modifiée.
 - [ ] **G9.3** Ablation : G9.2 contre G9.0 seul — l'équivariance par l'objectif bat-elle
       l'augmentation par décimation ? C'est ça, le résultat publiable.
+      **Redéfini 2026-09-01** (verdict de prémisse : xres-nu structurellement muet sur GIFT,
+      w=1 à l'éval) → deux volets : (a) **RateIN@éval** — canonicalisation causale du taux à
+      l'inférence (src/timejepa/evaluation/ratein.py, +ratein=fft/backtest/oracle) ; v1 FFT
+      négatif (0.6022) ; v2 par série 0.5793 ; v2.1 0.5682 ; **v3 (k par config poolé) =
+      CHAMPION 0.8152/0.5588**, oracle 97 configs = plafond 0.7894/0.5358, capture 63 %,
+      DÉTECTEUR GELÉ (3 limites résiduelles nommées au registre : famine petits-n,
+      désaccord backtest↔test, mismatch d'objectif) ; (b) **xres amendé** (w exercé au
+      finetune + ancre λ·MSE) — code + configs livrés (commit ec0a891) ; le résiduel
+      −4.1 % rel. vers l'oracle est l'exhibit du dossier train-side : ordre déclaré =
+      mini finetune (+ratein compose) → arm G9.0-augmentation au finetune (35 % des
+      instances d'éval sont des entrées décimées jamais vues au train ; clés déjà
+      câblées, cross_resolution:false) → FiLM-w seulement sur motif nouveau déclaré.
 
 
 ### État d'implémentation G9.2 + chantiers du 2026-08-19 (code livré, runs en attente)

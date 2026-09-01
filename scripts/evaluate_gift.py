@@ -41,7 +41,7 @@ import json
 import logging
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import hydra
@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
 from timejepa.evaluation import gift  # noqa: E402
+from timejepa.evaluation import ratein as ratein_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("evaluate_gift")
@@ -235,11 +236,135 @@ def apply_quantile_gamma(out: dict, gamma) -> dict:
     return res
 
 
+def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
+    """Pinball moyenne (convention GluonTS x2 sans effet sur l'argmin)."""
+    d = y[:, None] - fan
+    q = np.asarray(levels, dtype=np.float64)
+    return float(np.mean(np.maximum(q * d, (q - 1.0) * d)))
+
+
+def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
+                       stride: int, patch: int, device,
+                       batch_size: int) -> dict:
+    """RateIN v2 (2026-09-01) — le k PAR SÉRIE, choisi par BACKTEST CAUSAL.
+
+    Verdict oracle du 2026-08-31 : le mécanisme vaut jusqu'à +57 % par config
+    (34/91 > 5 %), mais le détecteur FFT v1 le rate sur les fréquences
+    grossières (il décime des D/W/M que l'oracle laisse à k=1) ET l'oracle
+    révèle un SECOND mécanisme que la période ne voit pas (collapse de
+    rollout : bizitobs/H gagne 40 % à k=16 sur un cycle de 24). Le backtest
+    capture les deux SANS métadonnée : pour chaque série, on retire les h_bt
+    derniers pas de son passé (jamais le test — la fenêtre rejouée précède la
+    première cible d'éval), on forecast chaque k candidat, et on garde le
+    meilleur pinball. Même logique que la calibration-T en contexte (E18h).
+
+    v2.1 (2026-09-01, verdict du run v2 : capture 30 % de l'oracle) :
+    * h_bt = h RÉEL (plus de cap à 256) — le cap rendait le collapse de
+      rollout INVISIBLE à la sélection : à h_bt<=256, k=1 n'a jamais besoin
+      de rollout dans le backtest, donc les plus gros gains oracle (bizitobs
+      +40-56 % à k=16-24, h=480) ne pouvaient pas être vus. Le backtest doit
+      refléter la vraie tâche. Repli : h_bt réduit si l'historique est court.
+    * jusqu'à 2 fenêtres moyennées (réduction de variance, coût x2 sur une
+      mini-passe) ;
+    * marge no-op de 5 % (esprit règle 1-SE) : une pinball sur 1-2 fenêtres
+      de 14 pas est bruitée (m4_daily 3.89 vs flip 3.48 en v2) — k>1 doit
+      battre k=1 d'au moins REL_MARGIN ; les vrais gains oracle sont à
+      +20-50 %, très au-dessus.
+
+    v3 (2026-09-01, diagnostic v2.1 : winner's curse par série) : k PAR
+    CONFIG, scores poolés entre séries. L'argmin PAR SÉRIE sur 11 candidats
+    avec 1-2 fenêtres sélectionne les coups de chance (jena/D : 14/42
+    instances à k=16, le PIRE k de la table oracle, +163 %) et les mélanges
+    de k sous-performent le k uniforme sur les paysages accidentés
+    (bitbrains 0.896 avec un mélange vs <=0.837 pour TOUTE la colonne
+    oracle). Pooling : ratio pinball k/k=1 par série, geomean entre séries
+    (la normalisation ôte l'échelle/difficulté), variance / n_séries, et la
+    granularité devient CELLE DE L'ORACLE (par config) qui borne la capture.
+    Un k coté sur moins de 2/3 des séries de base est disqualifié
+    (sous-ensemble biaisé — typiquement grand k sur séries courtes). La
+    garde par instance (historique décimé < patch -> k=1) reste le filet.
+    """
+    REL_MARGIN = 0.05
+    N_BT_WINDOWS = 2
+    ks = {}
+    entries = []                                    # (idx, sub_hist, known)
+    for idx, y in enumerate(series):
+        past = y[:len(y) - windows * h]             # avant TOUTE cible de test
+        avail = len(past) - 4 * patch
+        h_bt = min(h, avail)
+        if h_bt < 16:
+            ks[idx] = 1
+            continue
+        got = 0
+        for j in range(1, min(N_BT_WINDOWS, avail // h_bt) + 1):
+            lo = len(past) - j * h_bt
+            sub_hist, known = past[:lo], past[lo:lo + h_bt]
+            if not np.isfinite(known).all():
+                continue
+            entries.append((idx, sub_hist, known))
+            got += 1
+        if got == 0:
+            ks[idx] = 1
+
+    scores = defaultdict(lambda: defaultdict(list))
+    for k in ratein_mod.K_CANDIDATES:
+        buckets = defaultdict(list)
+        for idx, sub_hist, known in entries:
+            hist = (ratein_mod.decimate(sub_hist[-(max_len * k):], k)
+                    if k > 1 else sub_hist)
+            if len(hist) < patch:
+                continue
+            ctx = prepare_context(hist, max_len, stride, patch)
+            if ctx is None:
+                continue
+            # h_bt varie par série (repli historiques courts) -> le bucket
+            # porte aussi h_fc pour que le batch soit homogène.
+            buckets[(len(ctx), -(-len(known) // k))].append((idx, ctx, known))
+        for (length, h_fc), items in buckets.items():
+            for i in range(0, len(items), batch_size):
+                chunk = items[i:i + batch_size]
+                batch = torch.from_numpy(np.stack([c[1] for c in chunk]))
+                batch = batch.unsqueeze(-1).to(device)
+                with torch.no_grad():
+                    out = model.forecast(batch, n=h_fc)
+                q = out.get("quantiles_denorm")
+                if q is None:
+                    continue
+                levels = list(out.get("quantile_levels",
+                                      [0.1 * j for j in range(1, 10)]))
+                q = q.cpu().numpy()
+                if q.ndim == 4:
+                    q = q[..., 0]
+                for b, (idx, _, known) in enumerate(chunk):
+                    fan_nat = ratein_mod.reinterp_fan(q[b], len(known), k)
+                    sc = _pinball_np(fan_nat, known, levels)
+                    if np.isfinite(sc):
+                        scores[idx][k].append(sc)
+    base_scored = [i for i in scores
+                   if scores[i].get(1) and np.mean(scores[i][1]) > 0]
+    ratios = {}
+    for k in ratein_mod.K_CANDIDATES:
+        if k == 1:
+            continue
+        rs = [np.mean(scores[i][k]) / np.mean(scores[i][1])
+              for i in base_scored if scores[i].get(k)]
+        if not rs or len(rs) < (2 * len(base_scored)) // 3:
+            continue                                # sous-ensemble biaisé
+        ratios[k] = float(np.exp(np.mean(np.log(np.maximum(rs, 1e-12)))))
+    K = 1
+    if ratios:
+        kbest = min(ratios, key=ratios.get)
+        if ratios[kbest] < 1.0 - REL_MARGIN:
+            K = kbest
+    return {idx: K for idx in range(len(series))}
+
+
 def evaluate_config(model, config: str, gift_root: Path, device,
                     batch_size: int, max_series: int = 0,
                     max_context: int = 0, tta_lookbacks=None,
                     tta_flip: bool = False, tta_shifts=None,
-                    quantile_gamma=None) -> dict:
+                    quantile_gamma=None,
+                    ratein_mode: str = "off", forced_k: int = 0) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -263,45 +388,96 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                               if hasattr(model, "input_length") else 1024)
     stride = model.patching.stride
     n_inst = 0
+    k_hist = Counter()
+    # RateIN v2 — le k par SÉRIE choisi par backtest causal (voir le helper) ;
+    # calculé une fois avant la boucle, batché.
+    bt_ks = None
+    if ratein_mode == "backtest" and not forced_k:
+        bt_ks = _backtest_series_k(model, series, h, windows, max_len, stride,
+                                   model.patching.patch_size, device,
+                                   batch_size)
     for inst in gift.iter_test_instances(series, h, windows):
-        ctx = prepare_context(inst.context, max_len, stride, model.patching.patch_size)
+        # RateIN — canonicalisation du taux (2026-08-31, verdict G9.3) : k
+        # est une statistique CAUSALE du passé (règle uniforme sur les 97
+        # configs — même statut que médiane/MAD). forced_k = mode ORACLE
+        # (diagnostic, jamais officiel).
+        if forced_k:
+            k = forced_k
+        elif bt_ks is not None:
+            k = bt_ks.get(inst.series_idx, 1)
+        elif ratein_mode == "fft":
+            k = ratein_mod.choose_k(ratein_mod.detect_period(inst.context))
+        else:
+            k = 1
+        hist = (ratein_mod.decimate(inst.context[-(max_len * k):], k)
+                if k > 1 else inst.context)
+        if k > 1 and len(hist) < model.patching.patch_size:
+            # Garde (crash oracle 2026-08-31, IndexError sur 6 configs) : un
+            # historique court décimé par un grand k devient vide — repli k=1.
+            k, hist = 1, inst.context
+        ctx = prepare_context(hist, max_len, stride, model.patching.patch_size)
         if ctx is None:
             continue
         # MASE scale uses the FULL past, not the capped context — gluonts
         # computes the seasonal error on the entire history of the series.
         scale = gift.seasonal_error(inst.context, m)
-        buckets[len(ctx)].append((ctx, inst.target, inst.context, scale))
+        buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale))
+        k_hist[k] += 1
         n_inst += 1
 
-    for length, items in sorted(buckets.items()):
+    for (length, k), items in sorted(buckets.items()):
+        # Grille décimée : h' = ceil(h/k) pas suffisent à couvrir l'horizon
+        # natif (bonus mesurable : moins de rollouts sur 10S/5T long-terme).
+        h_fc = -(-h // k)
         for i in range(0, len(items), batch_size):
             chunk = items[i:i + batch_size]
             batch = torch.from_numpy(np.stack([c[0] for c in chunk]))
             batch = batch.unsqueeze(-1).to(device)          # [B, L, 1]
 
             with torch.no_grad():
-                out = tta_forecast(model, batch, h,
+                out = tta_forecast(model, batch, h_fc,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
                                    shifts=tta_shifts)
             out = apply_quantile_gamma(out, quantile_gamma)
 
-            median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h]
+            median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h']
             quants = out.get("quantiles_denorm")
             if quants is not None:
                 quants = quants.cpu().numpy()
-                if quants.ndim == 4:                        # [B, h, Q, 1]
+                if quants.ndim == 4:                        # [B, h', Q, 1]
                     quants = quants[..., 0]
-                # -> [B, h, Q]
+                # -> [B, h', Q]
+            levels = out.get("quantile_levels")
+            mid = (min(range(len(levels)), key=lambda j: abs(levels[j] - 0.5))
+                   if levels is not None and quants is not None
+                   else (quants.shape[-1] // 2 if quants is not None else 0))
 
             for b, (ctx, target, past, scale) in enumerate(chunk):
-                model_acc.add(target, median[b],
-                              quants[b] if quants is not None else None, scale)
+                if k > 1:
+                    if quants is not None:
+                        fan_nat = ratein_mod.reinterp_fan(quants[b], h, k)
+                        med_nat = fan_nat[:, mid]
+                    else:
+                        fan_nat = None
+                        med_nat = ratein_mod.reinterp_fan(
+                            median[b][:, None], h, k)[:, 0]
+                    model_acc.add(target, med_nat, fan_nat, scale)
+                else:
+                    model_acc.add(target, median[b],
+                                  quants[b] if quants is not None else None,
+                                  scale)
                 sn = gift.seasonal_naive_forecast(past, h, m)
                 sn_acc.add(target, sn, None, scale)
 
     res = {"config": config, "prediction_length": h, "seasonality": m,
            "windows": windows, "n_series": len(series), "n_instances": n_inst,
            "model": model_acc.result(), "seasonal_naive_local": sn_acc.result()}
+    if ratein_mode != "off" or forced_k:
+        res["ratein"] = {
+            "k_hist": {str(kk): n for kk, n in sorted(k_hist.items())},
+            "frac_k_gt1": (sum(n for kk, n in k_hist.items() if kk > 1)
+                           / max(1, sum(k_hist.values()))),
+        }
     return res
 
 
@@ -348,6 +524,16 @@ def main(cfg: DictConfig):
     #   +tta_lookbacks='512,1024'               (multi-lookback moyenné)
     #   +tta_flip=true                          (miroir sign-flip)
     max_context = int(cfg.get("max_context", 0))
+    #   +ratein=fft   (alias true)             détecteur de période v1
+    #   +ratein=backtest                        k par série, backtest causal (v2)
+    #   +ratein=oracle                          balayage de k — DIAGNOSTIC,
+    #                                           regarde le test, jamais officiel
+    ratein_raw = str(cfg.get("ratein", "")).lower()
+    ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
+                       "backtest": "backtest", "bt": "backtest"}.get(
+                           ratein_raw, "off")
+    ratein_on = ratein_mode_val != "off"
+    ratein_oracle = ratein_raw == "oracle"
     tta_lookbacks = ([int(x) for x in str(cfg.tta_lookbacks).split(",")]
                      if cfg.get("tta_lookbacks") else None)
     tta_flip = bool(cfg.get("tta_flip", False))
@@ -386,6 +572,12 @@ def main(cfg: DictConfig):
         tag += "_lb" + "-".join(str(x) for x in tta_lookbacks)
     if tta_flip:
         tag += "_flip"
+    if ratein_mode_val == "fft":
+        tag += "_ratein"
+    elif ratein_mode_val == "backtest":
+        tag += "_ratein-bt"
+    elif ratein_oracle:
+        tag += "_ratein-oracle"
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     tag += gamma_tag
@@ -422,13 +614,37 @@ def main(cfg: DictConfig):
             continue
         t0 = time.time()
         try:
-            res = evaluate_config(model, config, gift_root, device,
-                                  batch_size, max_series,
-                                  max_context=max_context,
-                                  tta_lookbacks=tta_lookbacks,
-                                  tta_flip=tta_flip,
-                                  tta_shifts=tta_shifts,
-                                  quantile_gamma=quantile_gamma)
+            if ratein_oracle:
+                # Balayage de k PAR CONFIG — la borne supérieure du gain
+                # atteignable par canonicalisation du taux. Tranche
+                # l'échec-diagnostic de P-RIN : si même l'oracle ne gagne
+                # nulle part, la géométrie d'échelle n'est pas le mécanisme.
+                per_k, best = {}, None
+                for kk in ratein_mod.K_CANDIDATES:
+                    r_k = evaluate_config(model, config, gift_root, device,
+                                          batch_size, max_series,
+                                          max_context=max_context,
+                                          tta_lookbacks=tta_lookbacks,
+                                          tta_flip=tta_flip,
+                                          tta_shifts=tta_shifts,
+                                          quantile_gamma=quantile_gamma,
+                                          forced_k=kk)
+                    per_k[str(kk)] = r_k["model"]["CRPS"]
+                    if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
+                        best, best_k = r_k, kk
+                res = best
+                res["oracle"] = {"per_k_crps": per_k, "best_k": best_k,
+                                 "gain_vs_k1": 1.0 - per_k[str(best_k)]
+                                 / per_k["1"] if per_k["1"] > 0 else 0.0}
+            else:
+                res = evaluate_config(model, config, gift_root, device,
+                                      batch_size, max_series,
+                                      max_context=max_context,
+                                      tta_lookbacks=tta_lookbacks,
+                                      tta_flip=tta_flip,
+                                      tta_shifts=tta_shifts,
+                                      quantile_gamma=quantile_gamma,
+                                      ratein_mode=ratein_mode_val)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return
@@ -439,10 +655,16 @@ def main(cfg: DictConfig):
         marker.write_text(json.dumps(res, indent=1))
         results[config] = res
         mm = res["model"]
+        extra = ""
+        if "ratein" in res and not ratein_oracle:
+            extra = f" k>1: {res['ratein']['frac_k_gt1']:.0%}"
+        if "oracle" in res:
+            extra = (f" best_k={res['oracle']['best_k']} "
+                     f"(gain {res['oracle']['gain_vs_k1']:+.1%} vs k=1)")
         logger.info(
             f"[{i}/{len(configs)}] {config}: MASE {mm['MASE']:.3f} "
             f"CRPS {mm['CRPS']:.3f} ({res['n_instances']} inst, "
-            f"{time.time() - t0:.0f}s)")
+            f"{time.time() - t0:.0f}s){extra}")
 
     # ---- official-format CSV + leaderboard aggregates ----
     rows = [CSV_HEADER] + [csv_row(c, cfg.model.name, results[c])
@@ -474,8 +696,31 @@ def main(cfg: DictConfig):
     if covs:
         c10 = float(np.mean([c["0.1"] for c in covs]))
         c90 = float(np.mean([c["0.9"] for c in covs]))
-        logger.info(f"  coverage (moyenne 97 configs): q10 {c10:.3f} (nominal 0.100) | "
+        logger.info(f"  coverage (moyenne {len(covs)} configs): q10 {c10:.3f} (nominal 0.100) | "
                     f"q90 {c90:.3f} (nominal 0.900) | intervalle 80% -> {c90 - c10:.3f}")
+    if ratein_on:
+        fr = [r["ratein"]["frac_k_gt1"] for r in results.values()
+              if "ratein" in r]
+        n_active = sum(1 for f in fr if f > 0.5)
+        logger.info(f"  RateIN : {n_active}/{len(fr)} configs majoritairement "
+                    f"décimées | part d'instances k>1 (moyenne) : "
+                    f"{float(np.mean(fr)):.1%}")
+    if ratein_oracle:
+        # LA lecture de l'échec-diagnostic P-RIN : combien de configs
+        # gagnent > 5 % même avec le meilleur k choisi en trichant.
+        gains = {c: r["oracle"]["gain_vs_k1"] for c, r in results.items()
+                 if "oracle" in r}
+        big = sorted(((g, c) for c, g in gains.items() if g > 0.05),
+                     reverse=True)
+        logger.info(f"  ORACLE-k (diagnostic, jamais officiel) : "
+                    f"{len(big)}/{len(gains)} configs gagnent > 5% vs k=1")
+        for g, c in big[:8]:
+            logger.info(f"    {c}: {g:+.1%} (best_k="
+                        f"{results[c]['oracle']['best_k']})")
+        if not big:
+            logger.info("    AUCUNE -> échec-diagnostic P-RIN : la géométrie "
+                        "d'échelle n'est pas le mécanisme de la queue ; "
+                        "G9.3/xres non financé.")
     logger.info(f"Results: {out_dir}")
 
 

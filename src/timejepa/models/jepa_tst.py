@@ -501,6 +501,7 @@ class JEPATST(nn.Module):
         context: torch.Tensor,
         return_representations: bool = False,
         skip_revin: bool = False,
+        w: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass for supervised finetuning (forecasting).
@@ -538,6 +539,19 @@ class JEPATST(nn.Module):
         # [B, num_patches, d_model]
         
         # 4. Predict future representations
+        # G9.3 (2026-08-31) : w devient un argument — le finetune xres passe
+        # le w du batch, l'inférence RateIN pourra passer w=1/k. Défaut w=None
+        # = le comportement T2 exact : w=1 explicite quand le FiLM existe
+        # (son biais est entraîné, ne pas l'appliquer n'est PAS l'identité),
+        # None sinon.
+        if w is not None:
+            w_eff = w.to(context_embeddings.device).reshape(-1)
+        elif hasattr(self.predictor, 'w_film'):
+            w_eff = torch.ones(context_embeddings.shape[0],
+                               device=context_embeddings.device)
+        else:
+            w_eff = None
+
         z_pred = None
         if self.error_signal:
             # ESJEPA : z_pred sort de la même passe et modulera l'étalement du
@@ -546,9 +560,7 @@ class JEPATST(nn.Module):
             predictions, z_pred = self.predictor.forward_simple(
                 context_embeddings=context_embeddings,
                 num_targets=self.num_target_patches,
-                w=(torch.ones(context_embeddings.shape[0],
-                              device=context_embeddings.device)
-                   if hasattr(self.predictor, 'w_film') else None),
+                w=w_eff,
                 return_z=True,
             )
         else:
@@ -562,9 +574,7 @@ class JEPATST(nn.Module):
                 # pré-entraîné. On applique explicitement w=1 quand le FiLM
                 # existe ; sans FiLM (toutes les configs non-xres), w=None et
                 # rien ne change.
-                w=(torch.ones(context_embeddings.shape[0],
-                              device=context_embeddings.device)
-                   if hasattr(self.predictor, 'w_film') else None),
+                w=w_eff,
             )
         # [B, num_target_patches, d_model]
         
@@ -631,6 +641,7 @@ class JEPATST(nn.Module):
         return_representations: bool = False,
         skip_revin: bool = False,
         sample_paths: bool = True,
+        w: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forecast n steps ahead with automatic rolling if needed.
@@ -677,7 +688,8 @@ class JEPATST(nn.Module):
             result = self.forward_finetune(
                 context,
                 return_representations=return_representations,
-                skip_revin=skip_revin
+                skip_revin=skip_revin,
+                w=w,
             )
             # Every horizon-shaped tensor must be truncated, the quantile fan
             # included — leaving it at prediction_length while the point forecast
@@ -728,7 +740,7 @@ class JEPATST(nn.Module):
             # 0.267 against a sqrt(h)-growing true uncertainty.
             if sample_paths and getattr(self.decoder, 'is_probabilistic', False):
                 forecast_norm, quantiles_norm, quantile_levels = \
-                    self._rolling_forecast_sampled(current_context, n, num_rolls, use_revin)
+                    self._rolling_forecast_sampled(current_context, n, num_rolls, use_revin, w=w)
                 if use_revin:
                     forecast_denorm = self.revin.denormalize_target_space(forecast_norm)
                     quantiles_denorm = self.revin.denormalize_target_space(quantiles_norm)
@@ -757,6 +769,7 @@ class JEPATST(nn.Module):
                     current_context,
                     return_representations=False,
                     skip_revin=True,
+                    w=w,
                 )
 
                 forecast_norm = result['forecast']  # [B, pred_len, C] (median if probabilistic)
@@ -833,6 +846,7 @@ class JEPATST(nn.Module):
         n: int,
         num_rolls: int,
         use_revin: bool,
+        w: 'Optional[torch.Tensor]' = None,
     ):
         """
         Quantile-path rollout: propagate the whole fan, not the median.
@@ -866,7 +880,7 @@ class JEPATST(nn.Module):
         batch = current_context.shape[0]
 
         # ---- Roll 1: exact, on the true context ----
-        first = self.forward_finetune(current_context, skip_revin=True)
+        first = self.forward_finetune(current_context, skip_revin=True, w=w)
         fan = first['quantiles']                              # [B, H, Q]
         levels = first['quantile_levels']
         n_q = fan.shape[-1]
@@ -884,7 +898,9 @@ class JEPATST(nn.Module):
                 feedback = self.revin.to_input_frame(paths) if use_revin else paths
                 ctx = torch.cat([ctx[:, pred_len:, :], feedback], dim=1)
 
-                rolled = self.forward_finetune(ctx, skip_revin=True)
+                rolled = self.forward_finetune(
+                    ctx, skip_revin=True,
+                    w=(w.repeat_interleave(n_q) if w is not None else None))
                 fan_k = rolled['quantiles']                    # [B*Q, H, Q]
 
                 # Comonotonic continuation: copy k follows its own level k

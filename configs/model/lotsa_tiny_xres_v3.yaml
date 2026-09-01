@@ -1,0 +1,44 @@
+# @package _global_
+#
+# G9.3 — PRETRAIN xres-AMENDÉ sur la recette v3 (verdict de prémisse
+# 2026-08-31). ⚠️ RUN GARDÉ PAR DÉCLENCHEUR : ne lancer que si (1) la queue
+# per-config post-mini est encore inter-fréquences ET (2) RateIN@éval a
+# montré du jus (oracle-k > +5 % quelque part) mais bute (détections ratées
+# ou plafond du lissage). Sinon, ce fichier reste une spec.
+#
+#   python scripts/train.py --config-name lotsa_tiny_xres_v3 wandb.run_name=xres-v3
+#   # puis : lotsa_tiny_xres_v3_zeroshot et lotsa_tiny_xres_v3_eval
+#
+# POURQUOI AMENDÉ — les 3 défauts de xres-nu (G9.2), chacun corrigé :
+#   1. « w=1 à l'éval GIFT ⇒ capacité jamais utilisée » → l'inférence peut
+#      passer w (forecast(w=...)), et RateIN fournit le k causal ; à défaut,
+#      le gain passe par la cohérence de taux de l'encodeur, EXERCÉE (2).
+#   2. « gradient de pente nul au finetune (log2(1)=0) » → le finetune
+#      exerce des paires w≠1 (p_multi_resolution_finetune) + ancre λ·MSE
+#      (la loi de câblage E18b/E21 : une capacité survit ssi traversée).
+#   3. « matière k1>1 rare et synthétique » → corpus v3 : ~54 % du batch en
+#      morceaux 8192 (audit 2026-08-27), ×5.7 vs l'époque G9.2.
+#
+# Bundle déclaré (duel une-variable contre le contrôle lotsa_tiny_v3) :
+# objectif xres + paires au finetune + ancre. Prédictions P-x.1..3 gravées
+# au registre AU LANCEMENT (pas avant — le déclencheur peut les affiner).
+defaults:
+  - lotsa_tiny_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_xres_v3"
+  cross_resolution: true
+
+training:
+  # Hérité de la lignée mix/v3 mais rappelé : les cibles standalone sont
+  # OBLIGATOIRES avec xres (concaténer [ctx‖cible] sur deux grilles est
+  # physiquement faux — garde dure du module).
+  contextualized_targets: false
+
+data:
+  multi_resolution_factors: [1, 2, 4]
+  p_multi_resolution: 0.3
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "pretrain", "v3", "xres", "robust-scale"]
