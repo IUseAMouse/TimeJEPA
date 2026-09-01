@@ -1919,6 +1919,33 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (VERDICT SELF-HYBRIDE : P-SH.1 ✓ (comparateur corrigé), P-SH.2 ✗✗ à
+  +17 % = DILUTION P-SH.3, la branche prévue ; contrôle T exposé)** — Run utilisateur
+  (proposeur champion tiny flip+ratein, juge mini 0.5495, centered, 97 configs).
+  **Lecture du baseline** : self 0.8183/0.6440 vs LOCAL SN se compare à 0.8147/0.6295
+  (ligne vs_local du champion), PAS à 0.815/0.559 (SN officielle) — les 3 axes du
+  harnais hybride (SN locale, plafond 150 inst/config, skip des cibles à NaN partiel)
+  sont les MÊMES qui expliquaient le « TTM sous-performant » (0.7475 vs 0.7240).
+  P-SH.1 ✓ en bord de bande : MASE +0.4 %, CRPS +2.3 %, dérive incarnée par
+  bitbrains_fast/5T/long (10.227 sur 63 inst sous-échantillonnées vs 0.858 sur 4 860
+  en officiel — bruit de sous-échantillon queue-lourde). **P-SH.2 ✗✗** :
+  hybrid_self/self = 0.7541/0.6440 = 1.17, très hors [0.98, 1.02] → P-SH.3 (dilution)
+  s'applique. Mécanisme : TTM gagnait car le pool transforme un POINT en distribution ;
+  le champion EST déjà une distribution calibrée — la re-pondération de Gibbs sur
+  trajectoires + bootstraps la délaye. Confirmation décorrélation : les seuls gains
+  nets sont où le proposeur est FAIBLE (solar/W −41 %, electricity/H long/medium,
+  m_dense/H, ett1/H long) — le juge aide où il est en désaccord informatif avec le
+  proposeur. **Contrôle avant clôture (protocole P-SH.3)** : flag --temperature exposé
+  (T sur énergies standardisées, anti-dilution E18e) ; UN run de contrôle déclaré sur
+  sous-ensemble (~15 configs, T ∈ {0.5, 0.25}) ; si la dilution persiste à petit T,
+  l'arm self-hybride est CLOS avec la phrase du papier : le gain du juge vient de la
+  décorrélation avec un proposeur externe ponctuel, pas du re-mélange de son propre
+  fan calibré. **Régularisation de l'éval (question utilisateur)** : le harnais
+  hybride reste GELÉ tel quel jusqu'au run final P-J.3 (comparabilité de la série de
+  juges appariés 0.6748/0.6514/0.6508) ; après P-J.3, soit il reste étiqueté
+  diagnostic-apparié-jamais-leaderboard (son rôle), soit UN changement déclaré
+  l'aligne (masquage NaN officiel + plafond levé). Ne jamais citer un chiffre hybride
+  contre un chiffre leaderboard sans les 3 axes en note.
 - **2026-09-01 (SELF-HYBRIDE livré : le champion propose, le pretrain juge — P-SH.1..3
   gravées ; question utilisateur : le juge peut-il améliorer NOTRE 0.559 ?)** — Mode
   `--proposer self` câblé dans evaluate_gift_hybrid.py : le proposeur devient notre

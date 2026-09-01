@@ -122,7 +122,8 @@ def self_proposal(model, past: np.ndarray, h: int, device,
 
 def evaluate_config(config, judge, prop, gift_root, device, rng,
                     max_inst, K, n_jitter, centered=False,
-                    proposer=None, self_dropout=4, self_ratein=False):
+                    proposer=None, self_dropout=4, self_ratein=False,
+                    temperature=1.0):
     h = gift.prediction_length(config)
     m = gift.seasonality(config.split("/")[1])
     series = gift.load_series(gift_root, config)
@@ -187,7 +188,7 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
                                           rng, device, extra_cands=tp,
                                           h_judge=judge.prediction_length,
                                           centered=centered)
-            fan = fan_from_energies(cands, e)                 # [h, 9]
+            fan = fan_from_energies(cands, e, temperature=temperature)
             accs[f"hybrid_{base}"].add(inst.target, fan[:, 4], fan, scale)
 
         sn_acc.add(inst.target, gift.seasonal_naive_forecast(inst.context, h, m),
@@ -238,6 +239,10 @@ def main():
     ap.add_argument("--proposer-ratein", action="store_true",
                     help="apply the champion's RateIN layer (per-series "
                          "causal backtest k) to the proposer fan")
+    ap.add_argument("--temperature", type=float, default=1.0,
+                    help="Gibbs T on standardized energies (P-SH.3 control: "
+                         "small T concentrates mass on the best candidates, "
+                         "the anti-dilution knob measured in E18e)")
     ap.add_argument("--centered-bootstrap", action="store_true",
                     help="G12c: seasonal-innovation bootstrap glued onto the "
                          "TTM path (anti-dilution by construction)")
@@ -303,7 +308,8 @@ def main():
                                   centered=args.centered_bootstrap,
                                   proposer=proposer,
                                   self_dropout=args.proposer_dropout,
-                                  self_ratein=args.proposer_ratein)
+                                  self_ratein=args.proposer_ratein,
+                                  temperature=args.temperature)
         except Exception as exc:   # one broken config must not kill 96 others
             logger.error(f"[{i}/{len(configs)}] {config} FAILED: "
                          f"{type(exc).__name__}: {exc}")
