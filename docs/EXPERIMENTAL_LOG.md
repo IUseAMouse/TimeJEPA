@@ -1919,6 +1919,30 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (SELF-HYBRIDE livré : le champion propose, le pretrain juge — P-SH.1..3
+  gravées ; question utilisateur : le juge peut-il améliorer NOTRE 0.559 ?)** — Mode
+  `--proposer self` câblé dans evaluate_gift_hybrid.py : le proposeur devient notre
+  champion finetuné avec sa pile officielle (fan flip + RateIN par backtest causal via
+  `--proposer-ratein`), le pool reçoit les 9 trajectoires du fan + 4 chemins MC-dropout
+  (recette E18d mesurée, réutilisée telle quelle), le juge pretrain pondère. Nouveau
+  reader `self` = le FAN complet du champion → hybrid-vs-self est une comparaison
+  appariée au niveau fan (impossible avec TTM, point-only). Aucun modèle externe,
+  granite-tsfm non requis en mode self. Smoke mécanique 2 configs : self 0.6094 local
+  (classe champion, couches composées) ; l'hybride y dégrade car le smoke utilise un
+  juge FINETUNÉ (E18b : alignement détruit, probe 0.409) — plomberie validée, science
+  non testée. **P-SH (gravées AVANT le run, juge = mini pretrain val 0.5495)** :
+  P-SH.1 (validation interne) : reader self ≈ classe champion sur le sous-échantillon
+  (CRPS local cohérent avec 0.6295 du run officiel ±0.02). P-SH.2 (LA question) :
+  attente honnête = gain FAIBLE OU NUL, hybrid_self/self ∈ [0.98, 1.02] — juge et
+  proposeur partagent la lignée corpus/objectif, leurs erreurs sont corrélées, alors
+  que le gain TTM (0.7258 point → 0.6508) vit de la DÉCORRÉLATION ; un résultat nul est
+  publiable tel quel (le mécanisme du juge = décorrélation d'erreurs). Si gain > 2 % :
+  le système auto-contenu s'améliore lui-même → rouvrir le dossier « officiel
+  2-checkpoints » (doctrine mono-checkpoint à re-trancher explicitement). P-SH.3
+  (anti-dilution, leçon G12c) : si hybrid_self/self > 1.02, c'est la dilution du fan
+  par le pool bootstrap — regarder la température avant de conclure. Coût : mode self
+  plus lent que TTM (flip + 4 forwards dropout + backtest par config), prévoir
+  plusieurs heures sur les 97.
 - **2026-09-01 (Post-reprise mini : val 0.5495 NOUVEAU PLANCHER ; juge 0.6508, 3e point de
   la série inversée ; P-J.3 gravée. Nettoyage/merge master clos)** — Checkpoint
   post-reprise epoch00_valloss0.5495 : le plateau val des checkpoints 20-30 %
