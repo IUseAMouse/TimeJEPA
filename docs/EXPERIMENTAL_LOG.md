@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (ARM SELF-HYBRIDE CLOS : le contrôle T confirme — dilution à T=1,
+  COLLAPSE à T=0.25)** — Run de contrôle utilisateur (15 configs mixtes, T=0.25) :
+  hybrid_self/self = 0.8563/0.5462 = **1.57** (pire que 1.17 à T=1) et couverture 80 %
+  effondrée à **0.339** (nominal 0.800). Mécanisme symétrique : à T=1 le pool DILUE le
+  fan calibré ; à petit T la masse se concentre sur quelques trajectoires et le fan
+  COLLAPSE (perte de l'étalement, qui est la valeur même d'un fan). Même solar/W, seul
+  gain franc, régresse entre T=1 et T=0.25 (0.128→0.167). Les deux directions du seul
+  bouton échouent pour des raisons opposées → STRUCTUREL, pas un réglage : la
+  pondération de Gibbs sur candidats convient à un proposeur PONCTUEL (elle fabrique
+  une distribution : TTM 0.7258→0.6508), pas à un proposeur qui émet déjà une
+  distribution calibrée. **Phrase du papier** : l'uplift du juge vient de la
+  décorrélation avec un proposeur externe ponctuel ; re-pondérer son propre fan
+  calibré ne peut que le diluer (T=1) ou l'effondrer (T petit). Arm clos pour 2 runs
+  GPU-légers ; le mode --proposer self reste en code (table d'ablation, no-delete).
+  Roadmap éval inchangée : fin d'epoch mini → finetune → flip puis flip+ratein
+  (P-mini) → hybride TTM final (P-J.3, harnais gelé) → arm G9.0-augmentation (P-aug).
 - **2026-09-01 (VERDICT SELF-HYBRIDE : P-SH.1 ✓ (comparateur corrigé), P-SH.2 ✗✗ à
   +17 % = DILUTION P-SH.3, la branche prévue ; contrôle T exposé)** — Run utilisateur
   (proposeur champion tiny flip+ratein, juge mini 0.5495, centered, 97 configs).
