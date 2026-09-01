@@ -1356,6 +1356,15 @@ actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
 
 ### G12 — TimeJEPA-VÉRIFICATEUR (candidat stratégique, idée utilisateur 2026-08-21)
 
+**Périmètre tranché 2026-09-01 (arm self-hybride CLOS, 2 runs)** : le vérificateur ne
+vaut que sur proposeur PONCTUEL ou à erreurs décorrélées — sur TTM, uplift massif
+(point 0.7258 → hybride 0.6508) ; sur NOTRE propre champion (fan flip+RateIN), la
+pondération de Gibbs DILUE le fan calibré à T=1 (hybrid/self=1.17) et l'EFFONDRE à
+T=0.25 (couverture 0.339 vs 0.800) — structurel, pas un réglage. Mécanisme démontré
+dans les deux sens : l'uplift du juge = DÉCORRÉLATION. Détails et P-SH.1..3 au
+registre ; --proposer self reste en code (ablation). Suite G12 : hybride TTM final
+au dernier checkpoint mini (P-J.3, harnais gelé jusque-là).
+
 Recadrage issu de la série E18b-e : la fonction d'énergie du pretrain n'est pas en
 concurrence avec les modèles génératifs — c'est un HARNAIS à poser dessus. Le produit
 « vérificateur » = le checkpoint de PRETRAIN tel quel (~1M params, zéro entraînement
