@@ -344,7 +344,10 @@ def main(cfg: DictConfig):
     logger.info("STARTING TRAINING")
     logger.info("=" * 80)
     
-    trainer.fit(pl_module, datamodule=datamodule)
+    # Reprise d'un run interrompu (optimizer/scheduler/step restaurés par
+    # Lightning) : '+training.resume_ckpt="<ckpt>"'. Défaut None = inchangé.
+    trainer.fit(pl_module, datamodule=datamodule,
+                ckpt_path=cfg.training.get("resume_ckpt", None))
     
     logger.info("=" * 80)
     logger.info("TRAINING COMPLETE")

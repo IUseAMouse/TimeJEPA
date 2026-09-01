@@ -1919,6 +1919,54 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-01 (P-J.1 RÉFUTÉE ET INVERSÉE : la probe ne prédit pas le juge ; probe
+  RÉTROGRADÉE en diagnostic ; verdict pretrain = CONTINUER jusqu'au bout de l'epoch)** —
+  Runs hybride appariés (bras TTM bit-identique 0.7649/0.7258, centered, seed 0) :
+  hybride@30 % (probe 0.241, « pire ») = **0.6514, MEILLEUR juge jamais mesuré en
+  hybride** ; hybride@5 % (0.211) = 0.6554 ; hybride@15 % (probe 0.205, « meilleure ») =
+  **0.6748, la pire des trois** — ordre INVERSE de P-J.1. La clause gravée s'applique :
+  la probe (classement inter-instances, 6 configs) ne mesure pas la qualité opérante
+  (discrimination intra-pool sur propositions TTM) → rétrogradée en diagnostic, sélection
+  du juge PAR HYBRIDE désormais. Preuves du découplage dans les per-config : le juge@15 %
+  est activement NOCIF en pool (bitbrains_fs/5T short : TTM 0.556 → hybride 0.880 ;
+  bizitobs_service/10S short : 0.818 → 1.136) là où le juge@30 % reste sobre ; et
+  solar/10T long s'AMÉLIORE en pool au juge@30 % (TTM 1.048 → 1.007) alors que sa probe y
+  passait ρ négatif. Le motif « early peak du juge » ne décrit que la métrique de probe,
+  PAS le métier de juge — la qualité opérante est plate-à-croissante avec le pretrain.
+  **VERDICT PRETRAIN (question utilisateur : arrêter ?) : CONTINUER jusqu'à la fin de
+  l'epoch.** (1) La pièce maîtresse du dossier « couper » — dégradation du juge — vient
+  d'être réfutée au point d'arrivée ; (2) le plateau val (0.5544→0.5550) n'est pas une
+  preuve, la décroissance cosine (~90 % du LR de pic à 30 %) n'est pas jouée ; (3) le
+  verdict P-mini gravé exige la recette complète, et chaque branche de la règle de
+  décision déclarée menait de toute façon à la reprise — le finetune diagnostic
+  intermédiaire perd sa raison d'être, ANNULÉ : finetune unique en fin d'epoch, éval
+  flip puis flip+ratein. Idée utilisateur (tester le dernier checkpoint) = la bonne.
+- **2026-09-01 (Mini probes 15-30 % : PIC DU JUGE À 15 % (0.205, meilleur mesuré) ;
+  finetune diagnostic déclaré ; P-J.1/2 gravées — le proxy probe passe au banc d'essai)**
+  — Probes standalone mini : 5 % 0.211, 10 % 0.212, **15 % 0.205** (agrégat tronqué par
+  tmux, recalculé = moyenne des 6 configs — MEILLEUR JUGE JAMAIS MESURÉ, ckpt 0.5575 au
+  coffre), 20 % 0.223, 25 % 0.238, 30 % 0.241. Réplication à ×3 de capacité du motif
+  tiny : le juge vit tôt, la capacité ne déplace pas le pic. La dégradation post-pic est
+  PORTÉE PAR solar/10T (0.453→0.570, ρ(E,MAE) passe négatif) ; electricity/H reste
+  excellent (0.028-0.062) — dégradation localisée hors-bande, pas un effondrement.
+  Val pretrain plateau (0.5545/0.5544/0.5550 à 20/25/30 %) MAIS cosine à ~90 % du LR de
+  pic : la phase de décroissance n'est pas jouée — le plateau ne condamne pas le
+  forecaster. **Décision d'allocation déclarée** : pause à 30 %, finetune DIAGNOSTIC
+  depuis le meilleur val (25 %, 0.5544 — mini n'a vu que ~30 % du corpus : comparaison à
+  tiny confondue par construction, jamais un verdict P-mini) ; flip ≤0.590 = signal de
+  capacité net (victoire malgré 3× moins de tokens) → reprise du pretrain (resume câblé,
+  fdbcd46 ; caveat : le stream repart du début, ~30 % revus — entorse mineure consignée) ;
+  égalité = ambiguë (tokens vs capacité), reprise quand même ; coupe définitive seulement
+  si égalité à 30 % PUIS plateau confirmé en fin de décroissance. **P-J.1/2 (gravées
+  AVANT les runs hybride — test de validité du proxy probe, question utilisateur)** :
+  le juge opère dans l'hybride TTM (discrimination intra-pool), la probe est un
+  classement inter-instances sur 6 configs — l'ordre doit se transférer. P-J.1 (ordre) :
+  hybride@15 % ≤ hybride@5 % (0.6554 mesuré) < hybride@30 %. P-J.2 (magnitude) :
+  hybride@15 % ∈ [0.645, 0.655] ; hybride@30 % ∈ [0.66, 0.69]. Si hybride@30 % ≤
+  hybride@15 % : la probe ne mesure PAS la qualité opérante du juge → rétrogradée en
+  diagnostic, sélection du juge directement par hybride. Si l'écart hybride est faible
+  dans les deux sens : cohérent avec une dégradation localisée solar (l'hybride moyenne
+  sur toutes les configs).
 - **2026-09-01 (RateIN v3 : CHAMPION 0.8152/0.5588, P-RIN.7 agrégat ✓ ; DÉTECTEUR GELÉ ;
   les 3 limites résiduelles nommées = le dossier xres)** — Run utilisateur v3 (k par
   config poolé, 97 configs) : **MASE 0.8152 | CRPS 0.5588** (coverage 0.748, 34/97
