@@ -1919,6 +1919,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-02 (MINI CONVERGÉ : coupe du pretrain actée, P-J.3 ✓ (0.6513), finetune
+  P-mini lancé depuis le val-best 0.5495)** — Trois instruments concordants : (1) val
+  loss en plateau depuis ~400k pas, plancher 0.5495 (~900k), REMONTÉE à 0.5591 ensuite —
+  la condition de coupe gravée (« plateau confirmé en fin de décroissance ») est remplie ;
+  (2) juge convergé, série appariée 4 points : 0.6748 (15 %) → 0.6514 (30 %) → 0.6508
+  (0.5495) → 0.6513 (0.5591) — **P-J.3 ✓** (0.6513 ≤ 0.652, bande de succès ; central
+  0.648±0.003 raté de +0.003) ; (3) représentations : pred_std 0.58 / target_std 0.90 /
+  context_std 0.87, tous MEILLEURS que tiny à corpus égal (la capacité enrichit le
+  latent), MAIS effective_rank 61→30 en baisse continue — même signature que l'érosion ρ
+  des probes ; les pas restants n'achètent plus rien. **Décision** : pretrain coupé ;
+  finetune mini depuis le checkpoint VAL-BEST 0.5495 (miroir de la recette tiny, dont le
+  champion est né du @50 % — la sélection de checkpoint de pretrain est la pratique
+  établie, pas une entorse) ; contrôle depuis 0.5591 seulement sur motif si déception.
+  Le run finetune est LE verdict P-mini (flip vs tiny 0.5983), puis flip+ratein =
+  candidat champion (le 0.55 se joue là). Juge du papier : primaire = dernier checkpoint
+  nommé (0.5591, zéro sélection, 0.6513) ; le val-best 0.6508 étiqueté « sélection
+  déclarée ».
 - **2026-09-01 (ARM SELF-HYBRIDE CLOS : le contrôle T confirme — dilution à T=1,
   COLLAPSE à T=0.25)** — Run de contrôle utilisateur (15 configs mixtes, T=0.25) :
   hybrid_self/self = 0.8563/0.5462 = **1.57** (pire que 1.17 à T=1) et couverture 80 %
