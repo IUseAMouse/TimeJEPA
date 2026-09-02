@@ -444,10 +444,14 @@ def scene_convection(n_frames: int, h: int, w: int, cache: Path,
     oscillatory onset, below chaos."""
     if cache.exists():
         arr = np.load(cache)
-        if arr.shape == (n_frames, h, w):
+        if arr.shape == (n_frames, h, w) and np.isfinite(arr).all():
             print(f"convection: cache {cache}")
             return arr
-    ny, nx = h * 2, w * 2
+        print("convection: cache invalid (shape or NaN), regenerating")
+    # FIXED internal grid: Rayleigh grows with the CUBE of the height, so the
+    # stability bisected at 64x64 blew up at 96x96 (NaN, measured on the pod).
+    # Simulate at the calibrated grid, bilinear-resize the frames to (h, w).
+    ny, nx = 64, 64
     tau_f, tau_g = 1.0, 0.8
     g_beta = 0.0001             # bisected: 3e-4 blows up (NaN), 3e-5 stays
                                 # conductive; 1e-4 gives unsteady plumes with a
@@ -474,7 +478,7 @@ def scene_convection(n_frames: int, h: int, w: int, cache: Path,
     fin = eq9(np.ones((ny, nx)), np.zeros((2, ny, nx)))
     gin = eq5(T, np.zeros((2, ny, nx)))
 
-    frames = np.empty((n_frames, h, w), dtype=np.float32)
+    frames = np.empty((n_frames, ny, nx), dtype=np.float32)
     total = warmup + n_frames * record_every
     for step in range(total):
         rho = fin.sum(axis=0)
@@ -496,10 +500,16 @@ def scene_convection(n_frames: int, h: int, w: int, cache: Path,
         gin[4, -1, :] = t5[4] * 2 * 0.0 - gin[3, -1, :]        # cold ceiling T=0
         k = step - warmup
         if k >= 0 and k % record_every == 0:
-            frames[k // record_every] = np.clip(
-                T.reshape(h, 2, w, 2).mean(axis=(1, 3)), 0.0, 1.0)
+            frames[k // record_every] = np.clip(T, 0.0, 1.0)
         if step % 10000 == 0:
             print(f"convection: step {step}/{total} (T in [{T.min():.2f},{T.max():.2f}])")
+    if not np.isfinite(frames).all():
+        raise RuntimeError("convection went non-finite - refusing to cache")
+    if (h, w) != (ny, nx):
+        t_ = torch.nn.functional.interpolate(
+            torch.from_numpy(frames)[:, None], size=(h, w),
+            mode="bilinear", align_corners=False)
+        frames = t_[:, 0].numpy().astype(np.float32)
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.save(cache, frames)
     return frames
