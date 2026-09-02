@@ -1919,6 +1919,14 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-03 (CHAMPION ckpt-3 (15 %) : 0.7988/0.5482 — les barres 0.80 et 0.55
+  tombées ; TinyCast à 0.5 %)** — Troisième checkpoint (epoch00_valloss0.6558), pile
+  complète : **MASE 0.7988 | CRPS 0.5482**, couverture 0.770. Série par checkpoint :
+  0.5585 → 0.5517 → 0.5482 (deltas −0.68/−0.35 pt : décélération ~géométrique →
+  asymptote estimée du run 0.542-0.548, passage de TinyCast 0.5454 ≈ pile-ou-face en
+  fin d'epoch). MASE sub-0.80 : première fois du projet. La sélection G7.3c continue
+  sur les checkpoints restants ; le champion final devra ses compagnons nu et
+  flip-only.
 - **2026-09-02 (Conformité leaderboard vérifiée aux sources : flip+RateIN sont légaux)**
   — Règles gift-eval (repo officiel) : contraintes sur l'USAGE DES DONNÉES (zéro fuite
   test, pas de train sur les splits GIFT pour le label zero-shot, adaptation par dataset
