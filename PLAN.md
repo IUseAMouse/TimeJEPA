@@ -1354,6 +1354,19 @@ fréquences — passent de 8,4 % à ~19 % du batch.
 ⚠️ Ne PAS toucher au sampler avant la fin de G7 : les runs E14/E16 ont tourné avec le sampler
 actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
 
+### G14 — HEAD-WIDTH : l'allocation de capacité côté forecast (idée utilisateur 2026-09-02)
+
+Audit des paramètres (2026-09-02) : encodeur 52 %, prédicteur 37-40 %, TÊTE QUANTILE
+10.4 % (tiny, 118K ≈ TinyCast entier) et 7.3 % (mini) — la part du seul composant qui
+décode le forecast RÉTRÉCIT avec l'échelle, et la tête naît au finetune (JEPA ne lui
+donne aucun gradient — piège mesuré du 2026-08-31), donc l'élargir ne rompt aucune
+continuité de pretrain. Arm une-variable, zéro coût pretrain : même checkpoint val-best,
+finetune avec hidden_dim de la tête ×4 (~118K→0.5M tiny, ~251K→1M mini). Si ça paie,
+l'hypothèse d'allocation tient (et scale mal dans la recette actuelle) ; si nul, l'écart
+résiduel est mécanisme/corpus, pas capacité — falsifiable dans les deux sens. Câblage
+requis : exposer decoder.hidden_dim en config (kwarg à défaut inerte). GATED derrière la
+fin de la campagne mini (sélection G7.3c d'abord) ; prédictions à graver au lancement.
+
 ### G12 — TimeJEPA-VÉRIFICATEUR (candidat stratégique, idée utilisateur 2026-08-21)
 
 **Périmètre tranché 2026-09-01 (arm self-hybride CLOS, 2 runs)** : le vérificateur ne

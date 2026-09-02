@@ -1919,6 +1919,21 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-02 (NOUVEAU CHAMPION : mini ckpt-1 + pile complète = 0.8106/0.5585 — bat le
+  champion tiny sur les DEUX métriques, au premier checkpoint de finetune)** — Pile
+  officielle (flip + ratein=backtest) sur epoch00_valloss0.6609 : **MASE 0.8106 | CRPS
+  0.5585** vs tiny 0.8152/0.5588 ; couverture **0.774** (vs 0.748) ; 37/97 configs
+  décimées, 38.1 % d'instances k>1. La composition tient à l'échelle : flip 0.5911 →
+  pile 0.5585 (−3.26 pts). P-mini se renforce : la capacité paie ET compose avec les
+  couches d'inférence. Sub-0.56 atteint, TinyCast (0.545) à 2.5 %, et la sélection
+  G7.3c parmi les checkpoints restants de l'epoch n'a pas commencé. **Watch-item** :
+  covid_deaths/D régresse sous ratein pour mini (33.65→49.82 MASE, CRPS 0.037→0.112,
+  k>1 100 %) là où le backtest de tiny choisissait k=1 — la sélection par config est
+  bruitée AU CHANGEMENT DE CHECKPOINT sur les configs limites ; coût ~+1.1 % d'agrégat
+  (sans elle ~0.552). Détecteur GELÉ, pas de changement de règle — consigné comme bruit
+  de sélection inter-checkpoints, à surveiller sur les checkpoints suivants. **Roadmap** :
+  arm G14 head-width ajouté au PLAN (décision utilisateur — audit d'allocation : tête
+  10.4 %→7.3 % en part avec l'échelle, 118K ≈ TinyCast entier ; gated post-campagne).
 - **2026-09-02 (P-MINI, PREMIÈRE LECTURE : le 1er checkpoint de finetune mini BAT le
   champion tiny final — la capacité paie)** — Finetune depuis le val-best 0.5495,
   premier checkpoint (epoch00_valloss0.6609), flip pur : **0.8568 MASE / 0.5911 CRPS**
