@@ -1919,6 +1919,19 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-02 (CHAMPION ckpt-2 : 0.8005/0.5517, couverture 0.795 — le peloton
+  goia/Kairos/Metamorph est doublé)** — Deuxième checkpoint de finetune mini
+  (epoch00_valloss0.6581), pile complète : **MASE 0.8005 | CRPS 0.5517**, couverture
+  **0.795** (nominal 0.800 — calibration quasi parfaite, record). Progression par
+  checkpoint : 0.8106/0.5585 → 0.8005/0.5517 alors que la val de finetune n'a bougé
+  que de 0.6609→0.6581 — la sélection G7.3c par éval GIFT reste le bon instrument, la
+  val de finetune est un proxy faible. Position <10M : 6e — devant goia 0.553, Kairos
+  0.554, Metamorph 0.555 ; restent TinyCast 0.545 (à 1.2 %), TempoPFN 0.533, Toto
+  0.524, TTM 0.520, FlowState 0.487. covid_deaths/D toujours décimée (k>1 100 %,
+  CRPS 0.057 vs 0.112 au ckpt-1 — s'améliore mais surveillance maintenue). Barres
+  utilisateur pour la suite de l'epoch : 0.80 MASE et 0.55 CRPS. RAPPEL pour le
+  champion final sélectionné : publier aussi nu et flip-only (doctrine), et relancer
+  l'hybride P-J.3 n'est PAS requis (juge = pretrain, indépendant du finetune).
 - **2026-09-02 (NOUVEAU CHAMPION : mini ckpt-1 + pile complète = 0.8106/0.5585 — bat le
   champion tiny sur les DEUX métriques, au premier checkpoint de finetune)** — Pile
   officielle (flip + ratein=backtest) sur epoch00_valloss0.6609 : **MASE 0.8106 | CRPS
