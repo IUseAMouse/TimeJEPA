@@ -1919,6 +1919,17 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-02 (Conformité leaderboard vérifiée aux sources : flip+RateIN sont légaux)**
+  — Règles gift-eval (repo officiel) : contraintes sur l'USAGE DES DONNÉES (zéro fuite
+  test, pas de train sur les splits GIFT pour le label zero-shot, adaptation par dataset
+  = fine-tuned), AUCUNE restriction sur les procédures d'inférence. Pratique :
+  t0-alpha/TFC publie NU (notebook de réplication lu : 1 forward, ctx 8192, zéro TTA) ;
+  TinyCast inclut sign-flip averaging ET alignement de période FFT (= notre pile,
+  0.545 au leaderboard) ; TimesFM expose force_flip_invariance ; FlowState règle son
+  pas interne depuis la saisonnalité FOURNIE par le dataset. Notre pile est conforme
+  (uniforme, causale, zéro regard test — les modes oracle restent interdits d'officiel).
+  Obligations à la soumission : déclarer la procédure dans la description du modèle ;
+  code de réplication (evaluate_gift.py l'est).
 - **2026-09-02 (CHAMPION ckpt-2 : 0.8005/0.5517, couverture 0.795 — le peloton
   goia/Kairos/Metamorph est doublé)** — Deuxième checkpoint de finetune mini
   (epoch00_valloss0.6581), pile complète : **MASE 0.8005 | CRPS 0.5517**, couverture
