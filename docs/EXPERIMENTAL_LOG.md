@@ -1919,6 +1919,18 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-02 (P-MINI, PREMIÈRE LECTURE : le 1er checkpoint de finetune mini BAT le
+  champion tiny final — la capacité paie)** — Finetune depuis le val-best 0.5495,
+  premier checkpoint (epoch00_valloss0.6609), flip pur : **0.8568 MASE / 0.5911 CRPS**
+  vs tiny champion 0.8633/0.5983 (−0.65 pt MASE, −0.72 pt CRPS, conditions égales).
+  P-mini.2 confirmée dans les per-config : le gain vit dans le CORPS — m4_yearly
+  4.75→3.93 MASE (CRPS 0.158→0.135), famille m4 en baisse générale, m_dense/H/short
+  0.23→0.16 ; queue mitigée (bizitobs_application dégradé 0.046→0.096, solar/10T
+  long/medium améliorés) — le partage corps/queue attendu, la queue reste le travail
+  de RateIN. **Couverture 0.780** (vs ~0.72 tiny) : meilleur intervalle 80 % jamais
+  mesuré en flip pur — la capacité calibre mieux. Suite : flip+ratein sur ce checkpoint
+  (composition ~−2.4 pts sur tiny → ~0.567 projeté), puis sélection G7.3c parmi les
+  checkpoints de l'epoch de finetune. Le 0.55 est en ligne de mire.
 - **2026-09-02 (MINI CONVERGÉ : coupe du pretrain actée, P-J.3 ✓ (0.6513), finetune
   P-mini lancé depuis le val-best 0.5495)** — Trois instruments concordants : (1) val
   loss en plateau depuis ~400k pas, plancher 0.5495 (~900k), REMONTÉE à 0.5591 ensuite —
