@@ -28,7 +28,11 @@ PNGs, and two honest numbers: model MAE vs persistence MAE (last context
 frame frozen) over the forecast horizon.
 
 Status: demo, never an official number. Forecast runs WITHOUT TTA by default
-(--tta-flip to enable, official E19b formula).
+(--tta-flip to enable, official E19b formula). No RateIN either - measured
+(2026-09-02, pendulum period 128, k=4): +14.6% MAE. With only 1024 frames of
+history, decimation starves the context (256 points, 32 patches), there is
+no rollout to collapse at horizon = native pred_len, and the scenes' sampling
+rate is already calibrated at the source (record_every IS the rate layer).
 """
 
 import argparse
