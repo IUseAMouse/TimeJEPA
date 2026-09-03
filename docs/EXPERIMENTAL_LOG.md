@@ -1919,6 +1919,29 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-03 (SÉLECTION G7.3c CLOSE : champion mini = 25 % (0.7994/0.5469) ; série
+  complète corrigée ; G14 câblé et vérifié ; P-aug et P-head GRAVÉES pour les deux arms
+  suivants)** — Série finetune mini corrigée (mapping utilisateur) : 5 % 0.5585 →
+  10 % 0.5517 → 15 % 0.5482 → 20 % 0.5558 → **25 % 0.5469 (val 0.6528, couverture
+  0.775)** → 30 % 0.5539 (val 0.6596) → 35 % 0.5627 (couverture effondrée 0.701,
+  m4_yearly instable) → 40 % 0.5511 (val-best 0.6495 mais GIFT pire — le proxy val
+  re-démenti) → 45 % 0.5514. Quatre déclins consécutifs post-25 % : règle d'arrêt
+  remplie, le 50 % = complétude seulement. Reste : compagnons nu et flip-only du
+  champion. **G14 câblé** : ForecastingHead/loading.py/train.py exposent
+  `decoder.quantile_hidden_dim` — clé NEUVE à dessein : 8 configs héritées portent un
+  `decoder.hidden_dim` DÉCORATIF jamais plombé (le réveiller aurait cassé le chargement
+  des checkpoints existants — attrapé en vérification d'inertie : mini eval 0.251M
+  au byte près, tiny 0.118M, head4 0.473M) ; configs lotsa_mini_v3_head4_{zeroshot,
+  eval} créées ; 31 tests ciblés verts. **P-aug (gravées, lancement imminent, pretrain
+  val-best 0.5495)** : P-aug.1 les configs majoritairement décimées à l'éval
+  s'améliorent vs champion apparié ; P-aug.2 les configs k=1 stables ±1 % ; P-aug.3
+  agrégat flip+ratein ≤ 0.545 succès (passe TinyCast), central 0.541±0.004 ;
+  ÉCHEC-DIAGNOSTIC si ≥ 0.5469 → voir des entrées décimées ne suffit pas, le dossier
+  xres-FiLM reprend le résiduel. **P-head (gravées)** : P-head.1 flip+ratein bat
+  0.5469 au checkpoint apparié (~25 %) ; P-head.2 la couverture ne se dégrade pas
+  (une tête large ne doit pas acheter du CRPS en surajustant le fan) ; échec → l'écart
+  résiduel est mécanisme/corpus, pas capacité côté forecast — arm clos au prix d'un
+  finetune.
 - **2026-09-03 (CHAMPION CRPS au 25 % : 0.7994/0.5469 — TinyCast à 0.3 % ; creux au
   20 %, trajectoire bruitée autour d'une pente descendante)** — Série finetune mini
   complète : 0.5585 (5 %) → 0.5517 (10 %) → 0.5482 (15 %) → 0.5558 (20 %, creux — val

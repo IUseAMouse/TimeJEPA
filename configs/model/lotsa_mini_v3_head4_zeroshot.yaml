@@ -1,0 +1,30 @@
+# @package _global_
+# G14 HEAD-WIDTH arm (2026-09-03) - same pretrain, quantile-head MLP x4.
+#
+# Motive (parameter audit 2026-09-02): the quantile head is the only component
+# born at finetune (JEPA gives it no gradient) and the only one whose share
+# SHRINKS with scale (10.4% of tiny, 7.3% of mini, 251K params). If
+# forecast-side capacity is the binding allocation, widening the head pays
+# with zero pretrain cost and zero pretrain-continuity break. One variable:
+# decoder.quantile_hidden_dim 192 (d_model fallback) -> 768.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head4_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#
+# Predictions (numbers recorded in the registry AT LAUNCH): P-head.1 if the
+# allocation hypothesis holds, flip+ratein beats the standard-finetune
+# champion at the matching checkpoint fraction; P-head.2 coverage does not
+# degrade (a wider head must not buy CRPS by overfitting the fan).
+# FAILURE-DIAGNOSTIC: no gain => the residual gap is mechanism/corpus, not
+# forecast-side capacity; the arm closes for one finetune's cost.
+defaults:
+  - lotsa_mini_v3_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head4_zs"
+  decoder:
+    quantile_hidden_dim: 768
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head4", "robust-scale"]

@@ -279,6 +279,9 @@ class ForecastingHead(nn.Module):
         # ESJEPA - forwarded to QuantileHead (spread gate). Flag off =>
         # state_dict and behavior bit-identical.
         error_signal: bool = False,
+        # G14 head-width arm: MLP width of the quantile head. None (default)
+        # keeps QuantileHead's d_model fallback - bit-identical.
+        quantile_hidden_dim: 'Optional[int]' = None,
     ):
         super().__init__()
 
@@ -322,6 +325,7 @@ class ForecastingHead(nn.Module):
                 quantile_levels=quantile_levels or DEFAULT_QUANTILES,
                 use_context=quantile_use_context,
                 use_error_signal=error_signal,
+                hidden_dim=quantile_hidden_dim,
             )
         else:
             raise ValueError(f"Unknown decoder_type: {decoder_type}")

@@ -204,6 +204,10 @@ def main(cfg: DictConfig):
             # ForecastingHead construction site 3/3 - same config key as the
             # model and the eval (loading.py), guarded by a test.
             error_signal=bool(cfg.model.get('error_signal', False)),
+            # G14: optional head width, same NEW key as loading.py (see note
+            # there - decorative hidden_dim must stay dead); absent =>
+            # None => d_model fallback, bit-identical.
+            quantile_hidden_dim=cfg.model.decoder.get('quantile_hidden_dim'),
         )
         
         pl_module = FinetuneModule(

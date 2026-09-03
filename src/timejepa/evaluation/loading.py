@@ -74,6 +74,11 @@ def create_model_from_config(cfg: DictConfig) -> JEPATST:
         num_features=cfg.model.num_channels,
         decoder_type=cfg.model.decoder.type,
         revin=model.revin,
+        # G14: optional head width. NEW key on purpose: old configs carry a
+    # decorative decoder.hidden_dim never wired - waking it would break
+    # existing checkpoints. Absent => None
+        # => QuantileHead falls back to d_model, bit-identical.
+        quantile_hidden_dim=cfg.model.decoder.get('quantile_hidden_dim'),
         # ESJEPA: the decoder rebuilt here must carry the same flag as the
         # model (site 2/3 - all three ForecastingHead construction sites read
         # the same config key; guarded by test).
