@@ -1919,6 +1919,17 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-03 (CHAMPION CRPS au 25 % : 0.7994/0.5469 — TinyCast à 0.3 % ; creux au
+  20 %, trajectoire bruitée autour d'une pente descendante)** — Série finetune mini
+  complète : 0.5585 (5 %) → 0.5517 (10 %) → 0.5482 (15 %) → 0.5558 (20 %, creux — val
+  remontée aussi 0.6570) → **0.5469 (25 %, val-best 0.6528)**. Lecture corrigée en
+  séance : l'utilisateur lisait le 25 % comme un déclin — c'est le meilleur CRPS du
+  projet (MASE 0.7994, +0.6 pt de bruit vs 15 %). Critère de sélection G7.3c rappelé :
+  le CRPS classe le leaderboard, la MASE à ±0.001 est du bruit. Motif tiny (pic
+  finetune ~50 %) : poursuivre les évals jusqu'à ~50-60 %, arrêt sur 2-3 déclins CRPS
+  consécutifs. covid_deaths/D : le backtest OSCILLE entre checkpoints (k=1 au 20 %,
+  k>1 aux autres) — bruit de sélection inter-checkpoints déjà consigné, surveillance
+  maintenue.
 - **2026-09-03 (CHAMPION ckpt-3 (15 %) : 0.7988/0.5482 — les barres 0.80 et 0.55
   tombées ; TinyCast à 0.5 %)** — Troisième checkpoint (epoch00_valloss0.6558), pile
   complète : **MASE 0.7988 | CRPS 0.5482**, couverture 0.770. Série par checkpoint :
