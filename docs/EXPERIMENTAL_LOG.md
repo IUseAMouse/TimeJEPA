@@ -1919,6 +1919,19 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-03 (COMPAGNONS DU CHAMPION MESURÉS — la table doctrine est complète ;
+  arm aug lancé)** — Champion mini 25 % (val 0.6528), les trois lignes officielles :
+  **nu 0.8949/0.6235 (couv 0.736) → +flip 0.8612/0.5930 (couv 0.775) → +RateIN
+  0.7994/0.5469 (couv 0.775)**. Contribution totale des couches d'inférence :
+  −9.55 pts MASE, −7.66 pts CRPS. Deux observations : (1) RateIN compose MIEUX à
+  l'échelle mini (−4.61 pts) qu'à tiny (−3.95) — la capacité améliore la réponse aux
+  entrées canonicalisées ; (2) contrôle nu du 40 % (val-best 0.6495) : 0.8876/0.6204,
+  légèrement MEILLEUR que le nu du champion — mais pire une fois les couches posées
+  (0.5511 vs 0.5469) : le val-best re-démenti une 3e fois, et la sélection doit se
+  faire SUR LA PILE COMPLÈTE, pas sur le nu. Notable pour le papier : solar/10T en nu
+  est catastrophique (CRPS 0.81-1.33) et RateIN le divise par ~2.4 — la dépendance de
+  la config hors-bande à la canonicalisation, chiffrée proprement. Arm G9.0-aug
+  LANCÉ (P-aug.1..3 gravées hier) ; head4 en file.
 - **2026-09-03 (SÉLECTION G7.3c CLOSE : champion mini = 25 % (0.7994/0.5469) ; série
   complète corrigée ; G14 câblé et vérifié ; P-aug et P-head GRAVÉES pour les deux arms
   suivants)** — Série finetune mini corrigée (mapping utilisateur) : 5 % 0.5585 →
