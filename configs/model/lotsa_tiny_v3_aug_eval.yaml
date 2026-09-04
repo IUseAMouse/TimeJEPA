@@ -1,0 +1,12 @@
+# @package _global_
+# Eval for the G9.0-aug tiny checkpoints - same rationale as
+# lotsa_mini_v3_aug_eval: distinct output namespace, identical architecture.
+defaults:
+  - lotsa_tiny_v3_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_tiny_v3_aug_zs"
+
+wandb:
+  tags: ["tiny", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "aug-decim", "robust-scale"]

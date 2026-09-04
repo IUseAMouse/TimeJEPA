@@ -8,7 +8,7 @@
 # regime: k1=k2 drawn from the same factors as the xres config
 # (comparability: the pair (aug alone) vs (full xres) differs only by the
 # FiLM/w/anchor bundle). cross_resolution stays false -> w=1 everywhere,
-# NO new parameter: same architecture, eval via lotsa_tiny_v3_eval.
+# NO new parameter: same architecture, eval via lotsa_tiny_v3_aug_eval (own output namespace).
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3_aug_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<ckpt>"'

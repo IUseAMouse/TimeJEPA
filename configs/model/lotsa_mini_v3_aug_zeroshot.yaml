@@ -3,7 +3,7 @@
 # (see its header for the measured motive and predictions P-aug.1..3),
 # applied to the mini pretrain. Launch AFTER the standard mini finetune
 # (paired control: same pretrain checkpoint, single variable = the two data
-# keys below). Eval via lotsa_mini_v3_eval, architecture unchanged
+# keys below). Eval via lotsa_mini_v3_aug_eval (own output namespace), architecture unchanged
 # (cross_resolution false, w=1, zero new parameters).
 #
 #   python scripts/train.py --config-name lotsa_mini_v3_aug_zeroshot \
