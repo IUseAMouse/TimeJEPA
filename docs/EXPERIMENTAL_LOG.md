@@ -1919,6 +1919,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-04 (ARM AUG CLOS : P-aug.3 ÉCHEC — pic propre à 15 % (0.5470, égalité
+  champion), 25 % retombe à 0.5503 ; la branche échec-diagnostic s'active)** — Série
+  aug complète : 0.5470 (15 %) → 0.5570 (20 %) → 0.5503 (25 %), couverture 0.732/
+  0.720/0.740 (toujours sous le 0.775 du standard). P-aug.1 restait faiblement ✓
+  (bizitobs/solar), P-aug.2 ✓, mais P-aug.3 jamais atteinte (ni 0.545 ni même
+  <0.5469). Verdict mécanistique, comme gravé : l'exposition passive aux entrées
+  décimées ne suffit pas — mini les encaissait déjà ; le résiduel de sélection
+  (2.14 pts, oracle 0.5255) reste la propriété du dossier xres-FiLM (conditionnement
+  explicite). Coût de la falsification : un finetune. Arm HEAD8 lancé (décision
+  utilisateur, dose ×8 directe, P-head.1/2 s'appliquent). Question utilisateur
+  consignée : l'écart MASE vs le peloton (0.7994 vs 0.70-0.77) vit dans m4_yearly/
+  quarterly/weekly (4.5-5.3 / 1.35 / 2.4-2.7 de MASE), covid (35-40), bitbrains_rnd/H
+  (6.0), saugeen/D (~3) — séries COURTES à tendance dominante + familles à outliers :
+  un problème d'extrapolation de tendance sur historique court, pas de largeur de
+  décodage — attente MASE du head8 : FAIBLE ; les leviers MASE = crop-pad + synthèse
+  à tendance (corpus) et contexte long.
+
 - **2026-09-04 (Aug@20 % : 0.8197/0.5570, couv 0.720 — le creux du 20 % se réplique ;
   verdict maintenu au 25 %)** — Même motif que le standard (0.5558 à 20 % avant le pic
   25 %) : creux répliqué, pas une cassure. L'avance appariée de l'aug (+0.12 pt à
