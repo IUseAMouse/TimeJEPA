@@ -1919,6 +1919,16 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-04 (Aug@20 % : 0.8197/0.5570, couv 0.720 — le creux du 20 % se réplique ;
+  verdict maintenu au 25 %)** — Même motif que le standard (0.5558 à 20 % avant le pic
+  25 %) : creux répliqué, pas une cassure. L'avance appariée de l'aug (+0.12 pt à
+  15 %) projetée au pic donnerait ~0.5455 ≈ TinyCast (0.5454) — le point 25 % est le
+  seul qui peut trancher P-aug.3 ; règle de fin inchangée (éval 25 %, coupe à ~30 %,
+  head4 ensuite). Couverture aug toujours en retrait (0.720). Note technique : le
+  checkpoint aug 20 % s'appelle epoch00_valloss0.6558-v1.ckpt (collision de nom de
+  val DANS le run aug, suffixe Lightning) — le harnais l'a rangé dans son propre
+  répertoire, rien à faire.
+
 - **2026-09-04 (ORACLE RE-PRICÉ sur le champion mini : plafond 0.7744/0.5255, capture
   v3 = 68 % ; le résiduel de sélection est ORTHOGONAL à la capacité — les deux leviers
   du fork restent vivants)** — Oracle-k (diagnostic, jamais officiel) sur le champion
