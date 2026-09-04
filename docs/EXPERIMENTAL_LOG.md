@@ -1919,6 +1919,24 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-04 (P-AUG, lecture provisoire au 15 % apparié : mieux de 0.12 pt mais
+  couverture −4 pts ; le central 0.541 est mort, verdict au 25 %)** — Aug@15 % (pile
+  complète) : 0.8015/0.5470, couv 0.732, contre standard@15 % 0.7988/0.5482 couv
+  0.770 — et déjà l'égalité avec le champion 25 % (0.5469). P-aug.1 faiblement ✓ :
+  les gains vivent exactement où prévu (bizitobs_l2c 0.256→0.241 et 0.307→0.293,
+  solar/10T long 0.367→0.348) mais petits ; P-aug.2 ✓ modulo bruit bitbrains
+  (fast/H 0.713→0.818, famille la plus bruitée) ; P-aug.3 : central 0.541±0.004
+  improbable — le shift de distribution décimée achète ~0.1 pt, pas 0.5-1 : mini
+  encaissait déjà bien les entrées mean-poolées. COUVERTURE en recul (0.732) : l'aug
+  resserre le fan — à surveiller au verdict. Courbes de loss quasi identiques
+  (observation utilisateur). **Règle de fin déclarée** : poursuivre le finetune aug
+  jusqu'à ~30 %, évaluer 20 % et 25 % (le point de pic du standard = le point de
+  verdict apparié propre) ; si aug@25 % ≤ 0.545 → P-aug.3 succès tardif ; sinon
+  ÉCHEC-DIAGNOSTIC acté (voir des entrées décimées ne suffit pas) → coupe, head4
+  prend le GPU, et le dossier xres-FiLM récupère le résiduel comme gravé. En
+  parallèle (éval seule, pas de conflit GPU) : ORACLE re-pricing sur le champion
+  standard mini — l'arbitre du fork base-vs-xres, toujours pas re-mesuré à cette
+  échelle.
 - **2026-09-03 (COMPAGNONS DU CHAMPION MESURÉS — la table doctrine est complète ;
   arm aug lancé)** — Champion mini 25 % (val 0.6528), les trois lignes officielles :
   **nu 0.8949/0.6235 (couv 0.736) → +flip 0.8612/0.5930 (couv 0.775) → +RateIN
