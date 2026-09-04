@@ -1,0 +1,13 @@
+# @package _global_
+# Eval for the x8 head checkpoints - width must match, own output namespace.
+defaults:
+  - lotsa_mini_v3_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_zs"
+  decoder:
+    quantile_hidden_dim: 1536
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "head8", "robust-scale"]

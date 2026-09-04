@@ -1,0 +1,22 @@
+# @package _global_
+# G14 HEAD-WIDTH arm, x8 dose (2026-09-04, user decision: maximum effect size
+# for an unambiguous read). Same design as lotsa_mini_v3_head4_zeroshot, MLP
+# width 192 -> 1536 (decoder ~0.25M -> ~0.77M, ~20% of the model). One epoch
+# over the full corpus makes overfitting unlikely; the watch-item stays
+# P-head.2 (coverage must not degrade). If x8 DEGRADES vs the standard
+# champion (not just null), suspect optimization before concluding - the x4
+# config is the fallback mid-dose.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+defaults:
+  - lotsa_mini_v3_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_zs"
+  decoder:
+    quantile_hidden_dim: 1536
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "robust-scale"]
