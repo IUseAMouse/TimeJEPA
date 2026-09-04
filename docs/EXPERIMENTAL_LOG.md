@@ -1919,6 +1919,25 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-04 (ORACLE RE-PRICÉ sur le champion mini : plafond 0.7744/0.5255, capture
+  v3 = 68 % ; le résiduel de sélection est ORTHOGONAL à la capacité — les deux leviers
+  du fork restent vivants)** — Oracle-k (diagnostic, jamais officiel) sur le champion
+  25 % : **0.7744 MASE | 0.5255 CRPS**, couv 0.778, 32/97 configs >5 % (34/97 à tiny).
+  Détecteur v3 : 0.5469 → écart 2.14 pts (3.9 % rel.), contre 2.30 pts à tiny
+  (0.5588→0.5358) : le gisement de sélection N'A PAS été absorbé par ×3 de capacité —
+  il vit dans les mêmes configs famine-petits-n (bizitobs +50-66 % avec 2-84 inst,
+  saugeen/D +33 % avec 1 série, solar/10T +42 %). Capture du backtest : 68 % (63 % à
+  tiny) — RateIN compose mieux avec mini, cohérent avec l'entrée du 2026-09-03.
+  **Lecture du fork base-vs-xres** : les territoires sont DISJOINTS et les deux
+  exhibits mesurés. Base 7-9M : dé-risqué par deux points de scaling propres
+  (1.14M→3.4M a payé partout), lève le corps, reste <10M ; espérance −1 à −1.5 pt
+  (→ ~0.535). xres-FiLM : le résiduel 2.1 pts est STABLE à travers les échelles +
+  l'au-delà-de-l'oracle (reinterp), mais plus de pièces mobiles (FiLM exercé,
+  ratein_w). Ordre recommandé : head4 → (combo aug+head4 si les deux paient) → BASE
+  d'abord (certitude, classe préservée) → xres ensuite. Teaser consigné : le plafond
+  oracle du modèle ACTUEL (0.5255) se placerait entre Toto-4m (0.524) et TempoPFN
+  (0.533) — les poids d'aujourd'hui contiennent déjà un Toto-class si la sélection de
+  k était parfaite.
 - **2026-09-04 (P-AUG, lecture provisoire au 15 % apparié : mieux de 0.12 pt mais
   couverture −4 pts ; le central 0.541 est mort, verdict au 25 %)** — Aug@15 % (pile
   complète) : 0.8015/0.5470, couv 0.732, contre standard@15 % 0.7988/0.5482 couv
