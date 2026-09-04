@@ -1,0 +1,34 @@
+# @package _global_
+# Finetune for the mini xres pretrain - the (k1,k2) pairs stay ACTIVE at
+# finetune (w != 1 traverses the FiLM) and the invariance anchor preserves
+# the latent (the wiring law: a pretrain capability survives iff exercised).
+# Mirrors lotsa_tiny_xres_v3_zeroshot; witnesses to check at the first
+# decile: aug/w_neq1_frac > 0 (otherwise the arm is STERILE) and
+# train_loss/anchor logged and stable.
+#
+#   python scripts/train.py --config-name lotsa_mini_xres_v3_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_xres_v3/pretrain_True/<ckpt>"'
+defaults:
+  - lotsa_mini_xres_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_xres_v3_zs"
+
+training:
+  mode: "finetune"
+  finetune_mode: "full_finetune"
+  max_epochs: 1
+  loss:
+    lambda_anchor: 0.1
+
+checkpoint:
+  save_top_k: -1
+
+data:
+  datasets_finetune: null
+  multi_resolution_factors_finetune: [1, 2, 4]
+  p_multi_resolution_finetune: 0.3
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "xres", "robust-scale"]

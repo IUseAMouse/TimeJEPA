@@ -1,0 +1,14 @@
+# @package _global_
+# Eval for the mini xres checkpoints. cross_resolution MUST be carried (the
+# FiLM is a predictor weight - loading refuses without it). Eval stays at
+# w=1; the RateIN x w synergy (+ratein_w) is the gated extra step.
+defaults:
+  - lotsa_mini_v3_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_xres_v3_zs"
+  cross_resolution: true
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "xres", "robust-scale"]

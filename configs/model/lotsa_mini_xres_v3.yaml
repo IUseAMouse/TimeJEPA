@@ -1,0 +1,33 @@
+# @package _global_
+# G9.3 xres-AMENDED PRETRAIN at MINI scale (sequencing decision 2026-09-04:
+# engineering before scaling - the final big run multiplies whatever recipe
+# wins here). TRIGGER SATISFIED at mini scale: the oracle residual is 2.14
+# CRPS points (0.5469 detector vs 0.5255 ceiling), stable across scales
+# (capacity-orthogonal), and the passive-exposure arm (aug) FAILED its
+# P-aug.3 - explicit rate conditioning is the only remaining owner of that
+# residual. Mirrors lotsa_tiny_xres_v3 (see its header for the 3 amended
+# defects); one-variable duel against the lotsa_mini_v3 control pretrain.
+#
+#   python scripts/train.py --config-name lotsa_mini_xres_v3 wandb.run_name=xres-mini
+#   # then: lotsa_mini_xres_v3_zeroshot and lotsa_mini_xres_v3_eval
+#
+# Predictions P-xm.1..3 recorded in the registry AT LAUNCH.
+defaults:
+  - lotsa_mini_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_xres_v3"
+  cross_resolution: true
+
+training:
+  # Standalone targets are MANDATORY with xres (two grids cannot share one
+  # normalization window - hard guard in the module).
+  contextualized_targets: false
+
+data:
+  multi_resolution_factors: [1, 2, 4]
+  p_multi_resolution: 0.3
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "pretrain", "v3", "xres", "robust-scale"]

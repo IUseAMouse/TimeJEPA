@@ -1919,6 +1919,21 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-04 (SÉQUENCEMENT RE-TRANCHÉ, décision utilisateur : l'ingénierie AVANT le
+  scaling — le gros run passe en DERNIER)** — Rationnel consigné : le scaling
+  multiplie la recette qu'on lui donne (leçon du recadrage recipe-ceiling : la
+  capacité n'a payé qu'une fois la recette v3 refaite) ; scaler maintenant = 5-6
+  jours de 3090 pour multiplier une recette incomplète, puis re-scaler. Nouvel
+  ordre : (1) head8 (en cours) ; (2) **xres-FiLM à échelle MINI** — déclencheur
+  pleinement satisfait : résiduel oracle 2.14 pts stable à travers les échelles ET
+  échec de l'exposition passive (aug) ; trio de configs lotsa_mini_xres_v3
+  {,_zeroshot,_eval} créé et composé (miroir du trio tiny, duel une-variable contre
+  le pretrain mini v3 ; P-xm.1..3 à graver au lancement) ; (3) chantier S4 : corpus
+  re-chunké 8192 + crop-pad des séries courtes (le levier MASE direct : m4_yearly &
+  co) + contexte long — le crop-pad reste À IMPLÉMENTER (seul vrai code manquant du
+  périmètre) ; (4) LE gros run final (~7-9M) qui hérite de tout ce que 1-3 auront
+  validé — un seul passage au tarif 3090, sur la meilleure recette.
+
 - **2026-09-04 (ARM AUG CLOS : P-aug.3 ÉCHEC — pic propre à 15 % (0.5470, égalité
   champion), 25 % retombe à 0.5503 ; la branche échec-diagnostic s'active)** — Série
   aug complète : 0.5470 (15 %) → 0.5570 (20 %) → 0.5503 (25 %), couverture 0.732/
