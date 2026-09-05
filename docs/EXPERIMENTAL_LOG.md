@@ -1919,6 +1919,36 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (VERDICTS : POOLING = NOUVELLE MEILLEURE PILE 0.7871/0.5381 (P-pool.1 ✓) ;
+  ÉNERGIE = ÉCHEC-DIAGNOSTIC 0.5848, idée close comme sélecteur)** — Head8 25 %, flip.
+  **Backtest poolé : MASE 0.7871 / CRPS 0.5381 / couv 0.760**, 43/97 configs décimées,
+  44.3 % d'instances k>1. Vs backtest dur 0.7914/0.5433 : **−0.52 pt CRPS**, −0.43 MASE ;
+  vs mix 0.5403 : −0.22 pt. Une ligne de code (Σ au lieu du geomean) fait plus que le
+  mélange : l'objectif de sélection était le défaut le plus cher. Résidu vs oracle :
+  0.1357 → 0.1308 (0.48 pt brut, ≈ 1.9 pts de ratio, contre 2.43 au départ) ; missed 15
+  (30 %) · wrong_k 17 (44 %) · false_pos 10 (27 %) · match 55. Seconde clause de P-pool.1
+  (« part wrong_k baisse ») NON tenue : la part monte (38→44 %), l'absolu est plat
+  (0.23→0.21 pt) — le pooling a surtout converti des missed en match (22→15 missed, 47→55
+  match). Nouveau faux positif notable : m4_hourly k=3 (0.034 vs 0.024, 9.8 % du résidu).
+  Six missed « sous la marge » identifiés (bitbrains/5T/short, bitbrains_rnd/5T/medium,
+  bizitobs_l2c/5T/short, ett2/15T/medium, ett2/H/medium, kdd/H/medium) : c'est le terrain
+  du mix, à tester en `mix + pool` (attendu ~0.536). **Pile officielle du champion :
+  flip + backtest-pool** ; les comparaisons appariées restent en flip+backtest (caches).
+  **Énergie : MASE 0.8459 / CRPS 0.5848 / couv 0.720**, 57/97 décimées — P-E.1 ÉCHEC
+  (pire que le backtest de 4.2 pts, pire que le nu+flip 0.5842) ; P-E.2 ✓ trivialement ;
+  P-E.3 ÉCHEC (solar/10T : k=48 choisi, oracle 3/6/2 ; solar/H et loop/H : k=6-12, oracle
+  k=1 ; un seul succès, loop_seattle/5T/medium 0.076 ≈ oracle 0.071 là où le backtest
+  manque). Résidu 1.66 pts brut : false_pos 56 % (23 configs), wrong_k 37 % (30) — le
+  biais est SYSTÉMATIQUE vers les grands k. **Mécanisme (nommé, non testé)** : l'énergie
+  compare la prédictibilité de 256 pas DÉCIMÉS, soit k×256 pas réels — une tâche qui change
+  avec k (série lissée par la décimation, horizon réel plus long) ; le ratio d'énergie
+  n'est pas calibré entre k et ne mesure pas la qualité du forecast à l'horizon natif.
+  Règle prédéclarée appliquée : P-E.1 ET P-E.3 faux ⇒ **idée close comme sélecteur** ; le
+  mode reste en code (`+ratein=energy`) comme ablation négative citable (« l'énergie du
+  pretrain préfère les grands k »). Variante non essayée, une ligne, si l'utilisateur y
+  tient : span du juge apparié en temps réel (256/k pas décimés) — même horizon réel pour
+  tous les k. Prochaine mesure : `+ratein=mix +ratein_pool=true` sur head8.
+
 - **2026-09-06 (DEUX INSTRUMENTS DE SÉLECTION DE TAUX LIVRÉS : pooling aligné sur le CRPS,
   et RateIN-ENERGY, le k que le pretrain trouve naturel — prédictions gravées)** — Décision
   utilisateur (parcimonie) : parmi les cinq pistes proposées, garder (2) l'alignement de

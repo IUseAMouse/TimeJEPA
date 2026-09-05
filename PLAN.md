@@ -1235,8 +1235,11 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
       officielle du champion ; P-mix.1 ÉCHEC (12 % du résidu, pas 1/3) — le résidu est un
       DÉSACCORD backtest↔test (famine d'historique dans le backtest pour les grands k :
       ratio 15 sur bitbrains vs −9 % au test ; non-stationnarité ; régime de fenêtre), pas
-      une règle de décision. Dernière itération raisonnable du sélecteur : backtest à
-      historique apparié (P-bt4 à graver) ; le reste est train-side ; (b) **xres amendé** (w exercé au
+      une règle de décision. **2026-09-06** : pooling aligné sur le CRPS (`+ratein_pool`)
+      = **0.7871/0.5381**, nouvelle pile officielle (−0.52 pt vs backtest dur, une ligne) ;
+      détecteur par énergie du pretrain (`+ratein=energy`) = 0.5848, ÉCHEC-DIAGNOSTIC,
+      clos comme sélecteur (biais systématique vers les grands k ; ablation négative
+      citable). Reste : mix + pool (attendu ~0.536), puis train-side ; (b) **xres amendé** (w exercé au
       finetune + ancre λ·MSE) — code + configs livrés (commit ec0a891) ; le résiduel
       −4.1 % rel. vers l'oracle est l'exhibit du dossier train-side : ordre déclaré =
       mini finetune (+ratein compose) → arm G9.0-augmentation au finetune (35 % des
