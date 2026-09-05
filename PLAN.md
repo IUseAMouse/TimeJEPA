@@ -1356,8 +1356,8 @@ actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
 
 ### S4-a — CORPUS V4 : séries courtes réadmises + fenêtres à frontière (construit 2026-09-05)
 
-Diagnostic (lignes lues) : `prepare_lotsa --min-length 256` (v3) rejette toute série plus
-courte ; `dataset._generate_window_indices` saute toute ligne < ctx+pred ; h512 avait
+Diagnostic (lignes lues) : le bloc `lotsa_short` de v3 (`--min-length 384 --pad-to 1280`)
+rejette toute série plus courte ; `dataset._generate_window_indices` saute toute ligne < ctx+pred ; h512 avait
 échoué par le même mécanisme (exigence gonflée = corpus jeté). Défaut v3 découvert : les
 lignes bourrées de 256-1279 pas réels produisent des fenêtres à cible ENTIÈREMENT dans le
 bourrage plat (65/97 pour une série de 256). Construit : sidecar `_reallen/<f>.npy` écrit
@@ -1367,8 +1367,9 @@ FRONTIÈRE : split dans les données réelles, contexte bourré à gauche par la
 ≥ ctx+pred → fenêtres standard, cibles réelles garanties) ; pinball masquée ; ancre
 restreinte aux items à cible pleine ; FINETUNE SEULEMENT (la perte JEPA n'a pas de masque
 de cible) ; témoin `aug/short_frac`. Défauts inertes (348 tests + 9 nouveaux). Configs :
-lotsa_mini_v4{,_zeroshot,_eval}. Prep : `--out data/processed/lotsa_v4 --min-length 24
---pad-to 2048` (runbook S2.4 sinon inchangé). Levier MASE direct ; prérequis du contexte
+lotsa_mini_v4{,_zeroshot,_eval}. Prep : `docs/RUNBOOK_V4.md` — seul le bloc court est
+refait (`lotsa_short_v4`, `--min-length 24 --chunk-length 1280 --pad-to 1280`), puis
+réassemblage par symlinks des mêmes 106 familles + lien `_reallen`. Levier MASE direct ; prérequis du contexte
 long (S4-b) : bourrer au lieu de filtrer rend l'allongement du contexte gratuit en
 couverture de corpus. Prédictions P-v4 à graver au lancement.
 
@@ -1384,6 +1385,13 @@ l'hypothèse d'allocation tient (et scale mal dans la recette actuelle) ; si nul
 résiduel est mécanisme/corpus, pas capacité — falsifiable dans les deux sens. Câblage
 requis : exposer decoder.hidden_dim en config (kwarg à défaut inerte). GATED derrière la
 fin de la campagne mini (sélection G7.3c d'abord) ; prédictions à graver au lancement.
+**VERDICT 2026-09-05 : ×8 (hidden 1536) au 25 % = 0.7914/0.5433, couverture 0.769 —
+NOUVEAU CHAMPION** (vs 0.7994/0.5469/0.775 tête standard, même pretrain, même
+checkpoint apparié). P-head.1 ✓ ; P-head.2 tenue à la marge (−0.6 pt, le 0.734 du
+15 % était de l'immaturité). L'hypothèse d'allocation tient : la tête est bien le
+goulot côté forecast dans la recette actuelle. La tête ×8 devient la recette par
+défaut des bras suivants (xres-mini, v4, run final) ; ×4 n'est plus nécessaire.
+Compagnons nu/flip et 30 % à publier.
 
 ### G12 — TimeJEPA-VÉRIFICATEUR (candidat stratégique, idée utilisateur 2026-08-21)
 

@@ -1919,10 +1919,28 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (HEAD8@25 % : 0.7914/0.5433, couverture 0.769 — NOUVEAU CHAMPION ; P-head.1 ✓,
+  P-head.2 tenue à la marge)** — Checkpoint apparié 25 % (val 0.6522), flip+ratein :
+  MASE **0.7914** / CRPS **0.5433** / couverture **0.769** (q10 0.111, q90 0.880),
+  RateIN 35/97 configs, 36.1 % d'instances k>1. Contre le champion standard au même
+  point : 0.7994/0.5469/0.775 — **−0.8 pt MASE, −0.36 pt CRPS**, couverture −0.6 pt.
+  P-head.1 (bat 0.5469 au 25 %) ✓. P-head.2 (couverture ne se dégrade pas) : le 0.734
+  du 15 % s'est résorbé à 0.769 — l'érosion était de l'immaturité, pas un surajustement
+  du fan ; tenue dans le bruit (−0.6 pt). Lecture : l'hypothèse d'allocation (G14) tient —
+  la tête quantile (7 % du modèle en recette standard) était le goulot côté forecast ;
+  ×8 la porte à ~19.5 % pour +1M params, zéro coût pretrain. Gains visibles où la forme
+  compte : m4_quarterly 1.31 (vs 1.35 std), bizitobs_l2c/5T/short CRPS 0.078, sz_taxi
+  0.20-0.21. TinyCast (0.545) est DÉPASSÉ pour la première fois ; prochain jalon TempoPFN
+  0.533. Conséquences : (1) la tête ×8 devient la recette par défaut des bras suivants
+  (xres-mini, v4, run final) — décision à confirmer par l'utilisateur ; (2) compagnons
+  nu et flip à publier sur ce checkpoint (règle : toujours nu ET flip ET stack) ;
+  (3) 30 % à évaluer pour confirmer le pic (même règle de fin que le standard).
+
 - **2026-09-05 (CORPUS V4 CONSTRUIT : séries courtes réadmises, fenêtres à frontière,
   pinball masquée — le mécanisme A/Q/M/W annoncé le 2026-08-27 ; run gated)** —
-  Diagnostic (code lu) : `prepare_lotsa --min-length 256` (v3) rejette toute série plus
-  courte ; `_generate_window_indices` saute toute ligne < ctx+pred ; h512 avait échoué par
+  Diagnostic (code lu) : le bloc `lotsa_short` de v3 (`prepare_lotsa --min-length 384
+  --pad-to 1280`, runbook S2.4 étape 3) rejette toute série plus courte — les yearly
+  m1/m3/tourism en bloc ; `_generate_window_indices` saute toute ligne < ctx+pred ; h512 avait échoué par
   ce mécanisme exact (exigence gonflée ⇒ corpus jeté). **Défaut v3 découvert** : une
   ligne bourrée de r pas réels (256 ≤ r < 1280) produit des fenêtres à cible ENTIÈREMENT
   dans le bourrage plat (r=256 : 65 fenêtres sur 97) — le modèle apprend « contexte plat
@@ -1940,8 +1958,13 @@ constitue le test le plus direct de la thèse du §7.
   SEULEMENT (train.py) : la perte JEPA n'a pas de masque de cible ; (5) témoin
   `aug/short_frac` ; (6) configs lotsa_mini_v4{,_zeroshot,_eval}. Défauts INERTES : sans
   sidecar ou flag off, fenêtres et dict d'item bit-identiques (9 tests nouveaux, suite
-  complète relancée). **Prép v4** : runbook S2.4 inchangé sauf
-  `prepare_lotsa --out data/processed/lotsa_v4 --min-length 24 --pad-to 2048`. **Quelles
+  complète relancée). **Prép v4 (corrigée en séance, question utilisateur sur la structure
+  du corpus)** : lotsa_v3 est un dossier de SYMLINKS vers cinq sources (xres, synthetic_v3,
+  lotsa_short, lotsa_solar, decimated) ; v4 ne refait QUE le bloc court
+  (`lotsa_short_v4`, mêmes 12 subsets, `--min-length 24 --chunk-length 1280 --pad-to 1280`,
+  sidecar écrit d'office) et réassemble les mêmes 106 noms + le lien `_reallen` —
+  `docs/RUNBOOK_V4.md`, gates et P-v4.1..3 inclus. `audit_batch_schedule.py` plombé pour
+  le flag v4 (il reconstruit le datamodule à la main). **Quelles
   familles entrent** : l'anti-fuite garde m4/hospital/car_parts/covid DEHORS (jeux GIFT) ;
   les overrides réadmettent m1_*, monash_m3_*, tourism_*, nn5_* — donc le levier agit par
   TRANSFERT du régime « historique court + cible courte » appris sur m1/m3/tourism vers les

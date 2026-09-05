@@ -1,0 +1,133 @@
+# Runbook S4-a — Assemblage du corpus v4 (pod, ~1 h)
+
+Corpus v4 = corpus v3 à l'identique, **sauf le bloc des séries courtes**, refait
+avec le seuil abaissé et le sidecar de longueurs réelles. Une seule variable
+par rapport au champion : le bloc court + les fenêtres à frontière au finetune.
+Doctrine inchangée : NE RIEN SUPPRIMER — `lotsa_v3/` et `lotsa_short/` restent
+en place, v4 vit dans ses propres répertoires. Chaque étape a son GATE.
+
+Rappel de la structure v3 (runbook S2.4) : `lotsa_v3/` est un dossier de
+SYMLINKS vers cinq sources — `lotsa_xres/` (LOTSA dense + mix), `synthetic_v3/`
+(23 shards), `lotsa_short/` (12 subsets courts, `--min-length 384 --pad-to 1280`),
+`lotsa_solar/`, `decimated/`. C'est ce `--min-length 384` qui excluait les séries
+courtes, et le pad-to sans sidecar qui créait les fenêtres à cible-pad (défaut v3,
+registre 2026-09-05).
+
+---
+
+## Étape 0 — État des lieux (5 min)
+
+```bash
+cd /workspace/TimeJEPA && git pull
+ls data/processed/                       # attendu : lotsa_v3 lotsa_short lotsa_xres synthetic_v3 lotsa_solar decimated
+ls -l data/processed/lotsa_v3 | head -3  # confirmer : liens symboliques
+ls data/processed/lotsa_v3 | wc -l       # attendu : 106
+python -m pytest tests/test_short_series.py tests/test_v3_data.py -q
+```
+
+**GATE 0** : tests verts, les cinq sources présentes, 106 entrées dans lotsa_v3.
+
+## Étape 1 — Bloc court v4 (15 min, CPU)
+
+Mêmes 12 subsets que le bloc v3, même chunk et même pad ; seul le seuil change
+(384 → 24). Le sidecar `_reallen/` est écrit automatiquement dès que `--pad-to`
+est donné.
+
+```bash
+python scripts/prepare_lotsa.py --out data/processed/lotsa_short_v4 \
+  --subsets m1_monthly m1_quarterly m1_yearly monash_m3_monthly \
+  monash_m3_other monash_m3_quarterly monash_m3_yearly tourism_monthly \
+  tourism_quarterly tourism_yearly nn5_daily_with_missing nn5_weekly \
+  --min-length 24 --chunk-length 1280 --pad-to 1280
+ls data/processed/lotsa_short_v4 data/processed/lotsa_short_v4/_reallen
+```
+
+Pourquoi 24 : ≥ 16 pas de contexte réel + ≥ 4 de cible réelle (les minima des
+fenêtres à frontière) avec une marge ; en dessous, rien n'est apprenable.
+Pourquoi pad 1280 et pas 2048 : c'est la géométrie du finetune mini
+(1024 + 256) ; le contexte long (S4-b) refera sa propre prép.
+
+**GATE 1 (anti-contamination, BLOQUANT)** : le log affiche les exclusions G8.1
+(m4_*, hospital, car_parts, covid restent DEHORS — jeux GIFT) ; aucun subset
+hors des 12 listés ; `_reallen/` contient exactement un `.npy` par fichier
+produit. Noter le nombre de séries par subset dans le log : les yearly (m1, m3,
+tourism) doivent maintenant ÊTRE PRÉSENTS — en v3 ils étaient rejetés en bloc
+(« series too short »). Si un yearly manque encore, STOP.
+
+## Étape 2 — Assemblage par symlinks (5 min)
+
+```bash
+mkdir -p data/processed/lotsa_v4
+cd data/processed/lotsa_v4
+ln -s ../lotsa_xres/*.npy .
+ln -s ../synthetic_v3/*.npy .
+ln -s ../lotsa_short_v4/*.npy .          # remplace lotsa_short
+ln -s ../lotsa_solar/*.npy .
+ln -s ../decimated/*.npy .
+ln -s ../lotsa_short_v4/_reallen _reallen   # le sidecar, résolu par le dataset via <dossier>/_reallen/<fichier>
+cd /workspace/TimeJEPA
+ls data/processed/lotsa_v4 | wc -l        # attendu : 106 fichiers + _reallen = 107
+diff <(ls data/processed/lotsa_v3) <(ls data/processed/lotsa_v4 | grep -v _reallen)
+```
+
+**GATE 2** : `ln` ne râle sur aucun nom ; le `diff` est VIDE (mêmes 106 noms de
+familles — v4 ne change que le CONTENU du bloc court, pas la liste). Le dataset
+cherche le sidecar dans `<dossier du .npy>/_reallen/<nom>.npy` : les fichiers
+de `lotsa_xres`, `synthetic_v3`, `decimated`, `lotsa_solar` n'en ont pas et sont
+traités comme pleins — comportement v3 bit-identique pour eux.
+
+## Étape 3 — Audit de composition (10 min, CPU) — la question « surveiller le batch »
+
+```bash
+python scripts/audit_batch_schedule.py --config-name lotsa_mini_v4_zeroshot --mode finetune \
+  2>&1 | tee evaluation/audit_v4_finetune.txt
+python scripts/audit_batch_schedule.py --config-name lotsa_mini_v3_zeroshot --mode finetune \
+  2>&1 | tee evaluation/audit_v3_finetune.txt      # référence appariée
+```
+
+L'audit reproduit la construction de train.py (flag v4 compris) : il compte les
+fenêtres à frontière des lignes courtes.
+
+**GATE 3** : (a) les 12 familles du bloc court apparaissent avec une part de
+batch > 0 et aucune ne dépasse quelques % (elles ont peu de fenêtres — c'est le
+cap/rationnement qui décide) ; (b) la part des autres familles bouge de moins
+d'un point vs la référence v3 ; (c) composition stable à travers les déciles.
+Si une famille courte est à 0 : le sidecar n'est pas résolu (vérifier le lien
+`_reallen`). Consigner les deux audits au registre.
+
+## Étape 4 — Lancement (une variable vs le champion)
+
+Finetune depuis le pretrain mini v3 val-best — pretrain, architecture et recette
+identiques au champion 25 % (0.7994/0.5469) ; si head8 est confirmé champion,
+prendre son eval pour la comparaison appariée mais garder la TÊTE STANDARD ici
+(sinon deux variables).
+
+```bash
+python scripts/train.py --config-name lotsa_mini_v4_zeroshot \
+  '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+```
+
+**Témoin au premier décile (BLOQUANT)** : `aug/short_frac` > 0 sur wandb. À 0,
+le sidecar n'est pas lu et le bras est stérile — couper, revenir au GATE 2.
+
+## Étape 5 — Évaluation (namespace propre)
+
+```bash
+python scripts/evaluate_gift.py --config-name lotsa_mini_v4_eval \
+  +checkpoint_path=checkpoints/timejepa_lotsa_mini_v4_zs/pretrain_False/<ckpt> +tta_flip=true +ratein=backtest
+```
+
+Toujours les trois lectures (nu, flip, flip+ratein) sur le checkpoint retenu.
+Points de comparaison appariés : standard 15 % 0.7988/0.5482, 25 % 0.7994/0.5469.
+
+## Prédictions P-v4 (à graver au registre AU LANCEMENT, avant le premier eval)
+
+- P-v4.1 (mécanisme) : les configs à historique court (m4_yearly, m4_quarterly,
+  m4_monthly, m4_weekly, hospital, car_parts, covid) baissent en MASE au
+  checkpoint apparié — le levier agit par TRANSFERT (m1/m3/tourism appris,
+  m4/hospital jamais vus), donc bande large.
+- P-v4.2 (innocuité) : les configs à long historique stables à ±1 % de CRPS.
+- P-v4.3 (agrégat) : MASE < 0.79 au 25 % ; CRPS flip+ratein ≤ champion.
+  ÉCHEC-DIAGNOSTIC : MASE ≥ 0.7994 ⇒ le régime court ne se transfère pas de
+  m1/m3 vers m4 — le levier MASE est ailleurs (contexte, décodeur), pas dans le
+  corpus.

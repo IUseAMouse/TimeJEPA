@@ -73,6 +73,12 @@ def build_datamodule(cfg, is_pretrain: bool, force_ration: bool = False):
         num_workers=0,
         persistent_workers=False,
         use_mmap=bool(cfg.data.get('use_mmap', False)),
+        # Corpus v4 (2026-09-05): mirror train.py so the audit counts the
+        # boundary windows of short rows (finetune only).
+        short_series_windows=(not is_pretrain)
+        and bool(cfg.data.get('short_series_windows', False)),
+        short_min_context=int(cfg.data.get('short_min_context', 16)),
+        short_min_target=int(cfg.data.get('short_min_target', 4)),
     )
 
 
