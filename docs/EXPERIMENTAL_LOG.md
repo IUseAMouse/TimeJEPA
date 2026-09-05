@@ -1919,6 +1919,39 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (RATEIN-MIX : 0.7864/0.5403 — meilleure pile du projet, mais P-mix.1 ÉCHEC :
+  12 % du résidu récupéré, pas un tiers ; le résidu est un désaccord backtest↔test, pas
+  une règle de décision)** — head8 25 %, flip+mix : **MASE 0.7864 / CRPS 0.5403 / couv
+  0.768** (q10 0.114, q90 0.881), 45/97 configs majoritairement décimées, 46.4 %
+  d'instances k>1 (contre 35/97 et 36.1 % en sélection dure). Vs flip+backtest
+  0.7914/0.5433/0.769 : **−0.50 pt MASE, −0.30 pt CRPS**, couverture −0.1 pt (P-mix.2
+  tenue au bruit). **P-mix.1 ÉCHEC** (prédit ≤ 0.535 : le mélange devait rendre ≥ 1/3 des
+  2.43 pts ; il en rend 0.30, soit 12 %). Pas d'échec-diagnostic (< 0.5433), le mix
+  reste un gain net. Décomposition mix vs oracle : geomean 0.1362 → 0.1308, résidu 4.1 %
+  (2.1 pts de ratio) ; missed 19 (25 %) · wrong_k 15 (34 %) · false_pos 16 (39 %) · match 47.
+  Le mélange a déplacé les cas (missed 22→19, false_pos 9→16) sans les résoudre — attendu
+  pour une règle de décision quand l'INFORMATION est fausse. **La table des ratios (nouveau
+  champ) le prouve** : sur les plus gros manqués, le backtest ne se trompe pas de peu, il
+  voit L'INVERSE du test — bitbrains_fast_storage/5T/medium ratio backtest de k=8 **15.28**
+  (test : −9 %), 5T/long 3.19 (test −9 %), loop_seattle/5T/medium 1.40 (test −17 %),
+  ett1/D 1.32 (test −25 %), jena/H/medium 1.12 (test −17 %). Et sur les wrong_k, le
+  backtest est monotone en k (bizitobs_application : ratio 0.235 à k=3, encore plus bas à
+  k=12) quand le test a un optimum intérieur (k=3/4) : le paysage backtest n'a pas la même
+  forme que le paysage test. Mécanismes désignés : (a) **famine d'historique** — le
+  backtest retire windows·h + h_bt pas du passé AVANT de décimer par k ; pour les termes
+  medium/long des 5T (h ≥ 480), l'historique décimé par k=8 tombe à quelques patches →
+  contexte dégradé → k pénalisé pour une raison qui n'existe pas au test (ratio 15 = un
+  artefact, pas une mesure) ; (b) **non-stationnarité** (covid : k=4 ratio < 0.8 au
+  backtest, k=1 au test — phases exponentielles) ; (c) fenêtre de backtest en régime
+  différent du test (bizitobs). Conséquence : (a) est CORRIGEABLE (backtest à historique
+  apparié : comparer k sur le même nombre de PATCHES que le test aurait, ou disqualifier
+  un k dont l'historique de backtest est < 50 % de l'historique test) — c'est la
+  prochaine (et dernière) itération raisonnable du sélecteur, P-bt4 à graver ; (b) et (c)
+  ne sont pas récupérables causalement → xres-FiLM. **Statut** : flip+mix = pile
+  officielle du champion (causal, ≤ ×4 passes) ; les comparaisons APPARIÉES entre
+  checkpoints/bras restent en flip+backtest (moins cher, caches existants), le mix se
+  pose sur le champion retenu. Position sub-10M inchangée : 4e (Toto 0.524).
+
 - **2026-09-05 (HEAD8 : TABLE DOCTRINE COMPLÈTE + PREMIÈRE DÉCOMPOSITION DU RÉSIDU — trois
   cas à parts égales, covid seul pèse 17 %)** — Compagnons du champion head8 25 % :
   **nu 0.8877/0.6131 (couv 0.740) → flip 0.8543/0.5842 (0.781) → flip+RateIN

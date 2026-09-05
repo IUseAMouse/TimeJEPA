@@ -1231,8 +1231,12 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
       désaccord backtest↔test, mismatch d'objectif). **Décomposé 2026-09-05** sur head8
       (`scripts/ratein_selection_gap.py`, résidu 2.43 pts) : missed 32 % / wrong_k 38 % /
       false_pos 29 %, covid seul 17 % — aucun réglage de marge ne suffit ; candidat
-      **RateIN-mix** (fans de plusieurs k pondérés par ratio, quantiles moyennés, k=1
-      inclus), eval-only, P-mix.1..2 au registre, en attente de décision ; (b) **xres amendé** (w exercé au
+      **RateIN-mix** livré et mesuré : **0.7864/0.5403** (−0.3 pt CRPS, couv 0.768), pile
+      officielle du champion ; P-mix.1 ÉCHEC (12 % du résidu, pas 1/3) — le résidu est un
+      DÉSACCORD backtest↔test (famine d'historique dans le backtest pour les grands k :
+      ratio 15 sur bitbrains vs −9 % au test ; non-stationnarité ; régime de fenêtre), pas
+      une règle de décision. Dernière itération raisonnable du sélecteur : backtest à
+      historique apparié (P-bt4 à graver) ; le reste est train-side ; (b) **xres amendé** (w exercé au
       finetune + ancre λ·MSE) — code + configs livrés (commit ec0a891) ; le résiduel
       −4.1 % rel. vers l'oracle est l'exhibit du dossier train-side : ordre déclaré =
       mini finetune (+ratein compose) → arm G9.0-augmentation au finetune (35 % des
