@@ -452,7 +452,8 @@ def iter_dense_chunks(
             stats.max_len = n if stats.max_len is None else max(stats.max_len, n)
             if n < min_length:
                 stats.too_short += 1
-            elif n < chunk_length:
+            elif n < chunk_length and not pad_to:
+                # with pad_to the short series is kept whole - not lost
                 stats.lost_to_chunking += 1
 
         for chunk in segment_series(arr, chunk_length, min_length):

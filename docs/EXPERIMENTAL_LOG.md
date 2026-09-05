@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (PRÉP V4, premier passage : deux défauts de prepare_lotsa attrapés au gate 1)**
+  — Log du bloc court (min-length 24) lu par l'utilisateur : « 122 LOST » sur m3_quarterly
+  alors que 756 chunks sont écrits pour 756 séries. Diagnostic : (1) le compteur
+  `lost_to_chunking` ignore `--pad-to` (la série courte est gardée entière et paddée) —
+  message faux ; (2) plus grave et silencieux : avec `--pad-to`, la longueur de chunk était
+  quand même ADAPTÉE À LA MÉDIANE (44 pour m3_quarterly sur des séries de 24-72, 78 pour
+  m1_monthly), puis `segment_series` garde les premiers morceaux et jette le reste → toute
+  série plus longue que la médiane était TRONQUÉE À SES PREMIERS PAS (les plus récents
+  perdus). Ce défaut touchait déjà le bloc court v3. (3) Pertes réelles au seuil 24 :
+  monash_m3_yearly rejeté en bloc (médiane < 24), 78 tourism_yearly. **Correctifs** : avec
+  `--pad-to`, pas d'adaptation à la médiane (effective = chunk_length ; subset gardé si une
+  série ≥ min_length) ; compteur LOST inactif sous pad_to ; seuil `--min-length 20`
+  (= 16 ctx + 4 cible, une fenêtre exacte). Test ajouté (série de 72 gardée entière, queue
+  incluse, LOST = 0 ; 24 tests corpus verts). Runbook v4 mis à jour ; le premier
+  `lotsa_short_v4` est à renommer `_trunc` (jamais supprimé) et la prép relancée.
+
 - **2026-09-05 (RATEIN-MIX : 0.7864/0.5403 — meilleure pile du projet, mais P-mix.1 ÉCHEC :
   12 % du résidu récupéré, pas un tiers ; le résidu est un désaccord backtest↔test, pas
   une règle de décision)** — head8 25 %, flip+mix : **MASE 0.7864 / CRPS 0.5403 / couv

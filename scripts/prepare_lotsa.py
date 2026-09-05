@@ -203,12 +203,23 @@ def main():
                 if len(sample) >= 200:
                     break
 
-            effective = choose_chunk_length(
-                [len(x) for x in sample], args.chunk_length, args.min_length
-            )
+            lengths = [len(x) for x in sample]
+            if args.pad_to:
+                # Padded block (corpus v3/v4): NO median adaptation. Adapting
+                # to the median and then segmenting kept only the LEADING
+                # chunk of every series longer than the median, i.e. dropped
+                # its most recent steps (v4 short block, 2026-09-05:
+                # monash_m3_quarterly 24-72 steps cut at 44). With padding a
+                # series is either kept whole (>= min_length) or rejected.
+                effective = (args.chunk_length
+                             if max(lengths, default=0) >= args.min_length
+                             else None)
+            else:
+                effective = choose_chunk_length(
+                    lengths, args.chunk_length, args.min_length)
             if effective is None:
                 logger.warning(
-                    f"    series too short (median < {args.min_length}) - "
+                    f"    series too short (< {args.min_length}) - "
                     f"subset unusable for this geometry"
                 )
                 continue

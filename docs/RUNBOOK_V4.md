@@ -38,21 +38,30 @@ python scripts/prepare_lotsa.py --out data/processed/lotsa_short_v4 \
   --subsets m1_monthly m1_quarterly m1_yearly monash_m3_monthly \
   monash_m3_other monash_m3_quarterly monash_m3_yearly tourism_monthly \
   tourism_quarterly tourism_yearly nn5_daily_with_missing nn5_weekly \
-  --min-length 24 --chunk-length 1280 --pad-to 1280
+  --min-length 20 --chunk-length 1280 --pad-to 1280
 ls data/processed/lotsa_short_v4 data/processed/lotsa_short_v4/_reallen
 ```
 
-Pourquoi 24 : ≥ 16 pas de contexte réel + ≥ 4 de cible réelle (les minima des
-fenêtres à frontière) avec une marge ; en dessous, rien n'est apprenable.
-Pourquoi pad 1280 et pas 2048 : c'est la géométrie du finetune mini
-(1024 + 256) ; le contexte long (S4-b) refera sa propre prép.
+Pourquoi 20 : 16 pas de contexte réel + 4 de cible réelle, les minima des
+fenêtres à frontière — une série de 20 pas donne exactement une fenêtre ; en
+dessous, rien n'est apprenable. (Premier passage du 2026-09-05 à 24 : monash_m3_yearly
+rejeté en bloc, 78 tourism_yearly perdues.) Pourquoi pad 1280 et pas 2048 : c'est
+la géométrie du finetune mini (1024 + 256) ; le contexte long (S4-b) refera sa
+propre prép. Avec `--pad-to`, la longueur de chunk N'EST PLUS adaptée à la
+médiane (correctif du 2026-09-05) : chaque série ≥ 20 est gardée ENTIÈRE puis
+paddée — le premier passage tronquait les séries plus longues que la médiane à
+leurs premiers pas (m3_quarterly coupé à 44 sur 24-72). Si un premier
+`lotsa_short_v4` existe : `mv data/processed/lotsa_short_v4
+data/processed/lotsa_short_v4_trunc` (jamais de suppression), puis relancer.
 
 **GATE 1 (anti-contamination, BLOQUANT)** : le log affiche les exclusions G8.1
 (m4_*, hospital, car_parts, covid restent DEHORS — jeux GIFT) ; aucun subset
 hors des 12 listés ; `_reallen/` contient exactement un `.npy` par fichier
 produit. Noter le nombre de séries par subset dans le log : les yearly (m1, m3,
 tourism) doivent maintenant ÊTRE PRÉSENTS — en v3 ils étaient rejetés en bloc
-(« series too short »). Si un yearly manque encore, STOP.
+(« series too short ») — et « N chunks » doit égaler « N series » moins les
+« too short » (aucune ligne « chunk length adapted », aucun « LOST »). Si un
+yearly manque encore, STOP.
 
 ## Étape 2 — Assemblage par symlinks (5 min)
 

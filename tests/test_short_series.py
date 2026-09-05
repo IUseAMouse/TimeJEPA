@@ -196,3 +196,17 @@ def test_iter_dense_chunks_records_real_lengths():
                                     real_lens=real_lens))
     assert len(chunks) == 2
     assert real_lens == [500, 1280]
+
+
+def test_padded_short_series_kept_whole_and_not_counted_lost():
+    """v4 prep (2026-09-05): with pad_to, a series between min_length and
+    chunk_length is emitted whole (its tail included) and the 'LOST to
+    chunking' counter stays at zero - that counter is for dense blocks."""
+    from timejepa.data.lotsa import ChunkStats
+    s = np.arange(72, dtype=np.float32)
+    stats, real_lens = ChunkStats(), []
+    chunks = list(iter_dense_chunks(iter([s]), chunk_length=1280, min_length=20,
+                                    pad_to=1280, stats=stats, real_lens=real_lens))
+    assert len(chunks) == 1 and real_lens == [72]
+    assert np.array_equal(chunks[0][-72:], s)          # most recent steps kept
+    assert stats.lost_to_chunking == 0 and stats.emitted == 1
