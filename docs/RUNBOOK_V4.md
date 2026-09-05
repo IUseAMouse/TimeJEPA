@@ -75,12 +75,14 @@ ln -s ../lotsa_solar/*.npy .
 ln -s ../decimated/*.npy .
 ln -s ../lotsa_short_v4/_reallen _reallen   # le sidecar, résolu par le dataset via <dossier>/_reallen/<fichier>
 cd /workspace/TimeJEPA
-ls data/processed/lotsa_v4 | wc -l        # attendu : 106 fichiers + _reallen = 107
+ls data/processed/lotsa_v4 | wc -l        # attendu : 117 fichiers + _reallen = 118
 diff <(ls data/processed/lotsa_v3) <(ls data/processed/lotsa_v4 | grep -v _reallen)
 ```
 
-**GATE 2** : `ln` ne râle sur aucun nom ; le `diff` est VIDE (mêmes 106 noms de
-familles — v4 ne change que le CONTENU du bloc court, pas la liste). Le dataset
+**GATE 2** : `ln` ne râle sur aucun nom ; le `diff` ne montre QUE des lignes `>`
+(les 11 familles courtes réadmises : m1_*, monash_m3_*, tourism_*, nn5_weekly —
+en v3 seul nn5_daily_with_missing avait passé le seuil 384) et AUCUNE ligne `<`
+(rien de v3 ne manque). Le dataset
 cherche le sidecar dans `<dossier du .npy>/_reallen/<nom>.npy` : les fichiers
 de `lotsa_xres`, `synthetic_v3`, `decimated`, `lotsa_solar` n'en ont pas et sont
 traités comme pleins — comportement v3 bit-identique pour eux.
