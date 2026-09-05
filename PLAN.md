@@ -1239,7 +1239,9 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
       = **0.7871/0.5381**, nouvelle pile officielle (−0.52 pt vs backtest dur, une ligne) ;
       détecteur par énergie du pretrain (`+ratein=energy`) = 0.5848, ÉCHEC-DIAGNOSTIC,
       clos comme sélecteur (biais systématique vers les grands k ; ablation négative
-      citable). Reste : mix + pool (attendu ~0.536), puis train-side ; (b) **xres amendé** (w exercé au
+      citable). **Mix + pool = 0.7842/0.5340, PILE OFFICIELLE** (−0.93 pt sur le champion
+      en une journée, résidu oracle 1.50 pt, couv 0.756). Le sélecteur causal est
+      proche de sa limite d'information ; le reste est train-side ; (b) **xres amendé** (w exercé au
       finetune + ancre λ·MSE) — code + configs livrés (commit ec0a891) ; le résiduel
       −4.1 % rel. vers l'oracle est l'exhibit du dossier train-side : ordre déclaré =
       mini finetune (+ratein compose) → arm G9.0-augmentation au finetune (35 % des

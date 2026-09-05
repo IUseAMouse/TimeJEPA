@@ -1919,6 +1919,27 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (MIX + POOL : 0.7842/0.5340 — PILE OFFICIELLE ; −0.93 pt de CRPS sur le
+  champion en une journée d'éval, résidu oracle ramené de 2.43 à 1.50 pt)** — Head8 25 %,
+  flip + mix poolé : **MASE 0.7842 / CRPS 0.5340 / couv 0.756** (q10 0.119, q90 0.876),
+  57/97 configs majoritairement décimées, 58.8 % d'instances k>1. Trajectoire de la
+  journée sur le même checkpoint : backtest dur 0.5433 → mix 0.5403 → backtest poolé
+  0.5381 → **mix poolé 0.5340** (attendu ~0.536 : mieux). Les deux leviers sont
+  ADDITIFS (−0.30 + −0.52 ≈ −0.93 en composition : le pooling corrige l'information, le
+  mix corrige la décision — orthogonaux comme prévu). Résidu vs oracle 0.5190 : **1.50 pt**
+  (68 % → 90 % de capture du plafond de sélection sur le mini standard → head8 : capture =
+  1 − 1.50/(0.5842−0.5190) ≈ 77 % du gain RateIN total possible depuis flip). Coût :
+  couverture 0.756 vs 0.769 en dur (−1.3 pt, le mix étale moins que la sélection dure
+  quand les composantes s'accordent ; à surveiller, pas rédhibitoire). Lectures par
+  config : bitbrains_fast_storage/5T/long 0.768 (dur 0.798, oracle 0.728) — le mix
+  k8-24 récupère la moitié du manqué ; bitbrains/5T/short 0.417 (0.444, oracle 0.410) ;
+  bizitobs_service/10S/medium 0.024 = oracle (k16 à 0.61) ; ett1/D 0.317 (0.372, oracle
+  0.278) ; jena/10T/medium 0.050 = oracle. Revers : bitbrains_fast_storage/H/short 0.721
+  (0.672 dur) et m4_hourly 0.030 (0.024) — les faux positifs du pooling persistent.
+  **Pile officielle du champion : flip + mix + pool** (`+tta_flip=true +ratein=mix
+  +ratein_pool=true`, causal, ≤ ×4 passes). Position sub-10M : 4e, Toto (0.524) à 1.0 pt,
+  TTM-R3 (0.520) à 1.4. Les comparaisons appariées restent en flip+backtest dur.
+
 - **2026-09-06 (VERDICTS : POOLING = NOUVELLE MEILLEURE PILE 0.7871/0.5381 (P-pool.1 ✓) ;
   ÉNERGIE = ÉCHEC-DIAGNOSTIC 0.5848, idée close comme sélecteur)** — Head8 25 %, flip.
   **Backtest poolé : MASE 0.7871 / CRPS 0.5381 / couv 0.760**, 43/97 configs décimées,
