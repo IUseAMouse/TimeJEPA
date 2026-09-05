@@ -1934,6 +1934,11 @@ constitue le test le plus direct de la thèse du §7.
   (= 16 ctx + 4 cible, une fenêtre exacte). Test ajouté (série de 72 gardée entière, queue
   incluse, LOST = 0 ; 24 tests corpus verts). Runbook v4 mis à jour ; le premier
   `lotsa_short_v4` est à renommer `_trunc` (jamais supprimé) et la prép relancée.
+  **Gate 2 (assemblage), attrapé par l'utilisateur** : 120 entrées au lieu de 118 — le
+  `ln -s ../decimated/*.npy` remet `synthetic_broadband_dec3` et `synthetic_lowfreq_dec3`,
+  retirés EXPRÈS de v3 le 2026-08-27 (part synthétique 55.2 % > cible 50-55 %). Retirés de
+  v4 aussi (liens seulement, `decimated/` intact) ; runbook mis à jour. Sans ça, v4
+  aurait porté une seconde variable (deux shards synthétiques de plus).
 
 - **2026-09-05 (RATEIN-MIX : 0.7864/0.5403 — meilleure pile du projet, mais P-mix.1 ÉCHEC :
   12 % du résidu récupéré, pas un tiers ; le résidu est un désaccord backtest↔test, pas

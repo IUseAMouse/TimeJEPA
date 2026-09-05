@@ -74,6 +74,10 @@ ln -s ../lotsa_short_v4/*.npy .          # remplace lotsa_short
 ln -s ../lotsa_solar/*.npy .
 ln -s ../decimated/*.npy .
 ln -s ../lotsa_short_v4/_reallen _reallen   # le sidecar, résolu par le dataset via <dossier>/_reallen/<fichier>
+# Reproduire l'ajustement v3 (registre 2026-08-27, part synthétique 55.2 % > cible) :
+# ces deux liens n'existent pas dans lotsa_v3 et ne doivent pas exister ici.
+# Ce sont des LIENS (test -L) ; decimated/ n'est pas touché.
+for f in synthetic_broadband_dec3.npy synthetic_lowfreq_dec3.npy; do test -L "$f" && rm "$f"; done
 cd /workspace/TimeJEPA
 ls data/processed/lotsa_v4 | wc -l        # attendu : 117 fichiers + _reallen = 118
 diff <(ls data/processed/lotsa_v3) <(ls data/processed/lotsa_v4 | grep -v _reallen)
