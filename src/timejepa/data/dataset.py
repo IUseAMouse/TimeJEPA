@@ -258,9 +258,19 @@ class TimeSeriesDataset(Dataset):
         self.data = data
         self.real_lens = real_lens
         if self.short_series_windows and real_lens is None:
-            logger.warning(
-                "  short_series_windows=True but no _reallen sidecar for "
-                f"{self.data_path.name}: short-series windows INACTIVE here")
+            # A file without a sidecar is a dense full-length block - the
+            # normal case for most of a mixed corpus (v4: 106 of 117 files).
+            # Only the ABSENCE of the whole _reallen/ directory means the
+            # mechanism is missing (sidecar not linked): that one is loud.
+            side_dir = self.data_path.parent / "_reallen"
+            if side_dir.is_dir():
+                logger.debug(f"  no _reallen sidecar for {self.data_path.name}: "
+                             "dense block, standard windows")
+            else:
+                logger.warning(
+                    "  short_series_windows=True but no _reallen/ directory in "
+                    f"{self.data_path.parent}: short-series windows INACTIVE "
+                    "for the whole corpus (sidecar missing or not linked)")
         self.is_multivariate = data.ndim == 3
         
         logger.info(f"Data shape: {data.shape if data.dtype != object else f'({len(data)}, variable)'}")
