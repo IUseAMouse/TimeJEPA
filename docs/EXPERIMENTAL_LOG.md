@@ -1919,6 +1919,31 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (soir — V4 LANCÉ : témoin positif mais DOSE FAIBLE ; P-v4.1..3 GRAVÉES)** —
+  Corpus v4 assemblé et vérifié (gate 2 : 118 entrées, diff vs v3 = exactement les 11
+  familles courtes réadmises, les deux dec3 synthétiques retirés comme en v3). Finetune
+  `lotsa_mini_v4_zeroshot` (tête ×8, pretrain val-best 0.5495) lancé. **Témoin
+  `aug/short_frac`** (wandb, 12k premiers steps) : > 0 donc sidecar lu, bras non stérile —
+  MAIS pics isolés à ~0.3 % du batch (0.0030 au step 5449), zéro la plupart des steps.
+  Mécanisme lu : poids du sampler en √(nb fenêtres) par fichier — les 12 familles courtes
+  ont quelques centaines de fenêtres chacune contre des millions pour les denses — et le
+  rationnement G10.2 étale ce petit budget sur l'époque (d'où l'intermittence). Ordre de
+  grandeur : quelques milliers d'items courts sur l'époque pour ~6 900 lignes, soit moins
+  d'un passage par ligne. **Le bras teste donc le mécanisme à dose homéopathique.**
+  **Prédictions gravées (référence appariée head8 flip+backtest : 15 % 0.7974/0.5466,
+  25 % 0.7914/0.5433)** : P-v4.1 (mécanisme) les configs à historique court (m4_yearly
+  3.80, m4_quarterly 1.31, m4_monthly 1.01, m4_weekly 2.35, hospital 0.79, car_parts 0.87,
+  covid 41.2) baissent en MASE au checkpoint apparié — bande large vu la dose, succès si
+  ≥ 4 des 7 baissent ; P-v4.2 (innocuité) configs à long historique stables à ±1 % de
+  CRPS ; P-v4.3 (agrégat) MASE < 0.78 et CRPS ≤ 0.5433 au 25 %. **Lecture d'échec
+  prédéclarée** : si rien ne bouge (P-v4.1 < 4/7 et MASE ≥ 0.7914), le diagnostic est la
+  DOSE (sampler), pas le mécanisme — bras suivant « v4-dose » : relever la part des
+  familles courtes (poids par famille ou cap d'oversample dédié) AVANT de conclure sur
+  les fenêtres à frontière. Si les configs courtes se DÉGRADENT, c'est le mécanisme
+  (fenêtres à frontière nuisibles) et le bras est clos. Audit de composition non consigné
+  (sortie noyée par les avertissements par fichier, corrigés depuis) ; le témoin live en
+  tient lieu. Verdict attendu demain matin.
+
 - **2026-09-05 (PRÉP V4, premier passage : deux défauts de prepare_lotsa attrapés au gate 1)**
   — Log du bloc court (min-length 24) lu par l'utilisateur : « 122 LOST » sur m3_quarterly
   alors que 756 chunks sont écrits pour 756 séries. Diagnostic : (1) le compteur
