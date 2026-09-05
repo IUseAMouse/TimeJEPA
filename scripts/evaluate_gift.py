@@ -758,6 +758,13 @@ def main(cfg: DictConfig):
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
                        "backtest": "backtest", "bt": "backtest",
                        "mix": "mix", "energy": "energy"}.get(ratein_raw, "off")
+    if ratein_raw and ratein_raw not in ("off", "false", "0", "oracle") \
+            and ratein_mode_val == "off":
+        # An unknown mode must not fall back to "off": it would land in the
+        # plain cache directory and silently re-read another procedure's
+        # numbers (seen 2026-09-06 with a stale checkout).
+        raise ValueError(f"unknown +ratein={ratein_raw!r} (fft, backtest, mix, "
+                         "energy, oracle)")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
     ratein_pool = str(cfg.get("ratein_pool", "")).lower() in ("true", "1", "on")
