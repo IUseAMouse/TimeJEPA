@@ -249,7 +249,7 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
 
 def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        stride: int, patch: int, device,
-                       batch_size: int) -> dict:
+                       batch_size: int, pooled: bool = False) -> tuple:
     """RateIN v2 (2026-09-01) - per-series k chosen by CAUSAL BACKTEST.
 
     Oracle verdict 2026-08-31: the mechanism is worth up to +57% per config
@@ -341,17 +341,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                     sc = _pinball_np(fan_nat, known, levels)
                     if np.isfinite(sc):
                         scores[idx][k].append(sc)
-    base_scored = [i for i in scores
-                   if scores[i].get(1) and np.mean(scores[i][1]) > 0]
-    ratios = {}
-    for k in ratein_mod.K_CANDIDATES:
-        if k == 1:
-            continue
-        rs = [np.mean(scores[i][k]) / np.mean(scores[i][1])
-              for i in base_scored if scores[i].get(k)]
-        if not rs or len(rs) < (2 * len(base_scored)) // 3:
-            continue                                # biased subset
-        ratios[k] = float(np.exp(np.mean(np.log(np.maximum(rs, 1e-12)))))
+    ratios, n_base = _pool_ratios(scores, pooled)
     K = 1
     if ratios:
         kbest = min(ratios, key=ratios.get)
@@ -361,7 +351,118 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     # selector saw. Cached per config so ratein_selection_gap.py can split
     # the backtest-vs-oracle residual into margin no-ops, wrong k and
     # coverage disqualifications without re-running anything.
-    diag = {"K": K, "margin": REL_MARGIN, "n_base": len(base_scored),
+    diag = {"K": K, "margin": REL_MARGIN, "n_base": n_base,
+            "pooling": "crps" if pooled else "geomean",
+            "ratios": {str(k): round(r, 5) for k, r in sorted(ratios.items())}}
+    return {idx: K for idx in range(len(series))}, diag
+
+
+def _pool_ratios(scores: dict, pooled: bool) -> tuple:
+    """Per-config ratio table k -> score(k)/score(1) from per-series scores.
+
+    scores[idx][k] = list of window scores of series idx at rate k.
+    geomean (v3): equal weight per series. pooled (2026-09-06, "objective
+    alignment"): sum over series, i.e. the leaderboard's own weighting - CRPS
+    is sum(2 QL) / sum(|y|) over the whole config, so high-amplitude series
+    dominate the metric and must dominate the selection too. In both cases
+    a k scored on fewer than 2/3 of the base series is disqualified.
+    """
+    base_scored = [i for i in scores
+                   if scores[i].get(1) and np.mean(scores[i][1]) > 0]
+    ratios = {}
+    for k in ratein_mod.K_CANDIDATES:
+        if k == 1:
+            continue
+        idx = [i for i in base_scored if scores[i].get(k)]
+        if not idx or len(idx) < (2 * len(base_scored)) // 3:
+            continue                                # biased subset
+        num = np.array([np.mean(scores[i][k]) for i in idx])
+        den = np.array([np.mean(scores[i][1]) for i in idx])
+        if pooled:
+            ratios[k] = float(num.sum() / max(den.sum(), 1e-12))
+        else:
+            ratios[k] = float(np.exp(np.mean(np.log(np.maximum(num / den, 1e-12)))))
+    return ratios, len(base_scored)
+
+
+@torch.no_grad()
+def _energy_series_k(judge, series, h: int, windows: int, max_len: int,
+                     stride: int, patch: int, device, batch_size: int,
+                     pooled: bool = False) -> tuple:
+    """RateIN-energy (2026-09-06, user idea): the rate at which the series is
+    most PREDICTABLE for the pretrain, no forecast involved.
+
+    For each candidate k the past (before any test target) is decimated, its
+    last `n_e` steps (the judge's native target span) play the future and the
+    preceding steps the context; the energy is the JEPA readout of the
+    hybrid judge (E18/G12 recipe, online encoder both sides): 1 - cos between
+    the predictor's latent for the future and the encoder's latent of the
+    actual future. The k minimizing the pooled energy ratio vs k=1 wins - no
+    margin (argmin), same 2/3 coverage rule as the backtest. Sees cycle
+    canonicalization (what the pretrain learned), not rollout collapse.
+    Cost: one encoder + predictor pass per (series, k), no rollout.
+    """
+    n_e = int(judge.prediction_length)
+    P = patch
+    entries = []
+    for idx, y in enumerate(series):
+        past = y[:len(y) - windows * h]
+        if len(past) < n_e + P:
+            continue
+        entries.append((idx, past))
+    scores = defaultdict(lambda: defaultdict(list))
+    n_tgt = (n_e - P) // stride + 1
+    w_one = (torch.ones(1, device=device)
+             if getattr(judge.predictor, "w_film", None) is not None else None)
+    for k in ratein_mod.K_CANDIDATES:
+        buckets = defaultdict(list)
+        for idx, past in entries:
+            hist = (ratein_mod.decimate(past[-((max_len + n_e) * k):], k)
+                    if k > 1 else past[-(max_len + n_e):])
+            if len(hist) < n_e + P or not np.isfinite(hist).all():
+                continue
+            ctx = prepare_context(hist[:-n_e], max_len, stride, P)
+            if ctx is None:
+                continue
+            buckets[len(ctx)].append((idx, ctx, hist[-n_e:]))
+        for length, items in buckets.items():
+            for i in range(0, len(items), batch_size):
+                chunk = items[i:i + batch_size]
+                x_ctx = torch.from_numpy(np.stack([c[1] for c in chunk]))
+                x_fut = torch.from_numpy(np.stack([c[2] for c in chunk]))
+                x_ctx = x_ctx.unsqueeze(-1).to(device)
+                x_fut = x_fut.unsqueeze(-1).to(device)
+                if judge.robust_scaler is not None:
+                    judge.robust_scaler.fit(x_ctx)
+                    x_ctx = judge.robust_scaler.transform(x_ctx)
+                    x_fut = judge.robust_scaler.transform(x_fut)
+                if judge.revin is not None:
+                    ctx_norm = judge.revin(x_ctx, mode='norm')
+                    fut_norm = (x_fut - judge.revin.mean) / judge.revin.std
+                else:
+                    ctx_norm, fut_norm = x_ctx, x_fut
+                ctx_emb = judge.online_encoder(judge.patching(ctx_norm))
+                z_pred = judge.predictor.forward_simple(
+                    context_embeddings=ctx_emb,
+                    num_targets=judge.num_target_patches,
+                    w=(w_one.expand(ctx_emb.shape[0]) if w_one is not None
+                       else None))[:, :n_tgt, :]
+                full = torch.cat([ctx_norm, fut_norm], dim=1)
+                z_true = judge.online_encoder(judge.patching(full))[:, -n_tgt:, :]
+                e = 1.0 - torch.nn.functional.cosine_similarity(
+                    z_true.flatten(1), z_pred.flatten(1), dim=1)
+                for b, (idx, _, _) in enumerate(chunk):
+                    val = float(e[b])
+                    if np.isfinite(val):
+                        scores[idx][k].append(val)
+    ratios, n_base = _pool_ratios(scores, pooled)
+    K = 1
+    if ratios:
+        kbest = min(ratios, key=ratios.get)
+        if ratios[kbest] < 1.0:
+            K = kbest
+    diag = {"K": K, "margin": 0.0, "n_base": n_base,
+            "pooling": "crps" if pooled else "geomean", "judge_span": n_e,
             "ratios": {str(k): round(r, 5) for k, r in sorted(ratios.items())}}
     return {idx: K for idx in range(len(series))}, diag
 
@@ -405,7 +506,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     tta_flip: bool = False, tta_shifts=None,
                     quantile_gamma=None,
                     ratein_mode: str = "off", forced_k: int = 0,
-                    ratein_w: bool = False, ratein_w_max_k: int = 4) -> dict:
+                    ratein_w: bool = False, ratein_w_max_k: int = 4,
+                    ratein_pool: bool = False, energy_judge=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -436,10 +538,16 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     if ratein_mode in ("backtest", "mix") and not forced_k:
         bt_ks, bt_diag = _backtest_series_k(model, series, h, windows, max_len,
                                             stride, model.patching.patch_size,
-                                            device, batch_size)
+                                            device, batch_size,
+                                            pooled=ratein_pool)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"]), None
+    if ratein_mode == "energy" and not forced_k:
+        bt_ks, bt_diag = _energy_series_k(energy_judge, series, h, windows,
+                                          max_len, stride,
+                                          model.patching.patch_size, device,
+                                          batch_size, pooled=ratein_pool)
     # RateIN-mix state: per instance, the weight-summed native fan/median of
     # the components that survived the guards (finalized after the loop).
     mix_state, mix_mid = {}, 0
@@ -582,7 +690,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                            / max(1, sum(k_hist.values()))),
         }
         if bt_diag is not None:
-            res["ratein"]["backtest"] = bt_diag
+            res["ratein"]["energy" if ratein_mode == "energy" else "backtest"] = bt_diag
         if mix_weights is not None:
             res["ratein"]["mix"] = {
                 "tau": MIX_TAU,
@@ -640,11 +748,23 @@ def main(cfg: DictConfig):
     ratein_raw = str(cfg.get("ratein", "")).lower()
     #   +ratein=mix                             per-config weighted mix of k
     #                                           (quantile averaging, causal)
+    #   +ratein=energy +energy_ckpt=<pretrain>  k = argmin of the pretrain's
+    #                                           JEPA energy on the decimated
+    #                                           past (no forecast); optional
+    #                                           +energy_config=<eval config>
+    #   +ratein_pool=true                       ratio table pooled like the
+    #                                           CRPS (sum over series) instead
+    #                                           of a per-series geomean
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
                        "backtest": "backtest", "bt": "backtest",
-                       "mix": "mix"}.get(ratein_raw, "off")
+                       "mix": "mix", "energy": "energy"}.get(ratein_raw, "off")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
+    ratein_pool = str(cfg.get("ratein_pool", "")).lower() in ("true", "1", "on")
+    if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy"):
+        raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy")
+    if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
+        raise ValueError("+ratein=energy needs +energy_ckpt=<pretrain checkpoint>")
     # RateIN x w (gated): +ratein_w=true - fan at native rate via w=1/k on
     # decimated buckets (k <= 4). Requires a cross_resolution model AND an
     # active ratein mode (without decimation, w=1 everywhere = misleading no-op).
@@ -699,8 +819,24 @@ def main(cfg: DictConfig):
         tag += "_ratein-bt"
     elif ratein_mode_val == "mix":
         tag += "_ratein-mix"
+    elif ratein_mode_val == "energy":
+        tag += "_ratein-energy"
     elif ratein_oracle:
         tag += "_ratein-oracle"
+    if ratein_pool:
+        tag += "-pool"
+    energy_judge = None
+    if ratein_mode_val == "energy":
+        # The judge is the PRETRAIN checkpoint (its predictor never saw a
+        # forecasting loss); a finetuned model's own trunk would do, but the
+        # pretrain is the hypothesis: "the rate the pretrain finds natural".
+        from hydra import compose as _compose
+        ecfg = (_compose(config_name=str(cfg.energy_config))
+                if cfg.get("energy_config") else cfg)
+        energy_judge = create_model_from_config(ecfg)
+        energy_judge = load_checkpoint(energy_judge, str(cfg.energy_ckpt), device,
+                                       allow_partial=True).eval()
+        logger.info(f"energy judge: {cfg.energy_ckpt}")
     if ratein_w:
         tag += "-w"
     if tta_shifts:
@@ -770,7 +906,9 @@ def main(cfg: DictConfig):
                                       tta_shifts=tta_shifts,
                                       quantile_gamma=quantile_gamma,
                                       ratein_mode=ratein_mode_val,
-                                      ratein_w=ratein_w)
+                                      ratein_w=ratein_w,
+                                      ratein_pool=ratein_pool,
+                                      energy_judge=energy_judge)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return

@@ -1919,6 +1919,50 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (DEUX INSTRUMENTS DE SÉLECTION DE TAUX LIVRÉS : pooling aligné sur le CRPS,
+  et RateIN-ENERGY, le k que le pretrain trouve naturel — prédictions gravées)** — Décision
+  utilisateur (parcimonie) : parmi les cinq pistes proposées, garder (2) l'alignement de
+  l'objectif et (4) le détecteur par énergie ; historique apparié et règle 1-SE écartés
+  (complexité). **(2) `+ratein_pool=true`** (backtest, mix, energy) : la table des ratios
+  passe du geomean par série (poids égaux) au ratio des SOMMES sur les séries, exactement
+  la pondération de l'arbitre (CRPS = Σ2QL/Σ|y| sur la config : les séries de grande
+  amplitude dominent). Règle 2/3 inchangée. Tag `-pool`, champ `pooling` dans le cache.
+  **(4) `+ratein=energy +energy_ckpt=<pretrain>`** : pour chaque k, on décime le passé
+  (avant toute cible de test), les 256 derniers pas décimés jouent le futur, le reste le
+  contexte ; énergie = recette du juge hybride (E18/G12, encodeur online des deux côtés) :
+  1 − cos entre le latent prédit par le prédicteur et le latent encodé du vrai futur. k =
+  argmin du ratio poolé d'énergie vs k=1 (pas de marge), même règle 2/3, garde par instance.
+  Aucun rollout, un passage encodeur+prédicteur par (série, k). Voit la canonicalisation
+  des cycles (ce que le pretrain a appris), pas le rollout collapse. Juge = checkpoint de
+  pretrain (val-best 0.5495), chargé à part (`+energy_config` optionnel, allow_partial).
+  Limite connue : même famine que le backtest pour les grands k (il faut (1024+256)·k pas
+  réels) ; sur m_dense/D (smoke) seul k=2 est scorable. Vérification : 24 tests verts
+  (pooling : le geomean favorise k=2 quand la petite série gagne 50 %, le pooled le rejette
+  quand la grande perd 20 % ; énergie : k uniforme par config, table de ratios, grands k
+  disqualifiés sans crash) ; smoke CPU m_dense : pooled ratios 1.33-1.82 (K=1, identique),
+  énergie ratio k=2 1.061 (K=1). **Prédictions (champion head8 25 %, flip, référence
+  backtest 0.5433 / oracle 0.5190)** : P-pool.1 flip+backtest-pool ≤ 0.5433 et la part
+  « wrong_k » du résidu baisse (bizitobs, où quelques séries dominent) ; P-E.1
+  flip+energy ≤ 0.5433 = l'énergie sélectionne au moins aussi bien que le backtest sans
+  forecast (succès fort si ≤ 0.538) ; P-E.2 énergie et backtest désaccordent sur ≥ 30 %
+  des configs (sinon même information, pas de complémentarité) ; P-E.3 sur les configs à
+  cycle (electricity/15T, jena/10T, solar/10T, loop/5T) l'énergie choisit le k oracle plus
+  souvent que le backtest. ÉCHEC-DIAGNOSTIC P-E.1 > 0.5433 ET P-E.3 faux ⇒ l'énergie du
+  pretrain n'encode pas la préférence de taux, l'idée est close ; P-E.1 échec mais P-E.3
+  vrai ⇒ complémentaires, mix des deux tables à considérer.
+
+- **2026-09-06 (V4@5 % : 0.8087/0.5484 — déjà au niveau du 15 % standard ; 5/7 configs
+  courtes en baisse, non apparié)** — Premier checkpoint v4 (val 0.6598), flip+backtest :
+  MASE **0.8087** / CRPS **0.5484** / couv 0.758, 31/97 configs décimées. Références :
+  mini standard 5 % **0.5585** (seul 5 % disponible ; head8 n'a pas de 5 % évalué), donc
+  −1.0 pt à budget égal — mais deux variables (tête ×8 + corpus v4), la part de chacune
+  n'est lisible qu'au 15 %/25 % apparié head8 (0.5466/0.5433). Configs courtes vs head8
+  25 % (non apparié, à titre indicatif) : m4_yearly **3.634** (3.801, −4.4 %), m4_monthly
+  0.997 (1.010), hospital 0.784 (0.793), car_parts 0.853 (0.869), covid **33.0** (41.2,
+  −20 %) en baisse ; m4_quarterly 1.322 (1.314) plat ; m4_weekly 2.658 (2.350) en hausse.
+  m4_hourly 1.209 (1.389). Signal dans le sens de P-v4.1 dès 5 % malgré la dose ; verdict
+  au 15 % puis 25 %.
+
 - **2026-09-05 (soir — V4 LANCÉ : témoin positif mais DOSE FAIBLE ; P-v4.1..3 GRAVÉES)** —
   Corpus v4 assemblé et vérifié (gate 2 : 118 entrées, diff vs v3 = exactement les 11
   familles courtes réadmises, les deux dec3 synthétiques retirés comme en v3). Finetune
