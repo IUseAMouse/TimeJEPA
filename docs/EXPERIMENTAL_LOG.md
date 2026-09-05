@@ -1919,6 +1919,18 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (HEAD8@15 % : 0.7974/0.5466 — meilleur 15 % des trois bras, déjà sous le
+  champion ; mais couverture 0.734, le drapeau P-head.2 est levé)** — Apparié 15 % :
+  standard 0.7988/0.5482 (couv 0.770), aug 0.8015/0.5470 (0.732), head8
+  0.7974/0.5466 (0.734). P-head.1 en bonne voie (verdict au 25 %, même règle de fin
+  que l'aug). DÉMENTI PARTIEL de la prédiction consignée hier (« attente MASE
+  faible ») : m4_yearly 4.72→4.19, m4_quarterly 1.35→1.31, solar/W 0.18→0.155 — la
+  tête large aide aussi la forme extrapolée, pas seulement l'éventail. Revers :
+  ett1/H/medium 0.26→0.32, et surtout la MÊME érosion de couverture que l'aug
+  (−3.6 pts) — un gain CRPS au 25 % ne comptera que si la couverture ne paie pas
+  l'addition ; à défaut, arbitrage à trancher explicitement (le critère officiel de
+  sélection reste le CRPS, mais la calibration est un claim du papier).
+
 - **2026-09-04 (SÉQUENCEMENT RE-TRANCHÉ, décision utilisateur : l'ingénierie AVANT le
   scaling — le gros run passe en DERNIER)** — Rationnel consigné : le scaling
   multiplie la recette qu'on lui donne (leçon du recadrage recipe-ceiling : la
