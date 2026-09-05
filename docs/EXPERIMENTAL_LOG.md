@@ -1919,6 +1919,26 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (INSTRUMENT : décomposition du résidu de sélection RateIN — préalable à tout
+  « meilleur sélecteur »)** — Question utilisateur : le plafond 0.5190 laisse 2.43 pts au
+  sélecteur causal, comment le rattraper ? Réponse de méthode : avant de changer le
+  sélecteur, savoir OÙ il perd. `scripts/ratein_selection_gap.py` lit les deux caches d'un
+  même checkpoint (backtest + oracle) et ventile le résidu (log-CRPS par config, agrégé en
+  geomean) en quatre cas exclusifs : **missed** (k=1 gardé, oracle veut k>1 : marge,
+  disqualification 2/3 ou aveuglement), **wrong_k** (k>1 des deux côtés, différents),
+  **false_pos** (k>1 choisi, oracle à k=1), **match**. Contrefactuel « agrégat si ce cas
+  était à la qualité oracle » par cas, et sous-liste des missed dont le backtest voyait un
+  gain sous la marge de 5 %. `_backtest_series_k` retourne désormais aussi sa table de
+  ratios poolés (cachée sous `ratein.backtest`, sans effet sur la sélection) — pour les
+  runs futurs ; sur les caches head8 existants, la ventilation par cas fonctionne
+  (k_hist), le sous-split marge non. Test synthétique (17 verts avec test_ratein).
+  Candidats de sélecteur classés a priori, à trancher PAR la décomposition : (1) si
+  « missed sous marge » domine → marge adaptative à la variance du ratio (1-SE rule
+  réelle) ; (2) si wrong_k domine → MÉLANGE de rangs plutôt que sélection (fan moyenné
+  des 2 meilleurs k pondérés par ratio : supprime la malédiction du gagnant, hedge
+  backtest↔test, légal) ; (3) si false_pos domine → marge plus dure. Hors périmètre du
+  sélecteur : les configs à k*=1 (m4, hospital, covid) → v4.
+
 - **2026-09-05 (ORACLE HEAD8@25 % : 0.7700/0.5190 — le plafond de sélection est AU NIVEAU
   DE TTM-R3 ; tête ×8 = recette par défaut, décision utilisateur)** — Oracle-k (diagnostic,
   jamais officiel) sur le champion head8 : MASE **0.7700** / CRPS **0.5190** / couverture
@@ -1940,7 +1960,12 @@ constitue le test le plus direct de la thèse du §7.
   reçoivent quantile_hidden_dim 1536 (le pretrain xres n'a pas de tête : inchangé). Les
   références appariées de P-v4 passent au head8 (P-v4.3 : MASE < 0.78, CRPS ≤ 0.5433 ;
   échec si MASE ≥ 0.7914). Scaling à 9M reporté (préférence utilisateur, cohérent avec E18
-  et l'enveloppe −0.75 pt/doublement) : ordre xres-mini → v4 → run final.
+  et l'enveloppe −0.75 pt/doublement). **Ordre re-décidé (utilisateur)** : v4 D'ABORD
+  (finetune d'une soirée depuis le pretrain existant, levier corpus validé seul), PUIS
+  xres-mini (pretrain de deux jours, hérite de v4 + tête ×8), puis run final. Le finetune
+  head8 est coupé après le 25 % : pas de 30 %, compagnons nu/flip à publier sur le 25 %.
+  Tête ×8 dans v4 vérifiée par composition Hydra (quantile_hidden_dim 1536,
+  short_series_windows true, data_dir lotsa_v4).
 
 - **2026-09-05 (HEAD8@25 % : 0.7914/0.5433, couverture 0.769 — NOUVEAU CHAMPION ; P-head.1 ✓,
   P-head.2 tenue à la marge)** — Checkpoint apparié 25 % (val 0.6522), flip+ratein :

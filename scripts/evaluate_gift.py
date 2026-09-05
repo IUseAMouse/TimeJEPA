@@ -356,7 +356,13 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
         kbest = min(ratios, key=ratios.get)
         if ratios[kbest] < 1.0 - REL_MARGIN:
             K = kbest
-    return {idx: K for idx in range(len(series))}
+    # Selection diagnostic (2026-09-05): the pooled ratio table is what the
+    # selector saw. Cached per config so ratein_selection_gap.py can split
+    # the backtest-vs-oracle residual into margin no-ops, wrong k and
+    # coverage disqualifications without re-running anything.
+    diag = {"K": K, "margin": REL_MARGIN, "n_base": len(base_scored),
+            "ratios": {str(k): round(r, 5) for k, r in sorted(ratios.items())}}
+    return {idx: K for idx in range(len(series))}, diag
 
 
 def evaluate_config(model, config: str, gift_root: Path, device,
@@ -392,11 +398,11 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     k_hist = Counter()
     # RateIN v2 - per-series k chosen by causal backtest (see the helper);
     # computed once before the loop, batched.
-    bt_ks = None
+    bt_ks, bt_diag = None, None
     if ratein_mode == "backtest" and not forced_k:
-        bt_ks = _backtest_series_k(model, series, h, windows, max_len, stride,
-                                   model.patching.patch_size, device,
-                                   batch_size)
+        bt_ks, bt_diag = _backtest_series_k(model, series, h, windows, max_len,
+                                            stride, model.patching.patch_size,
+                                            device, batch_size)
     for inst in gift.iter_test_instances(series, h, windows):
         # RateIN (2026-08-31, G9.3 verdict): k is a causal statistic of the
         # past, one uniform rule across the 97 configs (same status as
@@ -487,6 +493,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             "frac_k_gt1": (sum(n for kk, n in k_hist.items() if kk > 1)
                            / max(1, sum(k_hist.values()))),
         }
+        if bt_diag is not None:
+            res["ratein"]["backtest"] = bt_diag
     return res
 
 

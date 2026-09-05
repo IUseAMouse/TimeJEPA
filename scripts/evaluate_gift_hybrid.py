@@ -141,10 +141,10 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
     # RateIN layer), computed once per config, batched.
     bt_ks = None
     if proposer is not None and self_ratein:
-        bt_ks = _backtest_series_k(proposer, series, h, windows,
-                                   proposer.input_length,
-                                   proposer.patching.stride,
-                                   proposer.patching.patch_size, device, 64)
+        bt_ks, _ = _backtest_series_k(proposer, series, h, windows,
+                                      proposer.input_length,
+                                      proposer.patching.stride,
+                                      proposer.patching.patch_size, device, 64)
     for i, inst in enumerate(gift.iter_test_instances(series, h, windows)):
         if i % stride or n_used >= max_inst:
             continue
