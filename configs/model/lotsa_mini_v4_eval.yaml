@@ -1,9 +1,9 @@
 # @package _global_
 # Eval for the corpus-v4 mini checkpoints. Architecture identical to
-# lotsa_mini_v3_eval; exists for the output namespace (v4 and v3 finetunes
-# emit identically-named checkpoints).
+# lotsa_mini_v3_head8_eval (x8 quantile head); exists for the output namespace
+# (v4 and v3 finetunes emit identically-named checkpoints).
 defaults:
-  - lotsa_mini_v3_eval
+  - lotsa_mini_v3_head8_eval
   - _self_
 
 model:

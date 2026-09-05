@@ -9,6 +9,8 @@ defaults:
 model:
   name: "timejepa_lotsa_mini_xres_v3_zs"
   cross_resolution: true
+  decoder:
+    quantile_hidden_dim: 1536   # x8 head, default recipe since 2026-09-05 (G14 verdict)
 
 wandb:
   tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "xres", "robust-scale"]

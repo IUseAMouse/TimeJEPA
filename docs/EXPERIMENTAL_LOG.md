@@ -1919,6 +1919,29 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (ORACLE HEAD8@25 % : 0.7700/0.5190 — le plafond de sélection est AU NIVEAU
+  DE TTM-R3 ; tête ×8 = recette par défaut, décision utilisateur)** — Oracle-k (diagnostic,
+  jamais officiel) sur le champion head8 : MASE **0.7700** / CRPS **0.5190** / couverture
+  0.768 ; 35/97 configs gagnent > 5 % vs k=1. Contre l'oracle du mini standard
+  (0.7744/0.5255) : −0.65 pt de CRPS de plafond — la tête large répond mieux aux entrées
+  canonicalisées, comme RateIN composait déjà mieux à mini qu'à tiny. **Résidu de
+  sélection** (backtest v3 0.5433 − oracle 0.5190) = **2.43 pts**, contre 2.14 sur le
+  standard : le plafond a monté plus vite que le sélecteur ne le suit — le résidu
+  capacité-orthogonal s'élargit avec la qualité du modèle, argument supplémentaire pour
+  le conditionnement explicite (xres-FiLM) plutôt que pour un meilleur sélecteur causal.
+  Lecture stratégique : le modèle, parfaitement sélectionné en taux, est DÉJÀ 2e des
+  sub-10M (TTM-R3 0.520) ; tout l'écart à la 2e place est dans la sélection de taux et le
+  MASE des historiques courts, pas dans la capacité. Configs à la traîne du plafond :
+  bizitobs_service/10S/medium +65.6 % (k=16), bizitobs_l2c/5T/long +59.9 % (k=48),
+  solar/10T +41-43 % (k=3/6) ; m4_*/hospital/car_parts/covid à k=1 (0 % : hors de portée
+  de RateIN, c'est le territoire de v4). **Décision utilisateur : la tête ×8 (hidden 1536,
+  ~4.0M params au total) devient la recette par défaut** — configs lotsa_mini_v4_{zeroshot,
+  eval} héritent désormais de lotsa_mini_v3_head8_*, et lotsa_mini_xres_v3_{zeroshot,eval}
+  reçoivent quantile_hidden_dim 1536 (le pretrain xres n'a pas de tête : inchangé). Les
+  références appariées de P-v4 passent au head8 (P-v4.3 : MASE < 0.78, CRPS ≤ 0.5433 ;
+  échec si MASE ≥ 0.7914). Scaling à 9M reporté (préférence utilisateur, cohérent avec E18
+  et l'enveloppe −0.75 pt/doublement) : ordre xres-mini → v4 → run final.
+
 - **2026-09-05 (HEAD8@25 % : 0.7914/0.5433, couverture 0.769 — NOUVEAU CHAMPION ; P-head.1 ✓,
   P-head.2 tenue à la marge)** — Checkpoint apparié 25 % (val 0.6522), flip+ratein :
   MASE **0.7914** / CRPS **0.5433** / couverture **0.769** (q10 0.111, q90 0.880),

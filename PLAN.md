@@ -1389,8 +1389,10 @@ fin de la campagne mini (sélection G7.3c d'abord) ; prédictions à graver au l
 NOUVEAU CHAMPION** (vs 0.7994/0.5469/0.775 tête standard, même pretrain, même
 checkpoint apparié). P-head.1 ✓ ; P-head.2 tenue à la marge (−0.6 pt, le 0.734 du
 15 % était de l'immaturité). L'hypothèse d'allocation tient : la tête est bien le
-goulot côté forecast dans la recette actuelle. La tête ×8 devient la recette par
-défaut des bras suivants (xres-mini, v4, run final) ; ×4 n'est plus nécessaire.
+goulot côté forecast dans la recette actuelle. **Décision utilisateur 2026-09-05 : la
+tête ×8 est la recette par défaut** (configs v4 et xres-mini câblées) ; ×4 n'est plus
+nécessaire. Oracle head8 : 0.7700/0.5190 — plafond de sélection au niveau de TTM-R3,
+résidu 2.43 pts (s'élargit avec la qualité du modèle → argument pour xres-FiLM).
 Compagnons nu/flip et 30 % à publier.
 
 ### G12 — TimeJEPA-VÉRIFICATEUR (candidat stratégique, idée utilisateur 2026-08-21)

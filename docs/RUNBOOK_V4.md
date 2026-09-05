@@ -97,10 +97,10 @@ Si une famille courte est à 0 : le sidecar n'est pas résolu (vérifier le lien
 
 ## Étape 4 — Lancement (une variable vs le champion)
 
-Finetune depuis le pretrain mini v3 val-best — pretrain, architecture et recette
-identiques au champion 25 % (0.7994/0.5469) ; si head8 est confirmé champion,
-prendre son eval pour la comparaison appariée mais garder la TÊTE STANDARD ici
-(sinon deux variables).
+Finetune depuis le pretrain mini v3 val-best. La config hérite de la tête x8
+(recette par défaut depuis le verdict G14 du 2026-09-05) : pretrain, architecture
+et recette identiques au champion head8 25 % (0.7914/0.5433, oracle 0.5190) ; la
+seule variable est le corpus v4 + les fenêtres à frontière.
 
 ```bash
 python scripts/train.py --config-name lotsa_mini_v4_zeroshot \
@@ -118,7 +118,8 @@ python scripts/evaluate_gift.py --config-name lotsa_mini_v4_eval \
 ```
 
 Toujours les trois lectures (nu, flip, flip+ratein) sur le checkpoint retenu.
-Points de comparaison appariés : standard 15 % 0.7988/0.5482, 25 % 0.7994/0.5469.
+Points de comparaison appariés (head8) : 15 % 0.7974/0.5466, 25 % 0.7914/0.5433 ;
+oracle 25 % 0.7700/0.5190 (diagnostic).
 
 ## Prédictions P-v4 (à graver au registre AU LANCEMENT, avant le premier eval)
 
@@ -127,7 +128,7 @@ Points de comparaison appariés : standard 15 % 0.7988/0.5482, 25 % 0.7994/0.546
   checkpoint apparié — le levier agit par TRANSFERT (m1/m3/tourism appris,
   m4/hospital jamais vus), donc bande large.
 - P-v4.2 (innocuité) : les configs à long historique stables à ±1 % de CRPS.
-- P-v4.3 (agrégat) : MASE < 0.79 au 25 % ; CRPS flip+ratein ≤ champion.
-  ÉCHEC-DIAGNOSTIC : MASE ≥ 0.7994 ⇒ le régime court ne se transfère pas de
+- P-v4.3 (agrégat) : MASE < 0.78 au 25 % ; CRPS flip+ratein ≤ 0.5433.
+  ÉCHEC-DIAGNOSTIC : MASE ≥ 0.7914 ⇒ le régime court ne se transfère pas de
   m1/m3 vers m4 — le levier MASE est ailleurs (contexte, décodeur), pas dans le
   corpus.
