@@ -38,6 +38,7 @@ not use MSIS.
 
 import json
 import logging
+import math
 import sys
 import time
 from collections import Counter, defaultdict
@@ -365,6 +366,39 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     return {idx: K for idx in range(len(series))}, diag
 
 
+# RateIN-mix (2026-09-05). The selection-gap decomposition on the head8
+# champion split the 2.43-pt residual three ways (missed 32%, wrong k 38%,
+# false positives 29%), so no margin setting can win: a harder margin trades
+# missed for false positives. Mixing addresses all three at once - no
+# threshold, no argmin, k=1 keeps weight. The temperature equals the old
+# margin: a k that beats k=1 by exactly the margin gets weight e vs 1.
+MIX_TAU = 0.05
+MIX_MIN_WEIGHT = 0.02
+MIX_MAX_COMPONENTS = 4
+
+
+def _mix_weights(ratios: dict, tau: float = MIX_TAU,
+                 min_weight: float = MIX_MIN_WEIGHT,
+                 max_components: int = MIX_MAX_COMPONENTS) -> dict:
+    """Softmax over -log(pooled pinball ratio)/tau, k=1 included at ratio 1.
+
+    `ratios` is the selector's table ({str(k): ratio}); k's the selector
+    disqualified (coverage < 2/3) are absent and get no weight. Components
+    below `min_weight` are dropped, the largest `max_components` kept, and
+    the result renormalized (deterministic, sorted by k).
+    """
+    cand = {1: 1.0}
+    cand.update({int(k): float(r) for k, r in ratios.items()})
+    logits = {k: -math.log(max(r, 1e-6)) / tau for k, r in cand.items()}
+    top = max(logits.values())
+    w = {k: math.exp(v - top) for k, v in logits.items()}
+    z = sum(w.values())
+    w = {k: v / z for k, v in w.items() if v / z >= min_weight}
+    w = dict(sorted(w.items(), key=lambda kv: -kv[1])[:max_components])
+    z = sum(w.values())
+    return {k: v / z for k, v in sorted(w.items())}
+
+
 def evaluate_config(model, config: str, gift_root: Path, device,
                     batch_size: int, max_series: int = 0,
                     max_context: int = 0, tta_lookbacks=None,
@@ -398,12 +432,42 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     k_hist = Counter()
     # RateIN v2 - per-series k chosen by causal backtest (see the helper);
     # computed once before the loop, batched.
-    bt_ks, bt_diag = None, None
-    if ratein_mode == "backtest" and not forced_k:
+    bt_ks, bt_diag, mix_weights = None, None, None
+    if ratein_mode in ("backtest", "mix") and not forced_k:
         bt_ks, bt_diag = _backtest_series_k(model, series, h, windows, max_len,
                                             stride, model.patching.patch_size,
                                             device, batch_size)
+        if ratein_mode == "mix":
+            # The hard per-series choice is replaced by per-config weights.
+            mix_weights, bt_ks = _mix_weights(bt_diag["ratios"]), None
+    # RateIN-mix state: per instance, the weight-summed native fan/median of
+    # the components that survived the guards (finalized after the loop).
+    mix_state, mix_mid = {}, 0
     for inst in gift.iter_test_instances(series, h, windows):
+        if mix_weights is not None:
+            comps = []
+            for kk, wk in mix_weights.items():
+                hist = (ratein_mod.decimate(inst.context[-(max_len * kk):], kk)
+                        if kk > 1 else inst.context)
+                if kk > 1 and len(hist) < model.patching.patch_size:
+                    continue                    # same guard as the hard path
+                ctx = prepare_context(hist, max_len, stride,
+                                      model.patching.patch_size)
+                if ctx is None:
+                    continue
+                comps.append((kk, wk, ctx))
+            if not comps:
+                continue
+            scale = gift.seasonal_error(inst.context, m)
+            iid = n_inst
+            mix_state[iid] = {"target": inst.target, "past": inst.context,
+                              "scale": scale, "fan": None, "med": None, "w": 0.0}
+            for kk, wk, ctx in comps:
+                buckets[(len(ctx), kk)].append(
+                    (ctx, inst.target, inst.context, scale, iid, wk))
+            k_hist[max(comps, key=lambda c: c[1])[0]] += 1
+            n_inst += 1
+            continue
         # RateIN (2026-08-31, G9.3 verdict): k is a causal statistic of the
         # past, one uniform rule across the 97 configs (same status as
         # median/MAD). forced_k = ORACLE mode (diagnostic, never official).
@@ -467,7 +531,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                    if levels is not None and quants is not None
                    else (quants.shape[-1] // 2 if quants is not None else 0))
 
-            for b, (ctx, target, past, scale) in enumerate(chunk):
+            if quants is not None:
+                mix_mid = mid
+            for b, item in enumerate(chunk):
+                ctx, target, past, scale = item[:4]
                 if k > 1 and not use_w:
                     if quants is not None:
                         fan_nat = ratein_mod.reinterp_fan(quants[b], h, k)
@@ -476,13 +543,34 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                         fan_nat = None
                         med_nat = ratein_mod.reinterp_fan(
                             median[b][:, None], h, k)[:, 0]
-                    model_acc.add(target, med_nat, fan_nat, scale)
                 else:
-                    model_acc.add(target, median[b],
-                                  quants[b] if quants is not None else None,
-                                  scale)
+                    fan_nat = quants[b] if quants is not None else None
+                    med_nat = median[b]
+                if len(item) == 6:                      # RateIN-mix component
+                    st = mix_state[item[4]]
+                    wk = item[5]
+                    if fan_nat is not None:
+                        st["fan"] = (wk * fan_nat if st["fan"] is None
+                                     else st["fan"] + wk * fan_nat)
+                    st["med"] = (wk * med_nat if st["med"] is None
+                                 else st["med"] + wk * med_nat)
+                    st["w"] += wk
+                    continue
+                model_acc.add(target, med_nat, fan_nat, scale)
                 sn = gift.seasonal_naive_forecast(past, h, m)
                 sn_acc.add(target, sn, None, scale)
+
+    # RateIN-mix: quantile averaging (Vincentization) of the surviving
+    # components - a convex combination of monotone fans stays monotone and
+    # keeps sharpness, unlike a mixture of distributions.
+    for st in mix_state.values():
+        if st["w"] <= 0:
+            continue
+        fan = None if st["fan"] is None else st["fan"] / st["w"]
+        med = fan[:, mix_mid] if fan is not None else st["med"] / st["w"]
+        model_acc.add(st["target"], med, fan, st["scale"])
+        sn_acc.add(st["target"], gift.seasonal_naive_forecast(st["past"], h, m),
+                   None, st["scale"])
 
     res = {"config": config, "prediction_length": h, "seasonality": m,
            "windows": windows, "n_series": len(series), "n_instances": n_inst,
@@ -495,6 +583,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         }
         if bt_diag is not None:
             res["ratein"]["backtest"] = bt_diag
+        if mix_weights is not None:
+            res["ratein"]["mix"] = {
+                "tau": MIX_TAU,
+                "weights": {str(k): round(w, 4) for k, w in mix_weights.items()}}
     return res
 
 
@@ -546,9 +638,11 @@ def main(cfg: DictConfig):
     #   +ratein=oracle                          k sweep - DIAGNOSTIC, looks at
     #                                           the test set, never official
     ratein_raw = str(cfg.get("ratein", "")).lower()
+    #   +ratein=mix                             per-config weighted mix of k
+    #                                           (quantile averaging, causal)
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
-                       "backtest": "backtest", "bt": "backtest"}.get(
-                           ratein_raw, "off")
+                       "backtest": "backtest", "bt": "backtest",
+                       "mix": "mix"}.get(ratein_raw, "off")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
     # RateIN x w (gated): +ratein_w=true - fan at native rate via w=1/k on
@@ -603,6 +697,8 @@ def main(cfg: DictConfig):
         tag += "_ratein"
     elif ratein_mode_val == "backtest":
         tag += "_ratein-bt"
+    elif ratein_mode_val == "mix":
+        tag += "_ratein-mix"
     elif ratein_oracle:
         tag += "_ratein-oracle"
     if ratein_w:
@@ -688,6 +784,9 @@ def main(cfg: DictConfig):
         extra = ""
         if "ratein" in res and not ratein_oracle:
             extra = f" k>1: {res['ratein']['frac_k_gt1']:.0%}"
+            if "mix" in res["ratein"]:
+                extra += " mix " + " ".join(
+                    f"k{k}:{w:.2f}" for k, w in res["ratein"]["mix"]["weights"].items())
         if "oracle" in res:
             extra = (f" best_k={res['oracle']['best_k']} "
                      f"(gain {res['oracle']['gain_vs_k1']:+.1%} vs k=1)")

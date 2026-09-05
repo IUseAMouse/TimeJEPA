@@ -1956,8 +1956,16 @@ constitue le test le plus direct de la thèse du §7.
   (false_pos → covid divisé par ~2). Coût : ×(nb de k retenus) à l'éval, zéro
   entraînement, causal donc légal. Prédiction à graver avant la mesure : P-mix.1 récupère
   ≥ 1/3 du résidu (≤ 0.535) ; P-mix.2 couverture ≥ 0.769 (le mélange élargit le fan) ;
-  ÉCHEC si ≥ 0.5433. Non implémenté ce jour (décision utilisateur attendue ; eval-only,
-  peut tourner pendant la prép v4).
+  ÉCHEC si ≥ 0.5433. **Implémenté le jour même (décision utilisateur « on va essayer »)** :
+  `+ratein=mix` dans evaluate_gift.py — poids par config w_k ∝ exp(−ln ratio_k / τ), τ =
+  0.05 (= l'ancienne marge : un k qui bat k=1 de la marge pèse ~e fois k=1), k=1 inclus à
+  ratio 1, composantes < 2 % supprimées, 4 au plus, k disqualifiés (couverture < 2/3)
+  absents ; fans des composantes moyennés en QUANTILES (Vincentization) ; garde
+  par instance identique (composante abandonnée si historique décimé < patch, poids
+  renormalisés). Coût ≤ ×4 passes. Cache `gift_flip_ratein-mix`, champ `ratein.mix`.
+  Vérification : smoke CPU sur m_dense/D/short (tiny, 3 séries) — ancien script vs
+  nouveau : backtest et nu BIT-IDENTIQUES (JSON clé par clé), mix = backtest quand tous
+  les ratios > 1 (poids k1:1.00, attendu) ; 5 tests unitaires des poids.
 
 - **2026-09-05 (INSTRUMENT : décomposition du résidu de sélection RateIN — préalable à tout
   « meilleur sélecteur »)** — Question utilisateur : le plafond 0.5190 laisse 2.43 pts au
