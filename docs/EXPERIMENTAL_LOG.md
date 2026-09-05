@@ -1940,9 +1940,17 @@ constitue le test le plus direct de la thèse du §7.
   DOSE (sampler), pas le mécanisme — bras suivant « v4-dose » : relever la part des
   familles courtes (poids par famille ou cap d'oversample dédié) AVANT de conclure sur
   les fenêtres à frontière. Si les configs courtes se DÉGRADENT, c'est le mécanisme
-  (fenêtres à frontière nuisibles) et le bras est clos. Audit de composition non consigné
-  (sortie noyée par les avertissements par fichier, corrigés depuis) ; le témoin live en
-  tient lieu. Verdict attendu demain matin.
+  (fenêtres à frontière nuisibles) et le bras est clos. **Audit de composition (reçu le
+  06/09, queue de table)** : les 12 familles courtes sont TOUTES « capped » à 0.00 % de
+  part de batch (m1_*, monash_m3_*, tourism_*, nn5_*), au même rang que covid19_energy ou
+  favorita_sales ; part synthétique 57.5 % (v3 : ~51-55 %, acceptée par l'utilisateur).
+  La dose est donc confirmée par l'audit statique, pas seulement par le témoin live : le
+  cap d'oversample (max_oversample_ratio, global) est le verrou — un fichier de quelques
+  centaines de fenêtres ne peut pas dépasser cap × ses fenêtres par époque. Le bras
+  « v4-dose », si P-v4 échoue sans dégradation, devra desserrer ce cap POUR CES FAMILLES
+  (override par famille, code à écrire) plutôt que globalement (sinon la queue réelle
+  plafonnée se ré-inonde, verdict G10.2). Doctrine d'éval pour v4 : comparaisons
+  appariées en flip+backtest ; le mix se pose uniquement sur le checkpoint retenu.
 
 - **2026-09-05 (PRÉP V4, premier passage : deux défauts de prepare_lotsa attrapés au gate 1)**
   — Log du bloc court (min-length 24) lu par l'utilisateur : « 122 LOST » sur m3_quarterly
