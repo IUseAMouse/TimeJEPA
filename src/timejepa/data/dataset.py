@@ -130,6 +130,12 @@ class TimeSeriesDataset(Dataset):
         # False (all existing configs), behavior bit-identical.
         cross_resolution: bool = False,
         use_mmap: bool = False,
+        # Corpus v4 (2026-09-05) - short-series windows. Needs the _reallen/
+        # sidecar written by prepare_lotsa --pad-to. Off (default) = the item
+        # dict and the window set are bit-identical for every existing config.
+        short_series_windows: bool = False,
+        short_min_context: int = 16,
+        short_min_target: int = 4,
     ):
         """
         Args:
@@ -159,6 +165,11 @@ class TimeSeriesDataset(Dataset):
         self.multi_resolution_factors = list(multi_resolution_factors or [1])
         self.p_multi_resolution = float(p_multi_resolution)
         self.cross_resolution = bool(cross_resolution)
+        self.short_series_windows = bool(short_series_windows)
+        self.short_min_context = int(short_min_context)
+        self.short_min_target = int(short_min_target)
+        self.real_lens = None            # per-row real trailing length (sidecar)
+        self._short_rows = None          # bool per row: real_len < ctx + pred
 
         # Load data
         logger.info(f"Loading data from {self.data_path}")
@@ -201,10 +212,24 @@ class TimeSeriesDataset(Dataset):
                 f"(longest available: {self._longest_series_seen})"
             )
 
+        # Corpus v4 sidecar: real trailing length per row, written next to the
+        # file under _reallen/ (outside the '*.npy' glob). Dense rows only.
+        real_lens = None
+        side = self.data_path.parent / "_reallen" / self.data_path.name
+        if data.dtype != object and side.exists():
+            real_lens = np.load(side).astype(np.int64)
+            if real_lens.shape[0] != len(data):
+                logger.warning(
+                    f"  _reallen sidecar has {real_lens.shape[0]} rows for "
+                    f"{len(data)} series - ignored")
+                real_lens = None
+
         # Limit number of series if requested
         if max_series is not None and len(data) > max_series:
             logger.info(f"Limiting to {max_series} series (out of {len(data)})")
             data = data[:max_series]
+            if real_lens is not None:
+                real_lens = real_lens[:max_series]
 
         # Filter by minimum length
         if min_series_length is not None:
@@ -213,6 +238,8 @@ class TimeSeriesDataset(Dataset):
             elif isinstance(data, np.ndarray):
                 mask = np.array([s.shape[-1] >= min_series_length for s in data])
                 data = data[mask]
+                if real_lens is not None:
+                    real_lens = real_lens[mask]
             logger.info(f"After length filter: {len(data)} series")
 
         # Convert to array if homogeneous
@@ -229,6 +256,11 @@ class TimeSeriesDataset(Dataset):
                 logger.info(f"Converted to dense array: {data.shape}")
 
         self.data = data
+        self.real_lens = real_lens
+        if self.short_series_windows and real_lens is None:
+            logger.warning(
+                "  short_series_windows=True but no _reallen sidecar for "
+                f"{self.data_path.name}: short-series windows INACTIVE here")
         self.is_multivariate = data.ndim == 3
         
         logger.info(f"Data shape: {data.shape if data.dtype != object else f'({len(data)}, variable)'}")
@@ -457,15 +489,68 @@ class TimeSeriesDataset(Dataset):
                     seq_length, min_length,
                     self.context_length, self.prediction_length, self.data_path
                 )
-            # Fixed-length: every series has identical starts, so build the two
-            # columns with a single outer product instead of a nested loop.
             n_series = len(self.normalized_data)
             starts = np.arange(0, seq_length - min_length + 1, self.stride,
                                dtype=np.int32)
-            indices = np.empty((n_series * starts.size, 2), dtype=np.int32)
-            indices[:, 0] = np.repeat(np.arange(n_series, dtype=np.int32), starts.size)
-            indices[:, 1] = np.tile(starts, n_series)
-            return indices
+            if self.real_lens is None:
+                # Fixed-length: every series has identical starts, so build the
+                # two columns with a single outer product instead of a nested
+                # loop.
+                indices = np.empty((n_series * starts.size, 2), dtype=np.int32)
+                indices[:, 0] = np.repeat(np.arange(n_series, dtype=np.int32),
+                                          starts.size)
+                indices[:, 1] = np.tile(starts, n_series)
+                return indices
+            return self._sidecar_window_indices(seq_length, min_length, starts)
+
+    def _sidecar_window_indices(self, seq_length: int, min_length: int,
+                                starts: np.ndarray) -> np.ndarray:
+        """Corpus v4: rows are left-padded, real data at the end.
+
+        Rows with real_len >= ctx + pred keep the standard sliding windows:
+        every target then starts at >= ctx > pad length, so targets are real
+        and only the context carries the flat prefix (the eval condition).
+        Shorter rows would otherwise yield windows whose target lies in the
+        pad (v3 defect). With short_series_windows they get BOUNDARY windows
+        instead: the context/target split falls inside the real data, the
+        context is left-padded by the row itself, the target holds the real
+        tail and is right-padded + masked by get_item.
+        """
+        rl = self.real_lens
+        full = rl >= min_length
+        self._short_rows = ~full
+        blocks = []
+        full_ids = np.flatnonzero(full).astype(np.int32)
+        if full_ids.size and starts.size:
+            block = np.empty((full_ids.size * starts.size, 2), dtype=np.int32)
+            block[:, 0] = np.repeat(full_ids, starts.size)
+            block[:, 1] = np.tile(starts, full_ids.size)
+            blocks.append(block)
+        if self.short_series_windows:
+            for row in np.flatnonzero(~full):
+                pad_len = seq_length - int(rl[row])
+                b_lo = pad_len + self.short_min_context
+                b_hi = seq_length - self.short_min_target
+                if b_hi < b_lo:
+                    continue
+                bounds = np.arange(b_lo, b_hi + 1, self.stride, dtype=np.int64)
+                st = bounds - self.context_length
+                st = st[st >= 0]
+                if st.size == 0:
+                    continue
+                block = np.empty((st.size, 2), dtype=np.int32)
+                block[:, 0] = row
+                block[:, 1] = st
+                blocks.append(block)
+        if not blocks:
+            raise SeriesTooShortError(
+                int(rl.max()) if rl.size else 0, min_length,
+                self.context_length, self.prediction_length, self.data_path)
+        return np.concatenate(blocks, axis=0)
+
+    def _is_short_row(self, series_idx: int) -> bool:
+        return (self._short_rows is not None
+                and bool(self._short_rows[int(series_idx)]))
     
     def __len__(self) -> int:
         return len(self.window_indices)
@@ -545,6 +630,11 @@ class TimeSeriesDataset(Dataset):
         series_idx, start_idx = self.window_indices[idx]
         series = self.normalized_data[series_idx]
         series_len = series.shape[-1]
+        short_row = self._is_short_row(series_idx)
+        if short_row:
+            # Boundary window: never decimate (the pair check would read the
+            # padded length and decimate the flat prefix).
+            allow_multi_resolution = False
 
         if allow_multi_resolution and self.cross_resolution:
             # G9.2 - context at k1, target at k2. The target stays the
@@ -578,6 +668,21 @@ class TimeSeriesDataset(Dataset):
                 context = window[:self.context_length]
                 target = window[self.context_length:self.context_length + self.prediction_length]
 
+        target_mask = None
+        if self.short_series_windows:
+            target_mask = np.ones(self.prediction_length, dtype=bool)
+            n_tgt = target.shape[-1]
+            if n_tgt < self.prediction_length:
+                # Boundary window past the row end: right-pad the target with
+                # its last real value and mask those positions out of the loss.
+                # Never left of the real end - no observation is fabricated
+                # inside the scored region.
+                pad = self.prediction_length - n_tgt
+                edge = np.take(target, [-1], axis=-1)
+                target = np.concatenate(
+                    [target, np.repeat(edge, pad, axis=-1)], axis=-1)
+                target_mask[n_tgt:] = False
+
         if self.return_tensor:
             context = _to_tensor(context)
             target = _to_tensor(target)
@@ -596,6 +701,11 @@ class TimeSeriesDataset(Dataset):
             # - existing configs never see this key (item dict unchanged,
             # pinned by test).
             item['w'] = w
+        if target_mask is not None:
+            # Same all-or-nothing rule: emitted for every item when the flag
+            # is on (all-True on full windows), absent otherwise.
+            item['target_mask'] = (torch.from_numpy(target_mask)
+                                   if self.return_tensor else target_mask)
         return item
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:

@@ -275,6 +275,26 @@ class FinetuneModule(pl.LightningModule):
         """Forward pass for forecasting."""
         return self.model.forecast(context)
     
+    def _masked_point_loss(self, predictions: torch.Tensor,
+                           targets: torch.Tensor,
+                           mask: torch.Tensor) -> torch.Tensor:
+        """compute_loss restricted to the real target steps (corpus v4)."""
+        if self.loss_type == 'mse':
+            el = (predictions - targets).pow(2)
+        elif self.loss_type == 'mae':
+            el = (predictions - targets).abs()
+        elif self.loss_type == 'huber':
+            el = nn.functional.huber_loss(predictions, targets,
+                                          delta=self.huber_delta,
+                                          reduction='none')
+        else:
+            raise ValueError(f"Unknown loss_type: {self.loss_type}")
+        m = mask.to(el.dtype)
+        while m.dim() < el.dim():
+            m = m.unsqueeze(-1)
+        m = m.expand_as(el)
+        return (el * m).sum() / torch.clamp(m.sum(), min=1.0)
+
     def compute_loss(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Compute forecasting loss."""
         if self.loss_type == 'mse':
@@ -287,7 +307,8 @@ class FinetuneModule(pl.LightningModule):
             raise ValueError(f"Unknown loss_type: {self.loss_type}")
 
     def _forward_and_loss(self, context: torch.Tensor, target: torch.Tensor,
-                          w: Optional[torch.Tensor] = None):
+                          w: Optional[torch.Tensor] = None,
+                          target_mask: Optional[torch.Tensor] = None):
         """
         Shared by train/val/test.
 
@@ -319,11 +340,16 @@ class FinetuneModule(pl.LightningModule):
         if self.model.revin is not None:
             target = (target - self.model.revin.mean) / self.model.revin.std
 
+        # Corpus v4: `target_mask` [B, pred] marks the real target steps of
+        # short-series windows; padded steps carry no gradient.
         if 'quantiles' in results:
             head = self.model.decoder.decoder
-            loss = head.loss(results['quantiles'], target)
-        else:
+            loss = head.loss(results['quantiles'], target, mask=target_mask)
+        elif target_mask is None:
             loss = self.compute_loss(results['forecast'], target)
+        else:
+            loss = self._masked_point_loss(results['forecast'], target,
+                                           target_mask)
 
         self._last_anchor = None
         if self.lambda_anchor > 0:
@@ -339,8 +365,17 @@ class FinetuneModule(pl.LightningModule):
             pre = self.model.forward_pretrain(
                 context, raw_target,
                 contextualized_targets=False, w=w_anchor)
-            anchor = torch.nn.functional.mse_loss(
-                pre['predictions'], pre['targets'])
+            if target_mask is None:
+                anchor = torch.nn.functional.mse_loss(
+                    pre['predictions'], pre['targets'])
+            else:
+                # Latent targets of padded steps are meaningless: keep the
+                # anchor on items whose target is entirely real.
+                full = target_mask.reshape(target_mask.shape[0], -1).all(dim=1)
+                per_item = (pre['predictions'] - pre['targets']).pow(2) \
+                    .flatten(1).mean(dim=1)
+                anchor = (per_item[full].mean() if bool(full.any())
+                          else per_item.sum() * 0.0)
             loss = loss + self.lambda_anchor * anchor
             self._last_anchor = anchor.detach()
 
@@ -393,7 +428,14 @@ class FinetuneModule(pl.LightningModule):
         self.log('geometry/context_len', float(context.shape[1]),
                  on_step=True, on_epoch=False, logger=True)
 
-        loss, results, target = self._forward_and_loss(context, target, w=w)
+        target_mask = batch.get('target_mask')
+        if target_mask is not None:
+            # Witness: share of the batch made of short-series windows.
+            short = (~target_mask.reshape(target_mask.shape[0], -1).all(dim=1))
+            self.log('aug/short_frac', short.float().mean(), on_step=True,
+                     on_epoch=False)
+        loss, results, target = self._forward_and_loss(
+            context, target, w=w, target_mask=target_mask)
         predictions = results['forecast']
 
         # Logging
@@ -421,7 +463,8 @@ class FinetuneModule(pl.LightningModule):
             target = target.unsqueeze(-1)
         
         loss, results, target = self._forward_and_loss(
-            context, target, w=batch.get('w'))
+            context, target, w=batch.get('w'),
+            target_mask=batch.get('target_mask'))
         predictions = results['forecast']
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
@@ -457,7 +500,8 @@ class FinetuneModule(pl.LightningModule):
             target = target.unsqueeze(-1)
         
         loss, results, target = self._forward_and_loss(
-            context, target, w=batch.get('w'))
+            context, target, w=batch.get('w'),
+            target_mask=batch.get('target_mask'))
         predictions = results['forecast']
 
         self.log('test_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)

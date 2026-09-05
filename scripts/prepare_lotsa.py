@@ -223,6 +223,10 @@ def main():
             if emit_len != effective:
                 logger.info(f"    left edge-padding: {effective} -> {emit_len}")
             stats = ChunkStats()
+            # Corpus v4: with padding, record the real length of every row in
+            # a sidecar under _reallen/ (a subfolder, so the dataset glob
+            # '*.npy' never mistakes it for a series file).
+            real_lens = [] if args.pad_to else None
             chunks = iter_dense_chunks(
                 _chained(),
                 chunk_length=effective,
@@ -231,12 +235,17 @@ def main():
                 max_nan_fraction=args.max_nan_fraction,
                 stats=stats,
                 pad_to=args.pad_to,
+                real_lens=real_lens,
             )
             written = write_dense_npy(
                 chunks, out_path,
                 chunk_length=emit_len,
                 max_chunks=budget[subset],
             )
+            if real_lens is not None and written > 0:
+                side = Path(out_path).parent / "_reallen" / Path(out_path).name
+                side.parent.mkdir(parents=True, exist_ok=True)
+                np.save(side, np.asarray(real_lens[:written], dtype=np.int32))
             # Always logged, including (especially) when nothing is written:
             # the only way to know WHY a subset is empty.
             logger.info(f"    {stats.summary(effective, args.min_length)}")

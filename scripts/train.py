@@ -103,6 +103,13 @@ def main(cfg: DictConfig):
         # key as the model and the module (model.cross_resolution) - in BOTH
         # modes since G9.3 (outside train, the dataset emits w=1).
         cross_resolution=bool(cfg.model.get('cross_resolution', False)),
+        # Corpus v4 short-series windows: FINETUNE ONLY (the JEPA latent loss
+        # has no target mask, so pretrain must not see padded targets). Needs
+        # the _reallen sidecar next to the corpus; absent => inactive.
+        short_series_windows=(not is_pretrain)
+        and bool(cfg.data.get('short_series_windows', False)),
+        short_min_context=int(cfg.data.get('short_min_context', 16)),
+        short_min_target=int(cfg.data.get('short_min_target', 4)),
         seed=cfg.data.seed,
         # Hardcoded to 8 before. With 20+ datasets held in memory - several of
         # them numpy object arrays, whose per-element refcount updates defeat

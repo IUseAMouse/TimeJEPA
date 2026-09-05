@@ -1354,6 +1354,24 @@ fréquences — passent de 8,4 % à ~19 % du batch.
 ⚠️ Ne PAS toucher au sampler avant la fin de G7 : les runs E14/E16 ont tourné avec le sampler
 actuel, et le changer en cours de courbe d'échelle ajouterait une variable.
 
+### S4-a — CORPUS V4 : séries courtes réadmises + fenêtres à frontière (construit 2026-09-05)
+
+Diagnostic (lignes lues) : `prepare_lotsa --min-length 256` (v3) rejette toute série plus
+courte ; `dataset._generate_window_indices` saute toute ligne < ctx+pred ; h512 avait
+échoué par le même mécanisme (exigence gonflée = corpus jeté). Défaut v3 découvert : les
+lignes bourrées de 256-1279 pas réels produisent des fenêtres à cible ENTIÈREMENT dans le
+bourrage plat (65/97 pour une série de 256). Construit : sidecar `_reallen/<f>.npy` écrit
+par prepare_lotsa (--pad-to) ; dataset sidecar-aware (lignes courtes → fenêtres à
+FRONTIÈRE : split dans les données réelles, contexte bourré à gauche par la ligne, cible
+= queue réelle bourrée à droite + MASQUÉE ; jamais de décimation sur ces lignes ; lignes
+≥ ctx+pred → fenêtres standard, cibles réelles garanties) ; pinball masquée ; ancre
+restreinte aux items à cible pleine ; FINETUNE SEULEMENT (la perte JEPA n'a pas de masque
+de cible) ; témoin `aug/short_frac`. Défauts inertes (348 tests + 9 nouveaux). Configs :
+lotsa_mini_v4{,_zeroshot,_eval}. Prep : `--out data/processed/lotsa_v4 --min-length 24
+--pad-to 2048` (runbook S2.4 sinon inchangé). Levier MASE direct ; prérequis du contexte
+long (S4-b) : bourrer au lieu de filtrer rend l'allongement du contexte gratuit en
+couverture de corpus. Prédictions P-v4 à graver au lancement.
+
 ### G14 — HEAD-WIDTH : l'allocation de capacité côté forecast (idée utilisateur 2026-09-02)
 
 Audit des paramètres (2026-09-02) : encodeur 52 %, prédicteur 37-40 %, TÊTE QUANTILE

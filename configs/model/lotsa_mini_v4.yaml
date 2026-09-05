@@ -1,0 +1,32 @@
+# @package _global_
+# CORPUS V4 pretrain spec (2026-09-05) - v3 recipe, corpus re-prepared with the
+# short series READMITTED. Motive: prepare_lotsa v3 used --min-length 256, so
+# every series shorter than that (m4_yearly ~30 steps, car_parts 51,
+# hospital 84, tourism, m1/m3...) is absent from the corpus - exactly the
+# configs where the MASE bleeds (m4_yearly 4.2-5.3, covid 35-40). The v4
+# preparation lowers the floor and records the real length of every padded
+# row in a sidecar (_reallen/<file>.npy, outside the '*.npy' glob):
+#
+#   # same S2.4 runbook as v3, only the prepare step changes:
+#   python scripts/prepare_lotsa.py --out data/processed/lotsa_v4 \
+#       --min-length 24 --pad-to 2048
+#
+# What the sidecar buys the PRETRAIN without any flag: rows with fewer than
+# ctx+pred real steps stop yielding sliding windows whose target lies in the
+# flat left pad (v3 defect: a 256-step series padded to 2048 gives 65 such
+# windows out of 97). The JEPA loss has no target mask, so short-series
+# boundary windows are a FINETUNE-only mechanism (lotsa_mini_v4_zeroshot).
+#
+#   python scripts/train.py --config-name lotsa_mini_v4 wandb.run_name=mini-v4
+defaults:
+  - lotsa_mini_v3
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v4"
+
+data:
+  data_dir: "data/processed/lotsa_v4"
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "pretrain", "v4", "robust-scale"]

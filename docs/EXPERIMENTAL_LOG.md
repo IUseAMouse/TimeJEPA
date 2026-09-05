@@ -1919,6 +1919,41 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (CORPUS V4 CONSTRUIT : séries courtes réadmises, fenêtres à frontière,
+  pinball masquée — le mécanisme A/Q/M/W annoncé le 2026-08-27 ; run gated)** —
+  Diagnostic (code lu) : `prepare_lotsa --min-length 256` (v3) rejette toute série plus
+  courte ; `_generate_window_indices` saute toute ligne < ctx+pred ; h512 avait échoué par
+  ce mécanisme exact (exigence gonflée ⇒ corpus jeté). **Défaut v3 découvert** : une
+  ligne bourrée de r pas réels (256 ≤ r < 1280) produit des fenêtres à cible ENTIÈREMENT
+  dans le bourrage plat (r=256 : 65 fenêtres sur 97) — le modèle apprend « contexte plat
+  → cible plate », non masqué. **Construit** : (1) sidecar `_reallen/<fichier>.npy`
+  (longueur réelle par ligne) écrit par prepare_lotsa quand --pad-to est donné — sous-dossier
+  hors du glob `*.npy` ; (2) dataset sidecar-aware : lignes ≥ ctx+pred → fenêtres
+  glissantes standard (cibles réelles garanties : cible ≥ ctx > longueur du pad) ; lignes
+  plus courtes → PLUS de fenêtres standard (défaut v3 supprimé) et, avec
+  `data.short_series_windows: true`, fenêtres à FRONTIÈRE : split dans les données réelles
+  (≥16 pas de contexte réel, ≥4 de cible réelle), contexte bourré à gauche par la ligne
+  elle-même, cible = queue réelle bourrée à droite (dernière valeur) et MASQUÉE au-delà,
+  jamais de décimation ; `target_mask` émis pour tous les items quand le flag est on (règle
+  tout-ou-rien du collate) ; (3) pinball masquée (moyenne sur les positions réelles ; ancre
+  restreinte aux items à cible pleine ; perte ponctuelle masquée aussi) ; (4) FINETUNE
+  SEULEMENT (train.py) : la perte JEPA n'a pas de masque de cible ; (5) témoin
+  `aug/short_frac` ; (6) configs lotsa_mini_v4{,_zeroshot,_eval}. Défauts INERTES : sans
+  sidecar ou flag off, fenêtres et dict d'item bit-identiques (9 tests nouveaux, suite
+  complète relancée). **Prép v4** : runbook S2.4 inchangé sauf
+  `prepare_lotsa --out data/processed/lotsa_v4 --min-length 24 --pad-to 2048`. **Quelles
+  familles entrent** : l'anti-fuite garde m4/hospital/car_parts/covid DEHORS (jeux GIFT) ;
+  les overrides réadmettent m1_*, monash_m3_*, tourism_*, nn5_* — donc le levier agit par
+  TRANSFERT du régime « historique court + cible courte » appris sur m1/m3/tourism vers les
+  saigneurs GIFT ; bande de prédiction à graver au lancement en conséquence (plus
+  incertaine qu'un apprentissage direct). Chargement : `datasets: null` + glob ⇒ familles
+  réadmises chargées automatiquement. **Composition de batch (question utilisateur)** :
+  oui, un audit ponctuel avec `scripts/audit_batch_schedule.py --config-name
+  lotsa_mini_v4_zeroshot --mode finetune` après la prép (familles nombreuses à peu de
+  fenêtres : interaction cap/rationnement à vérifier) + le témoin live short_frac ; pas de
+  nouveau code. Ordre inchangé : head8 (25 % en cours) → xres-mini → v4 finetune (levier
+  MASE) → contexte long → run final.
+
 - **2026-09-05 (HEAD8@15 % : 0.7974/0.5466 — meilleur 15 % des trois bras, déjà sous le
   champion ; mais couverture 0.734, le drapeau P-head.2 est levé)** — Apparié 15 % :
   standard 0.7988/0.5482 (couv 0.770), aug 0.8015/0.5470 (0.732), head8

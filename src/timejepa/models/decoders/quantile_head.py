@@ -53,6 +53,7 @@ def pinball_loss(
     quantiles: torch.Tensor,
     target: torch.Tensor,
     levels: Sequence[float],
+    mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Averaged pinball (quantile) loss.
@@ -78,7 +79,13 @@ def pinball_loss(
     q = torch.as_tensor(levels, device=quantiles.device, dtype=quantiles.dtype)
     diff = target - quantiles                      # [B, L, Q]
     loss = 2.0 * torch.maximum(q * diff, (q - 1.0) * diff)
-    return loss.mean()
+    if mask is None:
+        return loss.mean()
+    # Corpus v4 short-series windows: positions past the real end of the
+    # series are padded and carry no information; average over real ones.
+    m = mask.to(loss.dtype).unsqueeze(-1)          # [B, L, 1] over the Q axis
+    denom = torch.clamp(m.sum() * loss.shape[-1], min=1.0)
+    return (loss * m).sum() / denom
 
 
 class QuantileHead(nn.Module):
@@ -275,8 +282,9 @@ class QuantileHead(nn.Module):
 
         return torch.cat(parts, dim=-1)
 
-    def loss(self, quantiles: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        return pinball_loss(quantiles, target, self.quantile_levels)
+    def loss(self, quantiles: torch.Tensor, target: torch.Tensor,
+             mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return pinball_loss(quantiles, target, self.quantile_levels, mask=mask)
 
     def median(self, quantiles: torch.Tensor) -> torch.Tensor:
         """The MAE-optimal point forecast, for MASE and the plots."""

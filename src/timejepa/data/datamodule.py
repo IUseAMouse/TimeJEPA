@@ -307,6 +307,9 @@ class MonashDataModule(pl.LightningDataModule):
         p_multi_resolution: float = 0.0,
         cross_resolution: bool = False,
         use_mmap: bool = False,
+        short_series_windows: bool = False,
+        short_min_context: int = 16,
+        short_min_target: int = 4,
         seed: int = 42
     ):
         """
@@ -350,6 +353,10 @@ class MonashDataModule(pl.LightningDataModule):
         self.cross_resolution = cross_resolution
         # LOTSA-scale corpora only; False keeps every existing config identical.
         self.use_mmap = bool(use_mmap)
+        # Corpus v4 short-series windows (dataset.py); False = unchanged.
+        self.short_series_windows = bool(short_series_windows)
+        self.short_min_context = int(short_min_context)
+        self.short_min_target = int(short_min_target)
         self.seed = seed
         
         self.normalizer: Optional[Normalizer] = None
@@ -396,6 +403,9 @@ class MonashDataModule(pl.LightningDataModule):
                 p_multi_resolution=self.p_multi_resolution,
                 cross_resolution=self.cross_resolution,
                 use_mmap=self.use_mmap,
+                short_series_windows=self.short_series_windows,
+                short_min_context=self.short_min_context,
+                short_min_target=self.short_min_target,
             )
             
             self.normalizer = self._full_dataset.get_normalizer()
@@ -597,6 +607,9 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         p_multi_resolution: float = 0.0,
         cross_resolution: bool = False,
         use_mmap: bool = False,
+        short_series_windows: bool = False,
+        short_min_context: int = 16,
+        short_min_target: int = 4,
         dataset_overrides: Optional[Dict[str, Any]] = None,
         seed: int = 42
     ):
@@ -650,6 +663,10 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.cross_resolution = cross_resolution
         # LOTSA-scale corpora only; False keeps every existing config identical.
         self.use_mmap = bool(use_mmap)
+        # Corpus v4 short-series windows (dataset.py); False = unchanged.
+        self.short_series_windows = bool(short_series_windows)
+        self.short_min_context = int(short_min_context)
+        self.short_min_target = int(short_min_target)
         self.dataset_overrides = dataset_overrides or {}
         self.seed = seed
         
@@ -752,6 +769,9 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     p_multi_resolution=self.p_multi_resolution,
                 cross_resolution=self.cross_resolution,
                     use_mmap=self.use_mmap,
+                    short_series_windows=self.short_series_windows,
+                    short_min_context=self.short_min_context,
+                    short_min_target=self.short_min_target,
                     seed=self.seed
                 )
                 

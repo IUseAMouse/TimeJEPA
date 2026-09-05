@@ -410,10 +410,18 @@ def iter_dense_chunks(
     max_nan_fraction: float = 0.05,
     stats: Optional[ChunkStats] = None,
     pad_to: Optional[int] = None,
+    real_lens: Optional[list] = None,
 ) -> Iterator[np.ndarray]:
     """
     Turns a stream of arbitrary-length series into a stream of chunks of
     EXACTLY `chunk_length`, ready to be stacked densely.
+
+    `real_lens` (corpus v4, 2026-09-05): if a list is given, the number of
+    REAL trailing steps of every emitted chunk is appended to it (== emit
+    length for unpadded chunks). The caller stores it as a sidecar so the
+    dataset can tell padding from data: without it, a padded row yields
+    windows whose target lies entirely in the flat prefix (measured on v3:
+    a 256-step series padded to 2048 gives 65 such windows out of 97).
 
     Series shorter than `chunk_length` are dropped: mixing lengths would force
     an `object` array, which constraint 1 of the module forbids. That is a real
@@ -448,6 +456,7 @@ def iter_dense_chunks(
                 stats.lost_to_chunking += 1
 
         for chunk in segment_series(arr, chunk_length, min_length):
+            n_real = int(chunk.shape[0])
             if pad_to and chunk.shape[0] < emit_len:
                 # LEFT edge-padding: real data stays at the end (target side)
                 # - see docstring.
@@ -468,6 +477,8 @@ def iter_dense_chunks(
                 chunk = filled
                 if stats is not None:
                     stats.imputed += 1
+            if real_lens is not None:
+                real_lens.append(n_real)
             yield chunk
             emitted += 1
             if stats is not None:
