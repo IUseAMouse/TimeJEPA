@@ -1228,7 +1228,11 @@ aussi ×2,04 à l'heure ; us_births ×2,07 en D/M/W indifféremment). Ceux-là r
       négatif (0.6022) ; v2 par série 0.5793 ; v2.1 0.5682 ; **v3 (k par config poolé) =
       CHAMPION 0.8152/0.5588**, oracle 97 configs = plafond 0.7894/0.5358, capture 63 %,
       DÉTECTEUR GELÉ (3 limites résiduelles nommées au registre : famine petits-n,
-      désaccord backtest↔test, mismatch d'objectif) ; (b) **xres amendé** (w exercé au
+      désaccord backtest↔test, mismatch d'objectif). **Décomposé 2026-09-05** sur head8
+      (`scripts/ratein_selection_gap.py`, résidu 2.43 pts) : missed 32 % / wrong_k 38 % /
+      false_pos 29 %, covid seul 17 % — aucun réglage de marge ne suffit ; candidat
+      **RateIN-mix** (fans de plusieurs k pondérés par ratio, quantiles moyennés, k=1
+      inclus), eval-only, P-mix.1..2 au registre, en attente de décision ; (b) **xres amendé** (w exercé au
       finetune + ancre λ·MSE) — code + configs livrés (commit ec0a891) ; le résiduel
       −4.1 % rel. vers l'oracle est l'exhibit du dossier train-side : ordre déclaré =
       mini finetune (+ratein compose) → arm G9.0-augmentation au finetune (35 % des

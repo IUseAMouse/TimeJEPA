@@ -1919,6 +1919,46 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-05 (HEAD8 : TABLE DOCTRINE COMPLÈTE + PREMIÈRE DÉCOMPOSITION DU RÉSIDU — trois
+  cas à parts égales, covid seul pèse 17 %)** — Compagnons du champion head8 25 % :
+  **nu 0.8877/0.6131 (couv 0.740) → flip 0.8543/0.5842 (0.781) → flip+RateIN
+  0.7914/0.5433 (0.769)** ; oracle 0.7700/0.5190. Lecture à travers l'échelle (même
+  procédure, 97 configs) :
+
+  | lignée | params | nu | flip | flip+RateIN | oracle | couches (pts) |
+  |---|---|---|---|---|---|---|
+  | tiny mix | 1.14M | 0.6134 | 0.5983 | 0.5588 | 0.5358 | −5.5 |
+  | mini std | 3.42M | 0.6235 | 0.5930 | 0.5469 | 0.5255 | −7.7 |
+  | mini head8 | ~4.0M | 0.6131 | 0.5842 | 0.5433 | 0.5190 | −7.0 |
+
+  Trois faits : (1) **le nu n'a PAS progressé de tiny à mini** (0.6134 → 0.6235 → 0.6131) :
+  tout le gain d'échelle vit dans la RÉPONSE aux couches d'inférence (tiny −5.5 pts, mini
+  −7.7) — la capacité achète de la composabilité, pas de la précision brute ; (2) la tête
+  ×8 gagne surtout en nu (−1.04 pt vs std) et en flip (−0.88), le gain se comprime à −0.36
+  sur la pile : couches et tête sont partiellement SUBSTITUTS (même motif que
+  raffinement × centrage, 2026-08-31) ; (3) flip reste le calibrateur (couv +4.1 pts
+  0.740 → 0.781), RateIN en rend 1.2. Conséquence pour le papier : la métrique nue
+  sous-estime notre lignée de 7 pts et le classement inter-modèles en nu n'a pas de sens
+  pour nous. **Décomposition du résidu (ratein_selection_gap, head8)** : 97 configs,
+  geomean brut 0.1370 → 0.1308, résidu 4.7 % relatif (= les 2.43 pts de ratio, SN
+  s'annule par config). Répartition : **missed 22 configs 32 % · wrong_k 13 configs
+  38 % · false_pos 9 configs 29 %** · match 53 (0). AUCUN cas ne domine → aucun réglage
+  de marge ne suffit (durcir la marge soigne les false_pos et aggrave les missed, et
+  inversement). Un seul contributeur pèse 17 % : **covid_deaths false_pos k_bt=4, k*=1
+  (0.0678 vs 0.0317)** — désaccord backtest↔test typique d'un régime non stationnaire
+  (phases exponentielles) ; puis bizitobs_service/10S/medium wrong_k k=3 vs 16 (11.8 %),
+  bizitobs_application/10S/long wrong_k 12 vs 3 (6.7 %), ett1/D missed k*=3 (6.6 %).
+  Sous-split marge indisponible (caches antérieurs au champ `ratein.backtest`).
+  **Candidat unique qui adresse les trois cas à la fois : MÉLANGE DE RANGS (RateIN-mix)** —
+  au lieu d'un argmin + marge dure, pondérer les fans de plusieurs k (k=1 inclus, ratio 1)
+  par w_k ∝ exp(−log ratio_k / τ) et moyenner les QUANTILES (Vincentization, préserve la
+  finesse) : pas de seuil (missed), pas d'argmin (wrong_k), k=1 garde du poids
+  (false_pos → covid divisé par ~2). Coût : ×(nb de k retenus) à l'éval, zéro
+  entraînement, causal donc légal. Prédiction à graver avant la mesure : P-mix.1 récupère
+  ≥ 1/3 du résidu (≤ 0.535) ; P-mix.2 couverture ≥ 0.769 (le mélange élargit le fan) ;
+  ÉCHEC si ≥ 0.5433. Non implémenté ce jour (décision utilisateur attendue ; eval-only,
+  peut tourner pendant la prép v4).
+
 - **2026-09-05 (INSTRUMENT : décomposition du résidu de sélection RateIN — préalable à tout
   « meilleur sélecteur »)** — Question utilisateur : le plafond 0.5190 laisse 2.43 pts au
   sélecteur causal, comment le rattraper ? Réponse de méthode : avant de changer le
