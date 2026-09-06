@@ -1919,6 +1919,21 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (CORRECTION DE LA TABLE D'ÉCHELLE : deux checkpoints tiny confondus — vérifié
+  sur demande utilisateur)** — La ligne « tiny mix » de la table du 2026-09-05 mélangeait
+  deux checkpoints à 0.0001 près en flip : le champion MIX (`mix1ep3e4_25pct`, corpus mix,
+  nu 0.8914/0.6134, flip **0.8735/0.5984**, jamais passé sous RateIN v3) et le finetune
+  **V3 @50 %** (corpus v3, flip **0.8633/0.5983**, « meilleure MASE du projet toutes
+  lignées » le 30/08), qui est le « champion v3 » sur lequel la campagne RateIN a tourné
+  (0.5983 → 0.5793 → 0.5682 → 0.5588, oracle 0.5358). Le nu du v3 @50 % n'a pas été
+  consigné (n.m.). Table corrigée en deux lignes. Conséquences : (1) la lecture « le nu
+  n'a pas bougé de tiny à mini » repose sur le nu du champion MIX (0.6134) vs mini
+  (0.6235 / 0.6131) — elle tient, mais à corpus différent ; (2) la référence appariée du
+  bras S5 (xres tiny v3) et la mesure P-tmp.1 (mix-pool) doivent porter sur le **v3 @50 %**,
+  même corpus que xres tiny v3 — la commande donnée plus tôt visait le checkpoint mix, à
+  corriger ; le fichier exact est sur le pod (`checkpoints/timejepa_lotsa_tiny_v3_zs/
+  pretrain_False/`, celui dont le dossier d'éval porte `gift_flip_ratein-bt`).
+
 - **2026-09-06 (DÉCISION : ablation XRES À PETITE ÉCHELLE d'abord — bras tiny xres v3 déclenché,
   mix-pool sur le champion tiny, prédictions gravées)** — Question utilisateur : combien vaut
   xres, et faut-il ablater sur tiny avant de scaler ? Faits : (1) aucun chiffre GIFT n'existe
@@ -2398,7 +2413,8 @@ constitue le test le plus direct de la thèse du §7.
 
   | lignée | params | nu | flip | flip+RateIN | oracle | couches (pts) |
   |---|---|---|---|---|---|---|
-  | tiny mix | 1.14M | 0.6134 | 0.5983 | 0.5588 | 0.5358 | −5.5 |
+  | tiny mix (mix1ep3e4@25 %) | 1.14M | 0.6134 | 0.5984 | — | — | −3.6 (flip seul) |
+  | tiny v3 (finetune @50 %) | 1.14M | n.m. | 0.5983 | 0.5588 | 0.5358 | ≥ −4.0 (flip → RateIN) |
   | mini std | 3.42M | 0.6235 | 0.5930 | 0.5469 | 0.5255 | −7.7 |
   | mini head8 | ~4.0M | 0.6131 | 0.5842 | 0.5433 | 0.5190 | −7.0 |
 
