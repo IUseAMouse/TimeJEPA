@@ -1431,6 +1431,17 @@ raffinement non entraîné d'E18f (+1-2 % sélectif), puis GIFT apparié head8. 
 ×3-5, une nuit. Prérequis absolu : H2b (critique préservé, sonde E18b ≤ 0.30). Schéma :
 https://claude.ai/code/artifact/76b40ed0-b000-4111-8a6c-422de05f3aec. World model : même
 machine, a par le FiLM pour prévoir, descente sur a pour contrôler.
+**Leviers pour les odds (2026-09-06)** : (1) raffiner le CENTRE (médiane) et translater le
+fan, jamais les 9 quantiles séparément (self-hybride : couverture 0.339 quand le juge tire
+tout vers un minimum) ; (2) façonner le paysage, pas seulement ŷ0 : route B ou négatifs à
+marge (candidats raffinés-faux + bootstraps > E(x, y)) — la loss JEPA seule creuse le point
+vrai sans orienter ses alentours (E18f : pentes douces) ; (3) descente dans l'espace latent,
+ŷ = tête(z_pred + δ), δ descendu (TRM/HRM), si la sortie stagne ; (4) partir du checkpoint
+H2b, N = 0 majoritaire puis élargi ; (5) α et N randomisés, α par horizon, bruit de Langevin
+(limite multimodale d'EBT = nos séries à pics) ; (6) convention du critique choisie sur la
+sonde (E18c : contextualisé juge mieux). **AVANT TOUT : plafond de raffinement** — descente
+sur la vraie pinball (triche, jamais officiel), mêmes N et α : borne ce que dix pas peuvent
+rendre sur ce fan ; si < 0.5 pt, S6 est clos avant d'avoir coûté une nuit.
 
 ### XRES-MINI — go/no-go contre le désapprentissage (2026-09-06)
 
