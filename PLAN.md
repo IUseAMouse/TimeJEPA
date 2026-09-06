@@ -1400,6 +1400,9 @@ TTM 3× l'écart CRPS. Trois hypothèses, un test d'une soirée chacun, une vari
 - **H1** pretrain ≠ goulot → scratch head8 (en cours, P-scr.1..2).
 - **H2** le finetune dérive loin de GIFT → `finetune_mode: linear_probe` depuis le val-best.
 - **H3** centre de la tête quantile mou → perte ponctuelle sur la médiane au finetune.
+- **H4 (conditionnel, si H1/H2 laissent la question ouverte)** le prédicteur nuit ou ne sert
+  pas au finetune → tête quantile directement sur l'encodeur, prédicteur court-circuité
+  (code : la tête attend les latents prédits). Jamais testé à ce jour.
 Séquence GPU : scratch → S4-c → pretrain xres (2 j) → H2/H3 sur la carte libre → finetune
 xres (+ grille S4-c si positive, `+ratein_w`). CPU : backtest 4 fenêtres, diagnostic W/M.
 Corpus : recouvrement GiftEvalPretrain audité (67/152 en v3, 78 avec v4 ; 53 shards

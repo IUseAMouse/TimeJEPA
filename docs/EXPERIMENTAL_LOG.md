@@ -1919,6 +1919,27 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (ÉTAT DES PREUVES, réponse à deux questions utilisateur : « l'EBM a-t-il un
+  vrai avantage ? » et « la déviation prédicteur + décodeur était-elle mauvaise ? »)** —
+  **EBM** : ce qui tient, mesuré et répliqué — sonde E18b (rang du vrai futur 0.235 vs 0.5,
+  juge qui mûrit avec le pretrain), uplift sur proposeur PONCTUEL (Nixtla 6/6 avec deux
+  juges ; GIFT TTM 0.7258 → hybride 0.6508, intervalles calibrés, zéro entraînement), gate
+  ESJEPA +18.7 pts sur son protocole. Ce qui ne tient pas — dilution de notre propre fan,
+  sélecteur de taux par énergie (0.5848), hybride 0.65 loin de la pile 0.534 ; et **le full
+  finetune désapprend l'énergie** (E18b) : forecaster et juge sont deux checkpoints, la
+  promesse « un modèle, deux usages » n'est pas tenue. Verdict : résultat réel, étroit,
+  secondaire — section « ce que l'énergie fait et ne fait pas », pas une vitrine.
+  **Prédicteur + décodeur** : la recette classique (prédicteur jeté, décodeur sur
+  l'encodeur) n'a JAMAIS été testée — aucune entrée, aucune config. On ne peut ni la
+  blâmer ni la défendre ; le nu plafonne à 0.613 sans mécanisme établi. H1 (scratch) teste
+  les poids, H2 (linear probe) teste les features avec prédicteur gelé ; aucun des deux ne
+  teste le prédicteur lui-même → **H4 conditionnel** : tête quantile directement sur les
+  embeddings de l'encodeur, prédicteur court-circuité (code, quelques dizaines de lignes :
+  la tête attend aujourd'hui les latents prédits et cross-attend au contexte), à lancer si
+  H1/H2 laissent la question ouverte. Lecture pour le papier : sur GIFT, les preuves
+  positives sont à l'inférence ; l'architecture de finetune est une hypothèse non testée,
+  pas un acquis.
+
 - **2026-09-06 (AUDIT DE RECOUVREMENT GiftEvalPretrain × notre corpus, et PLAN DU PLATEAU :
   trois hypothèses H1-H3, tests d'une soirée chacun)** — Question utilisateur : que
   recouvre-t-on du corpus de pretrain sanctionné ? Croisement (liste HF du jour, 152
