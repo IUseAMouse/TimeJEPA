@@ -1919,6 +1919,28 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (XRES : le risque de désapprentissage au finetune est RÉEL et NON MESURÉ —
+  instruments go/no-go inscrits avant le lancement)** — Question utilisateur : ESJEPA a
+  perdu z au finetune, E18b a montré que le full finetune détruit l'alignement énergétique
+  (rang du vrai futur 0.245 → 0.409, sz_taxi sous le hasard) ; pourquoi xres survivrait-il ?
+  État des pièces : la mitigation G9.3 (« une capacité survit si et seulement si elle est
+  traversée par le gradient ») est CÂBLÉE et testée mécaniquement — paires w≠1 au finetune
+  (`p_multi_resolution_finetune` 0.3, FiLM traversé par 30 % des items), ancre λ·MSE(z_pred,
+  z_tgt) avec cible = copie de l'encodeur chargé (9 tests) — mais **jamais exercée dans un
+  run réel** : tous les finetunes tiny/mini ont tourné avec lambda_anchor 0 et sans w.
+  Différence de mécanisme avec ESJEPA/E18b : z n'était lu par AUCUNE perte de finetune
+  (gradient nul par construction), alors que w entre dans la pinball via le FiLM sur les
+  items w≠1 — la survie est plausible, pas prouvée. **Trois instruments, tous avant de
+  faire confiance au finetune** : (1) témoins live `aug/w_neq1_frac` > 0 et `train_loss/
+  anchor` stable (plateau, pas de dérive) ; (2) **test de sensibilité à w post-finetune**,
+  éval seule : sur les configs décimées, `+ratein_w` (fan demandé à w=1/k) contre le chemin
+  standard (w=1 + ré-interpolation) — bit-identiques ou quasi ⇒ FiLM mort, bras stérile ;
+  écart franc ⇒ conditionnement vivant ; (3) **sonde de cohérence** sur le checkpoint de
+  PRETRAIN : énergie E(ctx_k, y_k | w=1/k) vs E(ctx_k, y_k | w=1) sur des paires décimées
+  — dit si le pretrain a appris w AVANT de payer le finetune (probe_energy passe w=1
+  aujourd'hui, à étendre : petit travail). Règle : (3) après le pretrain, (1) pendant,
+  (2) au premier checkpoint de finetune ; si (2) est plat, on n'attend pas le 25 %.
+
 - **2026-09-06 (CHAMPION TINY IDENTIFIÉ ET REMESURÉ : mix-pool 0.8081/0.5529 — P-tmp.1 ÉCHEC,
   le prix de la capacité à pile égale est 1.9 pt, pas 1.1 ; DÉCISION : on reste sur mini,
   S5 (xres tiny) ANNULÉ, le mini xres redevient le bras xres)** — Champion tiny =

@@ -1403,6 +1403,15 @@ Mesure préalable P-tmp.1 (champion tiny `epoch00_valloss0.5949` en mix-pool) : 
 utilisateur : ablations sur mini, S5 annulé. P-xt.1..3 se reportent sur le MINI xres
 (pretrain 3 j 4 h, tête ×8, grille S4-c si positive, `+ratein_w`).
 
+### XRES-MINI — go/no-go contre le désapprentissage (2026-09-06)
+
+La mitigation G9.3 (paires w≠1 au finetune + ancre λ·MSE) n'a jamais été exercée en run réel.
+Trois instruments obligatoires : sonde de cohérence w sur le pretrain (à câbler dans
+probe_energy : E avec w=1/k vs w=1 sur paires décimées) ; témoins live `aug/w_neq1_frac`,
+`train_loss/anchor` ; test de sensibilité post-finetune (`+ratein_w` vs standard sur les
+configs décimées, bit-identique = FiLM mort) au PREMIER checkpoint. Réutilisation à
+l'inférence : w=1/k fourni par RateIN (k ≤ 4, plage log2 w ∈ [−2, 2] vue au train).
+
 ### PLATEAU DU NU — H1/H2/H3 (décision utilisateur 2026-09-06)
 
 Fait : nu 0.613 depuis tiny (25/08), tout le gain (−7.9 pts) est à l'inférence ; écart MASE vs
