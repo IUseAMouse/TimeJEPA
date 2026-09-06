@@ -1919,6 +1919,42 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (VEILLE : boucles de raisonnement dans l'architecture, générateur + critique —
+  ce que la littérature dit, et ce que nos propres mesures disent déjà)** — Question
+  utilisateur : GPT-6 Astra (profondeur récurrente) + notre paire juge latent / forecaster
+  ⇒ optimiser la boucle critique pour converger vers un bon forecast ? Lignée vérifiée :
+  Universal Transformer → Geiping 2025 « recurrent depth » (Huginn 3.5B : bloc récurrent
+  déroulé à profondeur arbitraire, nombre d'itérations tiré d'une log-normale Poisson à
+  l'entraînement, rétropropagation TRONQUÉE aux 8 dernières itérations, entrée ré-injectée
+  à chaque pas, état initial aléatoire, sandwich-norm, sortie adaptative sur KL) ;
+  HRM/TRM 2025 (7M params, récursion sur (z, y), supervision profonde, HRM gradient
+  1-pas par détachement, TRM rétroprop complète, ACT) ; **EBT 2025** (Gladstone et al.,
+  arXiv 2507.02092 : la prédiction EST une descente de gradient de ŷ dans une énergie
+  E(x, ŷ) apprise, N pas, pas α et N randomisés, entraînement À TRAVERS l'optimisation par
+  gradients du second ordre (produits Hessien-vecteur), +33-35 % de vitesse d'échelle vs
+  Transformer++ y compris en vidéo continue, mais instable sans réglage, mauvais sur les
+  distributions multimodales, exploré jusqu'à 800M) ; « Looped World Models » 2026
+  (modèle nourri de ses propres sorties, BPTT tronquée, supervision profonde, horizons
+  longs plus stables). Deux familles distinctes : (a) récurrence latente sans critique
+  (Astra, Huginn, TRM) ; (b) optimisation contre un vérificateur (EBT, planning JEPA) — la
+  question utilisateur est (b). **Ce que nous avons déjà mesuré en (b), à l'inférence,
+  critique NON entraîné pour être descendu (E18f, 2026-08-21)** : raffinement doux (3 pas,
+  lr 0.05) nul ; fort (10 pas, lr 0.5) = +1-2 % là où les propositions sont loin de la
+  vallée (exchange, dérive : WQL 0.92 → 0.86 en hybride TTM), nul ailleurs, micro-Goodhart
+  sur les tendances en pool centré (0.78 → 0.82). Lecture EBT : un paysage d'énergie
+  appris par JEPA n'est pas appris pour être DESCENDU ; le gain de la boucle vient de
+  l'entraîner à travers l'optimisation. Trois niveaux, coût croissant : L0 (existe)
+  raffinement inférence, +1-2 % sélectif ; L1 (après H2b, une soirée) : décodeur entraîné
+  à travers K pas de raffinement contre l'énergie PRÉSERVÉE (torch.autograd.grad avec
+  create_graph=True, énergie gelée ⇒ second ordre en y seulement), métrique = bat le
+  raffinement non entraîné d'E18f ; L2 (projet) : EBT temporel complet, la tête remplacée
+  par la minimisation d'énergie, nouveau pretrain, risques documentés. Prérequis absolu
+  de toute boucle : un critique qui SURVIT au finetune — c'est H2b. Pratique PyTorch
+  (l'erreur LSTM de l'utilisateur « backward through the graph a second time ») : un seul
+  backward sur la somme des pertes par pas (supervision profonde), ou détachement entre
+  segments (BPTT tronquée, HRM), ou grad avec create_graph pour le second ordre (EBT),
+  checkpointing pour la mémoire, nombre de pas randomisé.
+
 - **2026-09-06 (CAP WORLD MODEL et H2b gravés au PLAN — réponse aux questions de direction)**
   — Le pretrain JEPA n'apporte probablement pas de précision zero-shot parce que le finetune
   repasse sur le MÊME corpus de 10 Md d'observations avec un objectif plus direct (E15,
