@@ -1919,6 +1919,40 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (V4 : VERDICT NÉGATIF au 25 % — P-v4.1/2/3 ÉCHEC ; mécanisme identifié :
+  la condition d'entraînement des fenêtres à frontière N'EST PAS la condition d'éval)** —
+  Trajectoire v4 flip+backtest : 5 % 0.5484 · 10 % 0.5539 · 15 % **0.5512** · 20 % 0.5487 ·
+  25 % **0.5518** (val 0.6542, plate entre 20 et 25). Apparié head8 : 15 % 0.5466 (+0.46),
+  25 % 0.5433 (**+0.85 pt**) ; MASE 0.8065 vs 0.7914. **P-v4.3 ÉCHEC.** P-v4.1 (≥ 4/7
+  configs courtes en baisse au 25 %) : covid 35.9 (41.2) ✓, car_parts 0.859 (0.869) ✓,
+  hospital 0.785 (0.793) ✓ ; m4_quarterly 1.315 (1.314) et m4_monthly 1.014 (1.010) plats ;
+  m4_weekly 2.49 (2.35) ✗ ; **m4_yearly 4.53 (3.80) ✗✗** — 3/7, **ÉCHEC**. P-v4.2 (longues
+  stables ±1 %) : bizitobs_l2c/5T/long 0.267 (0.238, +12 %), bitbrains/5T/medium 0.730
+  (0.757, −4 %), solar/10T/short 0.523 (=) — **ÉCHEC**. Le signal le plus parlant : m4_yearly
+  se DÉGRADE de façon monotone le long du finetune v4 (3.63 → 4.14 → 4.68 → 5.51 → 4.53)
+  quand head8 s'améliore (4.19 → 3.80) : ce n'est pas du bruit, le bras enseigne quelque
+  chose de nuisible à l'extrapolation annuelle — malgré une dose de 0.3 % du batch.
+  **Mécanisme (vérifié dans le harnais, `prepare_context`)** : à l'ÉVAL, une série courte
+  devient un contexte COURT (troncature à gauche au multiple du stride, bourrage à UN patch
+  seulement ; l'encodeur RoPE accepte les longueurs variables, les buckets d'éval le font
+  déjà) — une série annuelle de 30 points est vue comme 24-30 pas, RevIN calculé sur les
+  points réels. À l'ENTRAÎNEMENT v4, la même série est un contexte de 1024 pas dont ~1000
+  de bourrage plat : RevIN (moyenne/écart-type sur tout le contexte) voit un écart-type
+  rétréci d'un facteur ≈ √(n_réel/1024) ≈ 0.15-0.2, donc les points réels et la cible
+  normalisés sont amplifiés ×5-7 ; la pinball sur ces items pèse d'autant, et surtout
+  l'item enseigne « après un long plateau, la cible saute à 5σ » — le contraire de ce
+  qu'une extrapolation annuelle calibrée doit faire. Ma spécification du 2026-09-05
+  (« exactement la condition que l'éval impose ») était FAUSSE : l'éval n'impose pas de
+  bourrage à 1024, elle raccourcit le contexte. Le bloc court v3 (nn5 735/1280) portait le
+  même défaut, atténué. **Statut S4-a : bras CLOS tel quel** (règle prédéclarée : les
+  configs courtes se dégradent ⇒ mécanisme). Pas de v4-dose : monter la dose d'un item mal
+  spécifié aggraverait. **Ce qui survit** : le sidecar `_reallen` (qui supprime les fenêtres
+  à cible-pad du v3, sain) et la pinball masquée (inerte hors bras). **Si on y revient
+  (S4-a')** : entraîner la condition RÉELLE d'éval = contextes COURTS à longueur variable
+  pour les lignes courtes (collate par bucket de longueur, comme l'éval ; RevIN sur les
+  points réels par construction) + dose relevée par cap dédié — un chantier de loader,
+  pas une ligne. À décider après xres. Le 30 % v4 sera lu mais ne change pas le verdict.
+
 - **2026-09-06 (V4@10 % : 0.8113/0.5539 — recul vs le 5 % (0.5484) et sous le 10 % standard
   (0.5517) ; les configs courtes reculent aussi)** — Checkpoint val 0.6571, flip+backtest :
   MASE 0.8113 / CRPS 0.5539 / couv **0.776** (q10 0.104, q90 0.880 — la meilleure

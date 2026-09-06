@@ -1384,7 +1384,14 @@ lotsa_mini_v4{,_zeroshot,_eval}. Prep : `docs/RUNBOOK_V4.md` — seul le bloc co
 refait (`lotsa_short_v4`, `--min-length 24 --chunk-length 1280 --pad-to 1280`), puis
 réassemblage par symlinks des mêmes 106 familles + lien `_reallen`. Levier MASE direct ; prérequis du contexte
 long (S4-b) : bourrer au lieu de filtrer rend l'allongement du contexte gratuit en
-couverture de corpus. Prédictions P-v4 à graver au lancement.
+couverture de corpus. **VERDICT 2026-09-06 : CLOS.** 25 % = 0.8065/0.5518 vs head8
+0.7914/0.5433 (+0.85 pt) ; P-v4.1/2/3 échouent ; m4_yearly se dégrade de façon monotone le
+long du finetune. Mécanisme : l'éval raccourcit le contexte des séries courtes (bourrage à un
+patch, RevIN sur les points réels), v4 les bourrait à 1024 (RevIN sur ~1000 pas plats →
+amplitudes normalisées ×5-7) — condition d'entraînement ≠ condition d'éval. Survivent :
+sidecar `_reallen` (supprime les fenêtres à cible-pad) et pinball masquée. Reprise
+éventuelle S4-a' = contextes courts à longueur variable (collate par bucket) + cap dédié,
+après xres.
 
 ### G14 — HEAD-WIDTH : l'allocation de capacité côté forecast (idée utilisateur 2026-09-02)
 
