@@ -1,0 +1,20 @@
+# @package _global_
+# SCRATCH control for the paper (2026-09-06): the head8 finetune recipe with
+# NO pretrained weights - the direct measure of what the JEPA pretrain is
+# worth on GIFT-Eval. Same corpus (lotsa_v3), same head x8, same optimizer,
+# same single epoch; lambda_anchor is already 0 in this lineage (an anchor to
+# a random encoder would be meaningless anyway).
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_scratch_zeroshot
+#   # NO +training.pretrained_encoder_path - that is the whole point.
+#   # eval: lotsa_mini_v3_head8_scratch_eval, flip+backtest, matched vs head8
+#   # (15% 0.7974/0.5466, 25% 0.7914/0.5433). Prediction P-scr.1 in the registry.
+defaults:
+  - lotsa_mini_v3_head8_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_scratch_zs"
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "scratch", "robust-scale"]

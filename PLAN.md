@@ -1400,6 +1400,9 @@ backtest poolé + mélange de quantiles, oracle et décomposition du résidu : �
 modèle comme vitrine ; l'énergie comme section « ce qu'elle fait / ne fait pas ». Deux
 mesures d'une soirée tranchent le titre AVANT réécriture : (1) finetune head8 from scratch
 (valeur du pretrain JEPA sur GIFT) ; (2) RateIN sur TTM-R3 (model-agnostic ou non).
+**Préparées le 2026-09-06** : configs `lotsa_mini_v3_head8_scratch_{zeroshot,eval}` ;
+`evaluate_gift_hybrid.py --ttm-only --ttm-flip --ttm-ratein` (adaptateur TTMForecaster,
+backtest poolé + mix sur le proposeur). P-scr.1..2 et P-TTM.1..3 au registre.
 
 ### S4-c — CONTEXTE COURT au finetune (créé 2026-09-06, config seule, à lancer)
 

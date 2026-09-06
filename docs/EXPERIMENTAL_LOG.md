@@ -1919,6 +1919,35 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (LES DEUX EXPÉRIENCES DU TITRE PRÉPARÉES : contrôle scratch et RateIN sur
+  TTM-R3 — prédictions gravées)** — (1) **Scratch** : `lotsa_mini_v3_head8_scratch_{zeroshot,
+  eval}`, recette head8 à l'identique SANS `pretrained_encoder_path` (corpus v3, tête ×8, 1
+  époque, LR 3e-4, lambda_anchor déjà 0 dans la lignée). Mesure directe de la valeur du
+  pretrain JEPA sur GIFT. **P-scr.1** : le scratch au 25 % (flip+backtest) est ≥ 2 pts de
+  CRPS au-dessus de head8 (0.5433) — le pretrain vaut au moins ce que E11/E12 mesuraient
+  hors domaine ; lecture prédéclarée : < 1 pt ⇒ le pretrain n'est pas un levier GIFT et le
+  papier est « petit forecaster + adaptation sans métadonnées », JEPA n'étant qu'un moyen ;
+  entre 1 et 2 ⇒ contribution secondaire ; ≥ 2 ⇒ JEPA reste au titre. P-scr.2 : le scratch
+  est PIRE en couverture (E8 : le scratch était moins calibré). (2) **RateIN sur TTM-R3**
+  (`evaluate_gift_hybrid.py --ttm-only --ttm-flip --ttm-ratein`) : adaptateur
+  `TTMForecaster` (point répété sur 9 niveaux, rollout autorégressif au-delà de 96, flip =
+  moyenne de f(x) et −f(−x)), `_backtest_series_k` poolé sur 32 séries par config (cap de
+  coût), `_mix_weights`, `ttm_layered_point` (décimation, forecast ⌈h/k⌉, ré-interpolation,
+  moyenne pondérée). Sorties sous `evaluation/gift_hybrid/ttm_raw[_flip][_ratein-mix-pool]/`.
+  Métrique : MASE contre la SN officielle (le CRPS d'un point est effondré, jamais cité) ;
+  référence TTM brut mesurée par nous 0.7475 (leaderboard 0.7240 : l'écart est le pipeline
+  TTM officiel, déjà documenté). 4 tests (adaptateur, flip exact sur un proposeur impair,
+  moyenne des composantes, backtest + mix sur l'adaptateur). **P-TTM.1** : flip seul
+  change la MASE de TTM de moins de 1 % (TTM a son propre RevIN, la symétrie de signe est
+  ~déjà là) ; **P-TTM.2** : flip + RateIN mix-pool améliore la MASE de TTM d'au moins 2 %
+  relatif (0.7475 → ≤ 0.732), gains concentrés sur les configs que l'oracle désigne chez
+  nous (bizitobs, solar/10T, electricity/15T, loop/5T) ; **P-TTM.3** : les poids du mix
+  sur TTM sont plus concentrés sur k=1 que chez nous (un modèle à embeddings de fréquence a
+  moins besoin de canonicalisation). Lecture : P-TTM.2 vrai ⇒ la couche est model-agnostic
+  et devient LE résultat ; faux ⇒ la sensibilité au taux est propre à notre lignée
+  (argument latent/JEPA, à écrire ainsi). Coût estimé : backtest 32 séries × 2 fenêtres ×
+  11 k rollouts par config, quelques heures sur les 97 configs à 150 instances.
+
 - **2026-09-06 (REPOSITIONNEMENT DU PAPIER : ce que les mesures autorisent, et les DEUX
   expériences bon marché qui tranchent la colonne vertébrale)** — Constat utilisateur :
   4e sub-10M ; le papier doit mettre en avant l'adaptation à l'inférence (backtest, opérations
