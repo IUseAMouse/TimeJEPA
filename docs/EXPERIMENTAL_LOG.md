@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (S6 : ce qui se mesure sur le champion head8 et ce qui ne s'y mesure PAS —
+  prédictions gravées avant la première éval)** — Objection utilisateur, retenue : le
+  raffinement par ÉNERGIE sur head8 interroge un juge que le finetune a dégradé (E18b,
+  0.245 → 0.409) ; un négatif là ne réfute rien, il est ATTENDU. Il ne se mesure que sur un
+  checkpoint entraîné avec le terme joint (H2b) puis la boucle (critic). Le PLAFOND, lui, ne
+  touche pas l'énergie : descente sur la vraie pinball, il borne ce que le MÉCANISME
+  (translation du centre, N pas, α) peut rendre sur ce fan, indépendamment du critique —
+  même geste que l'oracle de RateIN, borner avant d'optimiser. **P-ceil.1** (champion head8
+  mix-pool 0.5340, α ∈ {0.1, 0.3, 0.5}, N=8) : le meilleur plafond rend entre 0.5 et 1.5 pt
+  de CRPS (bande large : le centre est déjà la médiane d'une pinball entraînée) ; < 0.5 pt ⇒
+  S6 CLOS ; > 1.5 pt ⇒ le centre porte un biais systématique qu'un critique peut viser.
+  **P-ceil.2 (utilisateur)** : `+refine=energy` sur head8, témoin négatif : ≤ 0.1 pt de gain
+  ou dégradation — un positif ici serait la surprise, pas le négatif. Le vrai test du
+  critique est la courbe `critic/pinball_i` du bras critic, puis `+refine=energy` sur SON
+  checkpoint contre le plafond mesuré sur le même checkpoint.
+
 - **2026-09-06 (S6 CODE LIVRÉ, NON COURU : loss jointe H2b, boucle critique à
   l'entraînement, raffinement à l'inférence, plafond — quatre briques, tous défauts
   inertes)** — Décision utilisateur : implémentation complète pendant que les runs tournent.
