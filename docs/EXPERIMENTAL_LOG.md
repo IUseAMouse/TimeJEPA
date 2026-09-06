@@ -1919,6 +1919,37 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (RATEIN SUR TTM-R3, LECTURE APPARIÉE : brut 0.7057 → flip 0.6989 → flip +
+  mix-pool 0.6857 sur 87 configs identiques — P-TTM.2 ✓ (−2.8 %), LA COUCHE EST
+  MODEL-AGNOSTIC ; V4@30 % clôt la trajectoire, verdict inchangé ; scratch lancé)** —
+  `ttm_layers_paired.py` : 88 configs finies partout, 87 à comptes d'instances identiques
+  (agrégats dessus, SN officielle). **brut 0.7057 · flip 0.6989 (−0.96 %) · flip+mix-pool
+  0.6857 (−2.8 % vs brut, −1.9 % vs flip)** ; le mix bat le brut sur **52/87** configs,
+  geomean des ratios par config 0.9716. P-TTM.1 ✓ (flip < 1 %), **P-TTM.2 ✓** (≥ 2 %
+  relatif ; 2.8 mesuré à 10 instances/config — barre d'erreur large, lecture par config
+  concordante), P-TTM.3 ✓ (poids plus concentrés sur k=1 que chez nous). Gains max :
+  bizitobs_l2c/5T/medium ×0.48 (k12), /long ×0.53 (k32-48), temperature_rain ×0.72 (k8),
+  loop_seattle/5T/long ×0.72 (k12), jena/10T/long ×0.78 (k3), bizitobs_service 10S
+  long/medium ×0.84 (k3) — les MÊMES configs et les MÊMES k que notre oracle : le
+  mécanisme (cycles hors bande + rollout) est celui du benchmark, pas celui de notre
+  modèle. Pertes max : bizitobs_application/10S/short ×1.53 (k6-8), bitbrains_fast_
+  storage/H/short ×1.29 (k16), bizitobs_application/10S/long ×1.19, m4_hourly ×1.18,
+  bitbrains_fast_storage/5T/medium ×1.17 — faux positifs d'un backtest sur proposeur
+  ponctuel (pinball = MAE) à 32 séries. **Conséquence papier** : RateIN (backtest causal
+  poolé + mélange de quantiles, zéro métadonnée) transporte sur un modèle étranger à
+  recette figée — c'est le résultat principal ; TimeJEPA en est la vitrine (−7.9 pts) et
+  TTM-R3 la preuve de transport (−2.8 % MASE). À citer avec la réserve « 10 instances par
+  config, 87 configs » ; version à 30 instances si le budget le permet. **V4@30 %** (val
+  0.6559, loss repartie à la hausse) : 0.8086/0.5485, couverture **0.729** (q10 0.132,
+  q90 0.861 — la pire de la lignée mini), m4_yearly 4.77. Trajectoire close : 5 % 0.5484 ·
+  10 % 0.5539 · 15 % 0.5512 · 20 % 0.5487 · 25 % 0.5518 · 30 % 0.5485 — plateau 0.548-0.554,
+  jamais sous son 5 %, et une couverture qui s'ÉRODE le long du finetune (0.758 → 0.729) :
+  signature cohérente avec le mécanisme RevIN (des items à amplitude normalisée ×5-7
+  apprennent des fans mal calibrés). Verdict S4-a inchangé, clos. **Scratch head8 lancé**
+  (utilisateur) : run laissé entier, la courbe de train sMAPE annonce des premiers
+  checkpoints faibles ; règle de lecture prédéclarée : le MEILLEUR checkpoint du scratch
+  (flip+backtest) contre le meilleur head8 (0.5433) — contrôle lu avec générosité.
+
 - **2026-09-06 (RATEIN SUR TTM-R3, première lecture à 10 instances/config : brut 0.7125 →
   flip 0.7057 → flip + mix-pool 0.6829 (MASE vs SN officielle) — P-TTM.1 ✓, P-TTM.2 ✓
   SOUS RÉSERVE d'appariement, P-TTM.3 ✓)** — Trois runs `--ttm-only --instances 10 --tag

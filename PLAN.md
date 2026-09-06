@@ -1403,6 +1403,9 @@ mesures d'une soirée tranchent le titre AVANT réécriture : (1) finetune head8
 **Préparées le 2026-09-06** : configs `lotsa_mini_v3_head8_scratch_{zeroshot,eval}` ;
 `evaluate_gift_hybrid.py --ttm-only --ttm-flip --ttm-ratein` (adaptateur TTMForecaster,
 backtest poolé + mix sur le proposeur). P-scr.1..2 et P-TTM.1..3 au registre.
+**(2) MESURÉ 2026-09-06 : TTM-R3 brut 0.7057 → flip+mix-pool 0.6857 (−2.8 % MASE, 52/87
+configs, apparié, 10 inst/config) — P-TTM.1..3 ✓, la couche est MODEL-AGNOSTIC ; résultat
+principal du papier v8.** (1) scratch en cours.
 
 ### S4-c — CONTEXTE COURT au finetune (créé 2026-09-06, config seule, à lancer)
 
