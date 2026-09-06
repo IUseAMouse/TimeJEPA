@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (CLASSEMENT « FONDATIONS SEULES » : snapshot frais du leaderboard, doc
+  `docs/GIFT_RANKINGS.md`, script `gift_foundation_rank.py`)** — Demande utilisateur : se
+  comparer aux vrais modèles de fondation, pas aux orchestrateurs. Snapshot
+  2026-09-06 vendu (127 entrées ; nouveaux depuis le 22/08 : TimesFM-3 330M à 0.4557,
+  Granite-PatchTST-FM-r2 ; rien ne bouge autour de nous). Filtre : `model_type` ∈
+  {zero-shot, pretrained}, sans fuite déclarée, moins les enveloppes reconnaissables au nom
+  (STRIDE +Chronos-2/+Timer-S1) → **63 fondations sur 127** ; le reste = 28 agentiques,
+  6 fine-tuned, 10 deep-learning par jeu, 6 statistiques, 17 à fuite. Le sommet du
+  leaderboard (EXAONE-Agent 0.4185, STRIDE_w_Synapse, CastStar, LS-Agent) est entièrement
+  agentique ; la meilleure fondation seule est TimesFM-3 (0.4557, 330M). **Nos rangs** :
+  mini head8 (flip+mix+pool 0.5340) = **37e / 63 fondations**, **6e des sub-10M** (5e en
+  comptant FlowState une fois : r1.1, Granite-r1.1 et 9.1M sont une lignée) — devant
+  TinyCast, goia, Kairos, Metamorph ; derrière FlowState, TTM-R3-PT (0.5195) et Toto-2.0-4m
+  (0.5242). tiny (0.5588) = 11e sub-10M. Le README garde sa table sub-10M (à aligner sur ce
+  doc : retirer TempoPFN, 34.7M). Réserve : le type est auto-déclaré par les auteurs.
+
 - **2026-09-06 (POINT D'ÉTAPE après v4 : la randomisation de contexte EXISTE déjà au finetune
   mais s'arrête à 128 ; bras S4-c « contexte court » créé, config seule ; carte gift_gap
   lue)** — Question utilisateur (« on ne le fait pas déjà ? ») : SI. Valeurs effectives du
