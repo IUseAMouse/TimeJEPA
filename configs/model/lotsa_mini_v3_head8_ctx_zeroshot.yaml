@@ -1,0 +1,27 @@
+# @package _global_
+# SHORT-CONTEXT CROP arm (2026-09-06, S4-c). The finetune already randomizes
+# the context length per batch (p=0.5) over {128..1024}; the GIFT configs
+# that bleed MASE arrive with 13-72 steps of history (m4_yearly, car_parts,
+# hospital, part of m4_quarterly/monthly/weekly) - a regime never seen.
+# One variable vs the head8 champion: the grid gains 32 and 64 (stride
+# multiples, >= one patch). No corpus change (lotsa_v3), no padding: the crop
+# keeps the most recent steps, RevIN sees real points only - the eval condition.
+# Dose: 2/10 lengths x p 0.5 = ~10% of batches in the short regime.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_ctx_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # witness: geometry/context_len hits 32 and 64 in the first decile
+#   # eval: lotsa_mini_v3_head8_ctx_eval, flip+backtest, matched vs head8
+#   # (15% 0.7974/0.5466, 25% 0.7914/0.5433); P-ctx.1..3 in the registry.
+defaults:
+  - lotsa_mini_v3_head8_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_ctx_zs"
+
+training:
+  context_lengths: [32, 64, 128, 192, 256, 384, 512, 640, 768, 1024]
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "short-context", "robust-scale"]

@@ -1393,6 +1393,14 @@ sidecar `_reallen` (supprime les fenêtres à cible-pad) et pinball masquée. Re
 éventuelle S4-a' = contextes courts à longueur variable (collate par bucket) + cap dédié,
 après xres.
 
+### S4-c — CONTEXTE COURT au finetune (créé 2026-09-06, config seule, à lancer)
+
+La randomisation de contexte du finetune s'arrête à 128 ; les saigneurs MASE (m4_yearly
+13-40 pas, car_parts 39, hospital 72, partie de m4_q/m/w) arrivent à l'éval sous ce seuil,
+régime jamais vu. `lotsa_mini_v3_head8_ctx_{zeroshot,eval}` : grille + {32, 64}, une variable
+vs head8, corpus v3, pas de bourrage (recadrage à gauche = condition d'éval). P-ctx.1..3 au
+registre. Remplace S4-a (v4, clos) comme levier « historiques courts ».
+
 ### G14 — HEAD-WIDTH : l'allocation de capacité côté forecast (idée utilisateur 2026-09-02)
 
 Audit des paramètres (2026-09-02) : encodeur 52 %, prédicteur 37-40 %, TÊTE QUANTILE

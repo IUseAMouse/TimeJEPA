@@ -1919,6 +1919,41 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (POINT D'ÉTAPE après v4 : la randomisation de contexte EXISTE déjà au finetune
+  mais s'arrête à 128 ; bras S4-c « contexte court » créé, config seule ; carte gift_gap
+  lue)** — Question utilisateur (« on ne le fait pas déjà ? ») : SI. Valeurs effectives du
+  finetune head8 (composition Hydra) : `context_lengths` {128, 192, 256, 384, 512, 640, 768,
+  1024}, `p_random_context_finetune` 0.5, tirage par batch, recadrage à gauche (le témoin
+  `geometry/context_len` de la capture wandb d'hier oscillait bien entre 256 et 1000).
+  Le régime JAMAIS vu est donc < 128 : à l'éval, m4_yearly arrive avec 13-40 pas,
+  car_parts 39, hospital 72, une partie de m4_quarterly/monthly/weekly — exactement les
+  saigneurs MASE. Correction de ma proposition d'hier soir : pas un nouveau mécanisme,
+  une extension de grille. **S4-c** : `lotsa_mini_v3_head8_ctx_{zeroshot,eval}` — même
+  pretrain, même tête ×8, corpus lotsa_v3, UNE variable : la grille gagne 32 et 64 (≈ 10 %
+  des batchs en régime court). Aucun bourrage : le recadrage garde les pas récents, RevIN
+  voit des points réels — la condition d'éval, cette fois vérifiée. Coût : un finetune
+  d'une soirée. **P-ctx (gravées, à lancer sur décision utilisateur ; référence appariée
+  head8 flip+backtest 15 % 0.7974/0.5466, 25 % 0.7914/0.5433)** : P-ctx.1 ≥ 4 des 6
+  configs à contexte court (m4_yearly 3.80, m4_quarterly 1.31, m4_monthly 1.01, m4_weekly
+  2.35, hospital 0.79, car_parts 0.87) baissent en MASE au 25 % ; P-ctx.2 configs longues
+  stables à ±1 % de CRPS ; P-ctx.3 MASE < 0.7914 et CRPS ≤ 0.5433 au 25 %. ÉCHEC-DIAGNOSTIC
+  si P-ctx.1 < 4/6 : le régime court n'est pas le mécanisme du saignement MASE — c'est
+  l'extrapolation elle-même (tête/objectif), et on arrête de chercher côté données.
+  **Carte gift_gap (mix-pool head8, ratios officiels)** : vs Toto (0.5242) on gagne 36/97,
+  pertes max bizitobs_application/10S/short ×1.79, bizitobs_service/10S/short ×1.38,
+  us_births/M ×1.32, electricity/W ×1.27, bitbrains_fast_storage/5T long/medium ×1.24 ;
+  gains max bizitobs_l2c/5T/long ×0.36, /medium ×0.56 (RateIN). **What-if queue(16) au
+  niveau de Toto : 0.5271 — encore au-dessus de Toto (0.5242)** : l'écart à la 3e place est
+  LARGE, pas concentré dans une queue. Vs FlowState (0.5019) : 24/97, pertes systématiques
+  sur W et M (electricity/W ×1.60, solar/W ×1.53, us_births M/W/D ×1.26-1.39, m4_hourly
+  ×1.46) ; what-if 0.5208. Lecture : (1) les basses fréquences à horizon court (W : h=8,
+  M : h=12-18) sont une faiblesse structurelle, distincte des contextes courts (electricity/W
+  a ~150 pas de contexte, us_births/M ~240) — mécanisme candidat à instrumenter : à h ≤ un
+  patch, la tête quantile n'a qu'une fraction de patch à prédire ; (2) les 10S short
+  (bizitobs) restent notre pire duel malgré RateIN ; (3) la 3e place demande un gain
+  DIFFUS de ~1 pt sur le corps, pas une queue. Ordre proposé : S4-c (une soirée) → xres
+  (deux jours, hérite) ; diagnostic W/M en parallèle sur caches (CPU).
+
 - **2026-09-06 (V4 : VERDICT NÉGATIF au 25 % — P-v4.1/2/3 ÉCHEC ; mécanisme identifié :
   la condition d'entraînement des fenêtres à frontière N'EST PAS la condition d'éval)** —
   Trajectoire v4 flip+backtest : 5 % 0.5484 · 10 % 0.5539 · 15 % **0.5512** · 20 % 0.5487 ·
