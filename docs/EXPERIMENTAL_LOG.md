@@ -1919,6 +1919,27 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (DÉCISION : ablation XRES À PETITE ÉCHELLE d'abord — bras tiny xres v3 déclenché,
+  mix-pool sur le champion tiny, prédictions gravées)** — Question utilisateur : combien vaut
+  xres, et faut-il ablater sur tiny avant de scaler ? Faits : (1) aucun chiffre GIFT n'existe
+  pour xres — G9.2 tiny était muet par construction (w=1 à l'éval) ; l'estimation « 0.5-1 pt »
+  reposait sur le résidu de sélection (1.5 pt) et la ré-interpolation évitée par `+ratein_w`.
+  (2) Le mix-pool n'a jamais été mesuré sur le tiny (arrêté au backtest v3, 0.5588). (3) Un
+  seul bras a été mesuré aux deux échelles, RateIN, et son gain a grandi (−3.95 → −4.61 pt).
+  Les configs `lotsa_tiny_xres_v3{,_zeroshot,_eval}` (G9.3 amendé : w exercé au finetune,
+  ancre λ=0.1, p_multi_resolution_finetune 0.3) étaient GATED PAR DÉCLENCHEUR — les deux
+  déclencheurs sont maintenant remplis (oracle > +5 % sur 35/97 configs ; le sélecteur
+  causal cale à 1.5 pt du plafond). **Bras déclenché.** Référence appariée = champion tiny
+  (nu 0.8914/0.6134, flip 0.5983, backtest v3 0.5588) remesuré en flip + mix-pool.
+  **Prédictions** : P-tmp.1 tiny flip+mix-pool = **0.545 ± 0.005** (le prix de la capacité à
+  pile égale ≈ 1.1 pt vs mini head8 0.5340) ; P-xt.1 tiny xres v3, finetune, flip+backtest
+  dur ≤ référence tiny backtest − 0.5 pt ; P-xt.2 `+ratein_w` (fan au taux natif, k ≤ 4)
+  apporte ≥ 0.3 pt de plus ; P-xt.3 l'oracle du tiny xres est plus bas que celui du tiny
+  standard (0.5358) d'au moins 0.5 pt — le conditionnement monte le PLAFOND, pas seulement
+  la capture ; ÉCHEC-DIAGNOSTIC si P-xt.1 et P-xt.3 faux : xres n'apporte rien que RateIN
+  n'apporte déjà, le mini xres est annulé (deux jours économisés). Témoins : pretrain
+  `aug/w_neq1_frac` > 0 ; finetune `aug/w_neq1_frac` > 0 et `train_loss/anchor` stable.
+
 - **2026-09-06 (ÉTAT DES PREUVES, réponse à deux questions utilisateur : « l'EBM a-t-il un
   vrai avantage ? » et « la déviation prédicteur + décodeur était-elle mauvaise ? »)** —
   **EBM** : ce qui tient, mesuré et répliqué — sonde E18b (rang du vrai futur 0.235 vs 0.5,
