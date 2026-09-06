@@ -1,0 +1,32 @@
+# @package _global_
+# H2b JOINT arm (2026-09-06): keep the JEPA term on the TRUE target during
+# the finetune so the model keeps its judge. Measured motivation: the plain
+# pinball finetune degrades the true-future energy rank from 0.245 to 0.409
+# (E18b) - forecaster and judge had to be two checkpoints. Frozen target =
+# copy of the loaded online encoder (anchor convention, trap #1), standalone
+# targets (v3 pretrain convention), SIGReg on the context embeddings with
+# the pretrain's config. One variable vs the head8 champion: lambda_joint.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_joint_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # witnesses: train_loss/joint, train_loss/sigreg (finite, plateau)
+#   # success is read OUTSIDE training: probe_energy on the finetuned
+#   # checkpoint, true-future rank <= 0.30 (plain finetune: 0.409), at a CRPS
+#   # cost <= 0.3 pt vs head8 matched (flip+backtest). Eval config:
+#   # lotsa_mini_v3_head8_joint_eval.
+defaults:
+  - lotsa_mini_v3_head8_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_joint_zs"
+
+training:
+  loss:
+    lambda_joint: 0.3
+    joint_target: frozen
+    joint_contextualized: false
+    joint_sigreg: true
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "joint", "robust-scale"]

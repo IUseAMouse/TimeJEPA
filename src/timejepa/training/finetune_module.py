@@ -17,7 +17,9 @@ from .utils.metrics import (
     mse,
     mae,
     weighted_quantile_loss,
+    jepa_loss,
 )
+from . import critic
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,40 @@ class FinetuneModule(pl.LightningModule):
         # the finetune exercises it. Default 0.0 = bit-identical to existing.
         lambda_anchor: float = 0.0,
 
+        # H2b (2026-09-06) - JOINT loss: keep a JEPA term on the TRUE target
+        # during finetune so the model keeps its judge (E18b: plain pinball
+        # finetune degrades the true-future rank 0.245 -> 0.409). A separate
+        # block from lambda_anchor (which stays bit-identical); the two are
+        # mutually exclusive. joint_target: 'frozen' (copy of the loaded
+        # online encoder, the anchor's convention) or 'ema' (updated by the
+        # pretrain's EMACallback, wired by train.py). joint_contextualized:
+        # encode [ctx || y] (refused on xres). joint_sigreg: add the
+        # pretrain's SIGReg regularizer on the context embeddings.
+        lambda_joint: float = 0.0,
+        joint_target: Literal['frozen', 'ema'] = 'frozen',
+        joint_contextualized: bool = False,
+        joint_sigreg: bool = False,
+        sigreg_config: Optional[Dict[str, Any]] = None,
+
+        # S6 (2026-09-06) - CRITIC LOOP: after the head's fan, N gradient
+        # steps of the fan's center down the energy E(x, y-hat) (module
+        # timejepa.training.critic), a pinball at every step, one backward.
+        # critic_steps: the N values sampled per batch ([] = off; eval runs
+        # max(critic_steps) deterministically). critic_route 'A' detaches
+        # z_pred inside the energy (critic frozen during the descent), 'B'
+        # keeps it in the graph (the landscape is trained through the
+        # descent). Gated behind the joint loss: refuses lambda_joint == 0.
+        critic_steps: Optional[List[int]] = None,
+        critic_alpha: float = 0.0,
+        critic_route: Literal['A', 'B'] = 'A',
+        critic_target: Literal['center', 'fan'] = 'center',
+        critic_energy: Literal['cos', 'mse'] = 'cos',
+        critic_contextualized: bool = False,
+        critic_step_weights: Literal['uniform', 'last'] = 'uniform',
+        critic_noise: float = 0.0,
+        critic_batch_fraction: float = 1.0,
+        critic_max_abs_delta: float = 5.0,
+
         # Worksite 2 (native horizon) - merge the query table of a
         # SHORT-horizon checkpoint into a LONG-horizon model instead of
         # dropping it. Opt-in: without this flag a mismatch stays a loud
@@ -126,10 +162,69 @@ class FinetuneModule(pl.LightningModule):
                 "anchor would have no gradient (everything frozen) and would "
                 "skew val_loss.")
 
+        # H2b / S6 attributes and guards - all before loading, all loud.
+        self.lambda_joint = float(lambda_joint)
+        self.joint_target = str(joint_target)
+        self.joint_contextualized = bool(joint_contextualized)
+        self.joint_sigreg = bool(joint_sigreg)
+        self.sigreg_config = dict(sigreg_config or {})
+        steps = list(range(int(critic_steps) + 1)) if isinstance(critic_steps, int) \
+            else sorted(set(int(n) for n in (critic_steps or [])))
+        self.critic_steps = [n for n in steps if n >= 0]
+        self.critic_n_max = max(self.critic_steps) if self.critic_steps else 0
+        self.critic_alpha = float(critic_alpha)
+        self.critic_route = str(critic_route)
+        self.critic_target = str(critic_target)
+        self.critic_energy = str(critic_energy)
+        self.critic_contextualized = bool(critic_contextualized)
+        self.critic_step_weights = str(critic_step_weights)
+        self.critic_noise = float(critic_noise)
+        self.critic_batch_fraction = float(critic_batch_fraction)
+        self.critic_max_abs_delta = float(critic_max_abs_delta)
+        self._needs_latents = self.lambda_joint > 0 or self.critic_n_max > 0
+        if self.lambda_joint > 0 and self.lambda_anchor > 0:
+            raise ValueError("lambda_joint and lambda_anchor are mutually exclusive "
+                             "(the same latent MSE would be counted twice; the "
+                             "joint loss with frozen standalone targets IS the anchor)")
+        if self.lambda_joint > 0 and finetune_mode == 'linear_probe':
+            raise ValueError("lambda_joint > 0 with finetune_mode='linear_probe': "
+                             "encoder and predictor are frozen, the term would "
+                             "have no gradient and would skew val_loss.")
+        if self.joint_target not in ('frozen', 'ema'):
+            raise ValueError(f"joint_target must be 'frozen' or 'ema', got {joint_target!r}")
+        has_film = getattr(self.model.predictor, 'w_film', None) is not None
+        if (self.joint_contextualized or self.critic_contextualized) and has_film:
+            raise ValueError("contextualized candidate encoding is not defined on a "
+                             "cross-resolution model (context and target grids differ)")
+        if self.critic_n_max > 0:
+            if self.lambda_joint <= 0:
+                raise ValueError("critic_steps > 0 requires lambda_joint > 0: without "
+                                 "the joint term the encoder has no reason to keep a "
+                                 "usable energy landscape (S6 is gated behind H2b)")
+            if finetune_mode == 'linear_probe':
+                raise ValueError("critic_steps > 0 with finetune_mode='linear_probe': "
+                                 "the descent needs a trainable encoder")
+            if not getattr(self.model.decoder, 'is_probabilistic', False):
+                raise ValueError("critic_steps > 0 requires a quantile head (the loop "
+                                 "refines a fan)")
+            if self.critic_route not in ('A', 'B'):
+                raise ValueError(f"critic_route must be 'A' or 'B', got {critic_route!r}")
+            if self.critic_target not in ('center', 'fan'):
+                raise ValueError(f"critic_target must be 'center' or 'fan', got {critic_target!r}")
+            if self.critic_energy not in ('cos', 'mse'):
+                raise ValueError(f"critic_energy must be 'cos' or 'mse', got {critic_energy!r}")
+            if self.critic_step_weights not in ('uniform', 'last'):
+                raise ValueError(f"critic_step_weights must be 'uniform' or 'last', "
+                                 f"got {critic_step_weights!r}")
+            if not (0.0 < self.critic_batch_fraction <= 1.0):
+                raise ValueError("critic_batch_fraction must be in (0, 1]")
+            if self.critic_alpha <= 0:
+                raise ValueError("critic_steps > 0 requires critic_alpha > 0")
+
         # Load pretrained weights if provided
         if pretrained_encoder_path is not None:
             self.load_pretrained_encoder(pretrained_encoder_path)
-        if self.lambda_anchor > 0:
+        if self.lambda_anchor > 0 or self.lambda_joint > 0:
             # Anchor trap #1: load_pretrained_encoder SKIPS the
             # target_encoder keys (see below), so self.model.target_encoder
             # is still the deepcopy of the online encoder AT CONSTRUCTION -
@@ -139,8 +234,9 @@ class FinetuneModule(pl.LightningModule):
             # stands in for the target") - exact as tau -> 1 at the end of
             # pretrain.
             self.model.target_encoder.copy_from(self.model.online_encoder)
-            logger.info("G9.3 anchor: target_encoder <- copy of the loaded "
-                        f"online encoder (lambda_anchor={self.lambda_anchor})")
+            logger.info("G9.3 anchor / H2b joint: target_encoder <- copy of the "
+                        f"loaded online encoder (lambda_anchor={self.lambda_anchor}, "
+                        f"lambda_joint={self.lambda_joint})")
 
         # Apply finetuning strategy
         self.finetune_mode = finetune_mode
@@ -170,6 +266,11 @@ class FinetuneModule(pl.LightningModule):
         # Logging
         self.log_every_n_steps = log_every_n_steps
     
+    def update_target_encoder(self, step: int, max_steps: int):
+        """EMA update of the joint-loss target (same hook as the pretrain
+        module; called by EMACallback when joint_target == 'ema')."""
+        self.model.update_target_encoder(step, max_steps)
+
     def load_pretrained_encoder(self, checkpoint_path: str):
         """Load pretrained encoder and predictor weights."""
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
@@ -326,7 +427,8 @@ class FinetuneModule(pl.LightningModule):
         that).
         """
         raw_target = target
-        results = self.model.forecast(context, w=w)
+        results = self.model.forecast(context, w=w,
+                                      return_representations=self._needs_latents)
 
         # G8.4 - if the model compresses (robust arcsinh), the target must get
         # the SAME compression with the context stats (just set by forecast())
@@ -352,6 +454,9 @@ class FinetuneModule(pl.LightningModule):
                                            target_mask)
 
         self._last_anchor = None
+        self._last_joint = None
+        self._last_sigreg = None
+        self._critic_stats = {}
         if self.lambda_anchor > 0:
             # Invariance MSE ALONE, no SIGReg: the target (frozen encoder) is
             # fixed, nothing can collapse - the argument already written for
@@ -379,7 +484,121 @@ class FinetuneModule(pl.LightningModule):
             loss = loss + self.lambda_anchor * anchor
             self._last_anchor = anchor.detach()
 
+        if self.lambda_joint > 0:
+            loss = loss + self.lambda_joint * self._joint_term(results, target, target_mask)
+        if self.critic_n_max > 0 and 'quantiles' in results:
+            loss = self._critic_loop(loss, results, target, target_mask)
+
         return loss, results, target
+
+    @staticmethod
+    def _full_items(target_mask: Optional[torch.Tensor], batch_size: int,
+                    device: torch.device) -> torch.Tensor:
+        """[B] bool: items whose target is entirely real (latent targets of
+        padded steps are meaningless - the anchor's rule)."""
+        if target_mask is None:
+            return torch.ones(batch_size, dtype=torch.bool, device=device)
+        return target_mask.reshape(target_mask.shape[0], -1).all(dim=1)
+
+    @staticmethod
+    def _masked_item_mean(per_item: torch.Tensor, full: torch.Tensor) -> torch.Tensor:
+        return per_item[full].mean() if bool(full.any()) else per_item.sum() * 0.0
+
+    def _joint_term(self, results, target_norm, target_mask):
+        """H2b: MSE between the predictor's latent (the tensor the head
+        consumed) and the target encoder's latent of the TRUE target, in the
+        head's frame; optional SIGReg on the context embeddings."""
+        z_pred = results['future_representations']
+        ctx_norm = results['context_norm']
+        with torch.no_grad():
+            z_y = critic.encode_candidate(self.model, ctx_norm, target_norm,
+                                          self.joint_contextualized,
+                                          encoder=self.model.target_encoder)
+        full = self._full_items(target_mask, z_pred.shape[0], z_pred.device)
+        per_item = (z_pred[:, :z_y.shape[1], :] - z_y).pow(2).flatten(1).mean(dim=1)
+        joint = self._masked_item_mean(per_item, full)
+        self._last_joint = joint.detach()
+        if self.joint_sigreg:
+            _, comps = jepa_loss(
+                z_pred[:, :z_y.shape[1], :], z_y, loss_type='sigreg',
+                reduction='mean', sigreg_config=self.sigreg_config,
+                context_embeddings=results['context_embeddings'],
+                return_components=True)
+            reg = comps['sigreg']
+            self._last_sigreg = reg.detach()
+            joint = joint + float(self.sigreg_config.get('lambda', 1.0)) * reg
+        return joint
+
+    def _critic_loop(self, loss, results, target_norm, target_mask):
+        """S6: N descent steps of the fan's center down the energy, a
+        pinball at each step. Train: sum of the step pinballs added to the
+        loss (one backward). Eval: N = max, deterministic, and the loss /
+        results become those of the REFINED fan (the deployed forecast)."""
+        head = self.model.decoder.decoder
+        if self.training:
+            n = int(self.critic_steps[torch.randint(len(self.critic_steps), (1,)).item()])
+        else:
+            n = self.critic_n_max
+        self._critic_stats = {'n_steps': float(n)}
+        if n == 0:
+            return loss
+        fan0 = results['quantiles']
+        z_pred = results['future_representations']
+        z_for_E = z_pred.detach() if self.critic_route == 'A' else z_pred
+        ctx_norm = results['context_norm']
+        B = fan0.shape[0]
+        full = self._full_items(target_mask, B, fan0.device)
+        sub = slice(None)
+        if self.training and self.critic_batch_fraction < 1.0:
+            m = max(1, int(round(B * self.critic_batch_fraction)))
+            start = int(torch.randint(B - m + 1, (1,)).item())
+            sub = slice(start, start + m)
+        mask_sub = None if target_mask is None else target_mask[sub]
+        # Validation/test run under no_grad (Lightning): the descent still
+        # needs a graph for the gradient w.r.t. the fan - build it locally.
+        with torch.enable_grad():
+            out = critic.refine_loop(
+                self.model, ctx_norm[sub], fan0[sub], z_for_E[sub], n,
+                alpha=self.critic_alpha, mode=self.critic_energy,
+                contextualized=self.critic_contextualized, target=self.critic_target,
+                median_idx=head.median_idx, create_graph=self.training,
+                noise_sigma=self.critic_noise if self.training else 0.0,
+                item_weight=full[sub].to(fan0.dtype),
+                max_abs_delta=self.critic_max_abs_delta)
+        pinballs = [head.loss(f, target_norm[sub], mask=mask_sub) for f in out['fans'][1:]]
+        e = torch.stack([en.reshape(en.shape[0], -1).mean(dim=1) for en in out['energies']])
+        e_full = e[:, full[sub]] if bool(full[sub].any()) else e
+        delta = sum(out['deltas'])
+        stats = self._critic_stats
+        stats['energy_0'] = float(e_full[0].mean())
+        stats['energy_N'] = float(e_full[-1].mean())
+        stats['energy_drop'] = stats['energy_0'] - stats['energy_N']
+        stats['pinball_0'] = float(head.loss(fan0[sub], target_norm[sub], mask=mask_sub).detach())
+        for i, pb in enumerate(pinballs, start=1):
+            stats[f'pinball_{i}'] = float(pb.detach())
+        stats['pinball_N'] = stats[f'pinball_{n}']
+        stats['delta_abs'] = float(delta.detach().abs().mean())
+        stats['delta_clipped_frac'] = float(
+            (delta.detach().abs() >= self.critic_max_abs_delta - 1e-6).float().mean())
+        if self.training:
+            if self.critic_step_weights == 'last':
+                return loss + pinballs[-1]
+            return loss + sum(pinballs) / len(pinballs)
+        # eval: the deployed forecast is the refined fan
+        refined = out['fans'][-1].detach()
+        if sub != slice(None):
+            refined_full = fan0.detach().clone(); refined_full[sub] = refined
+            refined = refined_full
+        results['quantiles'] = refined
+        results['forecast'] = head.median(refined)
+        if self.model.revin is not None or getattr(self.model, 'robust_scaler', None) is not None:
+            denorm = self.model.decoder.revin.denormalize_target_space(refined) \
+                if getattr(self.model.decoder, 'revin', None) is not None else refined
+            if getattr(self.model, 'robust_scaler', None) is not None:
+                denorm = self.model.robust_scaler.inverse(denorm)
+            results['quantiles_denorm'] = denorm
+            results['forecast_denorm'] = head.median(denorm)
+        return head.loss(refined, target_norm, mask=target_mask)
     
     def _maybe_crop_context(self, context: torch.Tensor) -> torch.Tensor:
         """
@@ -443,6 +662,16 @@ class FinetuneModule(pl.LightningModule):
         if self._last_anchor is not None:
             self.log('train_loss/anchor', self._last_anchor,
                      on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        if self._last_joint is not None:
+            self.log('train_loss/joint', self._last_joint,
+                     on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        if self._last_sigreg is not None:
+            self.log('train_loss/sigreg', self._last_sigreg,
+                     on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        for key, value in self._critic_stats.items():
+            # critic/pinball_i decreasing in i is THE decisive S6 curve.
+            self.log(f'critic/{key}', value, on_step=True, on_epoch=True,
+                     logger=True, sync_dist=True)
         
         if batch_idx % self.log_every_n_steps == 0:
             with torch.no_grad():
@@ -471,6 +700,12 @@ class FinetuneModule(pl.LightningModule):
         if self._last_anchor is not None:
             self.log('val_loss/anchor', self._last_anchor,
                      on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        if self._last_joint is not None:
+            self.log('val_loss/joint', self._last_joint,
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        for key, value in self._critic_stats.items():
+            self.log(f'val_critic/{key}', value, on_step=False, on_epoch=True,
+                     logger=True, sync_dist=True)
 
         # WQL is the metric GIFT-Eval ranks on, so track it directly rather than
         # inferring it from the point losses.

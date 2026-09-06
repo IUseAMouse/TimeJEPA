@@ -1,0 +1,42 @@
+# @package _global_
+# S6 CRITIC LOOP arm (2026-09-06), route A. After the head's fan, N gradient
+# steps of the fan's CENTER down the energy E(x, y-hat) = 1 - cos(z_pred,
+# enc(y-hat)) - the fan is translated with its median, the monotone head
+# structure survives - with a pinball at every step (deep supervision) and
+# ONE backward. N is sampled per batch in critic_steps; N = 0 is the joint
+# arm itself, kept in the draw so the head stays good on its own. Route A:
+# z_pred detached inside the energy (critic frozen during the descent, first
+# order in the weights, second order in y-hat through the encoder).
+# Validation runs N = max deterministically: val_loss is the loss of the
+# DEPLOYED (refined) forecast, comparable to the joint arm when N = 0.
+#
+# critic_alpha is a PLACEHOLDER: fix it from the inference-side ceiling
+# diagnostic (evaluate_gift +refine=ceiling) before launching.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_critic_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # THE decisive curve: critic/pinball_i must decrease with i (wandb).
+#   # Other witnesses: critic/energy_drop > 0, critic/delta_abs, critic/delta_clipped_frac ~ 0.
+#   # Eval config: lotsa_mini_v3_head8_critic_eval (+refine=energy for the loop at inference).
+defaults:
+  - lotsa_mini_v3_head8_joint_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_critic_zs"
+
+training:
+  loss:
+    critic_steps: [0, 1, 2, 3, 4]
+    critic_alpha: 0.05
+    critic_route: A
+    critic_target: center
+    critic_energy: cos
+    critic_contextualized: false
+    critic_step_weights: uniform
+    critic_noise: 0.0
+    critic_batch_fraction: 0.25
+    critic_max_abs_delta: 5.0
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "critic", "robust-scale"]

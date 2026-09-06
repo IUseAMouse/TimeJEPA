@@ -234,6 +234,25 @@ def main(cfg: DictConfig):
             # z_tgt) at finetune so drift destroys neither the judge nor xres
             # coherence. Default 0.0 = bit-identical.
             lambda_anchor=float(cfg.training.loss.get('lambda_anchor', 0.0)),
+            # H2b (2026-09-06) - joint JEPA term on the true target during
+            # finetune; S6 - critic loop. All keys absent from existing
+            # configs => inert defaults (bit-identical).
+            lambda_joint=float(cfg.training.loss.get('lambda_joint', 0.0)),
+            joint_target=str(cfg.training.loss.get('joint_target', 'frozen')),
+            joint_contextualized=bool(cfg.training.loss.get('joint_contextualized', False)),
+            joint_sigreg=bool(cfg.training.loss.get('joint_sigreg', False)),
+            sigreg_config=(OmegaConf.to_container(cfg.training.loss.sigreg, resolve=True)
+                           if cfg.training.loss.get('sigreg') else {}),
+            critic_steps=list(cfg.training.loss.get('critic_steps') or []),
+            critic_alpha=float(cfg.training.loss.get('critic_alpha', 0.0)),
+            critic_route=str(cfg.training.loss.get('critic_route', 'A')),
+            critic_target=str(cfg.training.loss.get('critic_target', 'center')),
+            critic_energy=str(cfg.training.loss.get('critic_energy', 'cos')),
+            critic_contextualized=bool(cfg.training.loss.get('critic_contextualized', False)),
+            critic_step_weights=str(cfg.training.loss.get('critic_step_weights', 'uniform')),
+            critic_noise=float(cfg.training.loss.get('critic_noise', 0.0)),
+            critic_batch_fraction=float(cfg.training.loss.get('critic_batch_fraction', 1.0)),
+            critic_max_abs_delta=float(cfg.training.loss.get('critic_max_abs_delta', 5.0)),
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,
@@ -302,8 +321,12 @@ def main(cfg: DictConfig):
     # LR monitor
     callbacks.append(LearningRateMonitor(logging_interval='step'))
     
-    # EMA (pretrain only)
-    if is_pretrain and cfg.training.ema.enabled:
+    # EMA: pretrain, or a finetune whose joint-loss target is an EMA (H2b,
+    # joint_target: ema) - the same callback drives FinetuneModule.update_target_encoder.
+    joint_ema = (not is_pretrain
+                 and str(cfg.training.loss.get('joint_target', 'frozen')) == 'ema'
+                 and float(cfg.training.loss.get('lambda_joint', 0.0)) > 0)
+    if (is_pretrain and cfg.training.ema.enabled) or joint_ema:
         callbacks.append(EMACallback(
             momentum_base=cfg.training.ema.momentum_base,
             momentum_final=cfg.training.ema.momentum_final,

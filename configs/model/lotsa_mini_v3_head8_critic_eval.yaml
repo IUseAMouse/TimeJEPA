@@ -1,0 +1,13 @@
+# @package _global_
+# Eval for the S6 critic arm: architecture identical to
+# lotsa_mini_v3_head8_eval, own output namespace. The inference-time loop is
+# a harness flag (+refine=energy), not a config key.
+defaults:
+  - lotsa_mini_v3_head8_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_critic_zs"
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "head8", "critic", "robust-scale"]
