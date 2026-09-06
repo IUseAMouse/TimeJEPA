@@ -1919,6 +1919,24 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (PLAFOND DE RAFFINEMENT, point « raw » : le centre du fan porte un biais de
+  position petit et cohérent — 0.4695 CRPS à 0.06 σ de déplacement, ORACLE, jamais officiel)**
+  — Champion head8 mix-pool (0.7842 / 0.5340, couverture 80 % 0.756), `+refine=ceiling`
+  N=8 α=0.3 avec le pas NON normalisé (`α·grad`, gradient de la pinball moyenne en O(1/h) :
+  budget réel de 0.15-0.22 σ sur les termes courts, ≈ 0.001 σ sur les longs, dossier
+  renommé `…_refine-ceiling8-a0.3` = mode `raw`) : **MASE 0.6762 / CRPS 0.4695 /
+  couverture 0.816**, |d| moyen 0.061, 7.1 pas, 14 % d'arrêts anticipés. **P-ceil.1
+  dépassée dès la borne inférieure** (−6.5 pt CRPS, −10.8 pt MASE, 4× le seuil « biais
+  systématique ») avec un budget nul sur un tiers des configs. Lecture : la couverture
+  monte AVEC le CRPS, donc le fan est bien formé mais mal posé — l'erreur résiduelle est en
+  grande partie une translation de quelques centièmes d'écart-type, pas de la dispersion.
+  C'est une propriété du forecaster, mesurée avec la vraie cible : elle borne ce qu'un juge
+  peut rendre et ne dit RIEN de ce qu'il rendra ; le chiffre ne sera jamais cité comme
+  performance (il passerait sous FlowState 0.4866, ce qui est précisément pourquoi la
+  bannière existe). Suite : courbe gain(boîte) au pas normalisé (α ∈ {0.02, 0.05, 0.1}
+  + asymptote 0.5), oracle-k empilé, puis le bras critic dont la courbe `critic/pinball_i`
+  est le seul vrai test.
+
 - **2026-09-07 (S6 : ce qui se mesure sur le champion head8 et ce qui ne s'y mesure PAS —
   prédictions gravées avant la première éval)** — Objection utilisateur, retenue : le
   raffinement par ÉNERGIE sur head8 interroge un juge que le finetune a dégradé (E18b,
