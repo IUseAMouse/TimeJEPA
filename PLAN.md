@@ -1393,13 +1393,15 @@ sidecar `_reallen` (supprime les fenêtres à cible-pad) et pinball masquée. Re
 éventuelle S4-a' = contextes courts à longueur variable (collate par bucket) + cap dédié,
 après xres.
 
-### S5 — XRES TINY V3 : l'ablation à petite échelle avant le mini (déclenché 2026-09-06)
+### S5 — XRES TINY V3 : ANNULÉ le jour même (2026-09-06)
 
 Décision utilisateur : mesurer xres sur tiny (pretrain + finetune plus courts) avant de payer
 deux jours de mini. Configs existantes `lotsa_tiny_xres_v3{,_zeroshot,_eval}` (G9.3 amendé),
 déclencheurs remplis. Référence appariée : champion tiny en flip + mix-pool (P-tmp.1).
-P-xt.1..3 au registre ; échec-diagnostic ⇒ mini xres annulé. Si succès, le mini xres hérite
-(tête ×8, grille S4-c si positive, `+ratein_w`).
+Mesure préalable P-tmp.1 (champion tiny `epoch00_valloss0.5949` en mix-pool) : 0.5529, soit
+1.9 pt derrière mini head8 à pile égale — le tiny répond moins aux couches ; décision
+utilisateur : ablations sur mini, S5 annulé. P-xt.1..3 se reportent sur le MINI xres
+(pretrain 3 j 4 h, tête ×8, grille S4-c si positive, `+ratein_w`).
 
 ### PLATEAU DU NU — H1/H2/H3 (décision utilisateur 2026-09-06)
 

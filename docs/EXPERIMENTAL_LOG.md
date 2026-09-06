@@ -1919,6 +1919,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (CHAMPION TINY IDENTIFIÉ ET REMESURÉ : mix-pool 0.8081/0.5529 — P-tmp.1 ÉCHEC,
+  le prix de la capacité à pile égale est 1.9 pt, pas 1.1 ; DÉCISION : on reste sur mini,
+  S5 (xres tiny) ANNULÉ, le mini xres redevient le bras xres)** — Champion tiny =
+  `checkpoints/timejepa_lotsa_tiny_v3_zs/pretrain_False/epoch00_valloss0.5949.ckpt`
+  (finetune v3 @50 %, à noter pour toute reprise). Flip + mix-pool : **MASE 0.8081 / CRPS
+  0.5529**, couv 0.746, 53/97 configs décimées. P-tmp.1 prédisait 0.545 ± 0.005 : **ÉCHEC**,
+  le tiny profite MOINS du mix-pool que le mini (0.5588 → 0.5529 = −0.59 pt, contre 0.5433 →
+  0.5340 = −0.93 pt sur head8). À pile identique : tiny 0.5529 vs mini head8 0.5340 =
+  **1.9 pt** pour 2.8M paramètres de plus (3.9M actifs au finetune vs 1.1M). Troisième
+  observation du même motif : la capacité achète la RÉPONSE aux couches d'inférence
+  (tiny : −4.5 pts nu→pile ; mini head8 : −7.9). Décision utilisateur : les bras
+  d'ablation restent sur mini malgré 30 h/époque contre 3 j 4 h pour le pretrain — le
+  transfert tiny→mini est trop incertain pour économiser le pretrain. S5 annulé ; P-xt.1..3
+  se reportent sur le mini xres (référence appariée head8, tête ×8, `+ratein_w`). Le nu du
+  0.5949 reste non mesuré (optionnel, ferme la ligne). Scratch head8 : premier checkpoint
+  val 0.6699, courbe de train sMAPE qui rejoint les autres runs ; éval en cours.
+
 - **2026-09-06 (CORRECTION DE LA TABLE D'ÉCHELLE : deux checkpoints tiny confondus — vérifié
   sur demande utilisateur)** — La ligne « tiny mix » de la table du 2026-09-05 mélangeait
   deux checkpoints à 0.0001 près en flip : le champion MIX (`mix1ep3e4_25pct`, corpus mix,
@@ -2414,7 +2431,7 @@ constitue le test le plus direct de la thèse du §7.
   | lignée | params | nu | flip | flip+RateIN | oracle | couches (pts) |
   |---|---|---|---|---|---|---|
   | tiny mix (mix1ep3e4@25 %) | 1.14M | 0.6134 | 0.5984 | — | — | −3.6 (flip seul) |
-  | tiny v3 (finetune @50 %) | 1.14M | n.m. | 0.5983 | 0.5588 | 0.5358 | ≥ −4.0 (flip → RateIN) |
+  | tiny v3 (finetune @50 %, `epoch00_valloss0.5949`) | 1.14M | n.m. | 0.5983 | 0.5588 (mix-pool 0.5529) | 0.5358 | ≥ −4.5 |
   | mini std | 3.42M | 0.6235 | 0.5930 | 0.5469 | 0.5255 | −7.7 |
   | mini head8 | ~4.0M | 0.6131 | 0.5842 | 0.5433 | 0.5190 | −7.0 |
 
