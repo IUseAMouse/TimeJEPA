@@ -1919,6 +1919,21 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (SONDE DE COHÉRENCE w LIVRÉE : `probe_energy.py --rate-k K`)** — Instrument (3)
+  du go/no-go xres. `probe_instance` prend `w` (refus si le modèle n'a pas de FiLM) ; avec
+  `--rate-k K`, le contexte est décimé par K (la paire d'entraînement k1=K, k2=1), les
+  candidats restent au taux natif, et le vrai futur est classé deux fois sur les MÊMES
+  entrées : w=1/K (rate-aware) et w=1 (blind). Sortie : `mean_rank_cos` (aware),
+  `mean_rank_cos_blind`, delta imprimé — négatif = le FiLM a appris w. Tests : identité
+  exacte à l'init (FiLM à zéro), effet réel après perturbation, w=1 intouché (log2 1 = 0),
+  refus sans FiLM. Usage au moment venu, sur le checkpoint de PRETRAIN xres :
+  `python scripts/probe_energy.py --checkpoint <pretrain xres> --model-config
+  lotsa_mini_xres_v3_eval --standalone-targets --rate-k 2` puis `--rate-k 4` ; référence :
+  le même checkpoint sans `--rate-k` (rang natif) et un pretrain standard avec `--rate-k`
+  (w ignoré ⇒ delta nul par construction, témoin négatif). Prédiction à graver au moment
+  de la lecture : delta ≤ −0.05 à K=2 et K=4 sur les configs à cycle, sinon le pretrain n'a
+  pas appris w et le finetune n'a rien à préserver.
+
 - **2026-09-06 (SCRATCH HEAD8 @5 % : 0.8012/0.5582 — déjà au niveau du mini pré-entraîné à
   5 %, couverture 0.775 ; premier signal contre H1)** — Premier checkpoint (val 0.6699),
   flip+backtest : MASE 0.8012 / CRPS **0.5582** / couv 0.775 (q10 0.106, q90 0.882 — meilleure

@@ -59,6 +59,7 @@ from hydra import compose, initialize_config_dir                   # noqa: E402
 
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
 from timejepa.evaluation import gift                               # noqa: E402
+from timejepa.evaluation import ratein as ratein_mod               # noqa: E402
 from evaluate_gift import prepare_context                          # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -95,7 +96,7 @@ def block_bootstrap(history: np.ndarray, h: int, block: int,
 
 @torch.no_grad()
 def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
-                   standalone: bool = False):
+                   standalone: bool = False, w: float = 1.0):
     """
     ctx        [L]        prepared context (same path as the GIFT eval)
     candidates [Nc, h]    candidate futures, the TRUE one at position 0
@@ -104,8 +105,15 @@ def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
                 the [ctx||cand] slice. Use the probed checkpoint's pretrain
                 convention, otherwise the energy is queried outside its
                 training regime.
+    w:          rate ratio target grid / context grid handed to the
+                predictor's FiLM (xres coherence probe, 2026-09-06): a
+                context decimated by k with candidates on the native grid is
+                the training pair (k1=k, k2=1), i.e. w = 1/k. Ignored (must
+                be 1) on a model without the FiLM.
     Returns (energies_mse, energies_cos) [Nc].
     """
+    if w != 1.0 and not hasattr(model.predictor, 'w_film'):
+        raise ValueError("w != 1 requires a cross_resolution model (w_film)")
     h = candidates.shape[1]
     n_tgt = (h - model.patching.patch_size) // model.patching.stride + 1
 
@@ -131,7 +139,7 @@ def probe_instance(model, ctx: np.ndarray, candidates: np.ndarray, device,
     z_pred = model.predictor.forward_simple(
         context_embeddings=ctx_emb,
         num_targets=model.num_target_patches,
-        w=(torch.ones(1, device=device)
+        w=(torch.full((1,), float(w), device=device)
            if hasattr(model.predictor, 'w_film') else None),
     )[:, :n_tgt, :]                                                  # [1, n, D]
 
@@ -175,6 +183,12 @@ def main():
     ap.add_argument("--standalone-targets", action="store_true",
                     help="convention of the contextualized_targets=false lineages (mix/xres)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--rate-k", type=int, default=0,
+                    help="xres COHERENCE probe: decimate the context by k, keep "
+                         "the candidates native, and rank the true future under "
+                         "w=1/k (rate-aware) AND w=1 (blind) on the same inputs. "
+                         "A FiLM that learned w ranks the truth lower when aware. "
+                         "Requires a cross_resolution checkpoint.")
     args = ap.parse_args()
 
     config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
@@ -198,13 +212,19 @@ def main():
         series = gift.load_series(gift_root, config)
         windows = gift.num_windows(config, min(len(s) for s in series))
 
-        ranks_mse, ranks_cos, spears = [], [], []
+        ranks_mse, ranks_cos, spears, ranks_blind = [], [], [], []
         for inst in gift.iter_test_instances(series, h, windows):
             if len(ranks_mse) >= args.instances:
                 break
             if np.isnan(inst.target).any() or len(inst.context) < 2 * block:
                 continue
-            ctx = prepare_context(inst.context, model.input_length,
+            hist = inst.context
+            if args.rate_k > 1:
+                hist = ratein_mod.decimate(
+                    inst.context[-(model.input_length * args.rate_k):], args.rate_k)
+                if len(hist) < model.patching.patch_size:
+                    continue
+            ctx = prepare_context(hist, model.input_length,
                                   model.patching.stride, model.patching.patch_size)
             if ctx is None:
                 continue
@@ -217,10 +237,25 @@ def main():
             if not np.isfinite(cands).all():
                 continue
 
-            e_mse, e_cos = probe_instance(model, ctx, cands, device,
-                                          standalone=args.standalone_targets)
+            if args.rate_k > 1:
+                # rate-aware (w = 1/k) vs blind (w = 1) on the SAME inputs:
+                # the aware rank goes in the cos column, the blind rank in the
+                # mse column's slot is NOT reused - kept apart below.
+                _, e_aware = probe_instance(model, ctx, cands, device,
+                                            standalone=args.standalone_targets,
+                                            w=1.0 / args.rate_k)
+                _, e_blind = probe_instance(model, ctx, cands, device,
+                                            standalone=args.standalone_targets,
+                                            w=1.0)
+                ranks_cos.append(normalized_rank(e_aware))
+                ranks_blind.append(normalized_rank(e_blind))
+                e_cos = e_aware
+                e_mse = e_aware
+            else:
+                e_mse, e_cos = probe_instance(model, ctx, cands, device,
+                                              standalone=args.standalone_targets)
+                ranks_cos.append(normalized_rank(e_cos))
             ranks_mse.append(normalized_rank(e_mse))
-            ranks_cos.append(normalized_rank(e_cos))
             # Does the energy track real proximity? (bootstraps only)
             mae = np.abs(cands[2:] - cands[0]).mean(axis=1)
             spears.append(spearman(e_cos[2:], mae))
@@ -233,6 +268,9 @@ def main():
             "median_rank_cos": float(np.median(r_cos)),
             "frac_truth_top20pct_cos": float((r_cos <= 0.2).mean()),
             "spearman_energy_vs_mae": float(np.mean(spears)),
+            "rate_k": int(args.rate_k),
+            "mean_rank_cos_blind": (float(np.mean(ranks_blind))
+                                    if ranks_blind else None),
         }
         r = results[config]
         logger.info(
@@ -240,6 +278,12 @@ def main():
             f"mean {r['mean_rank_cos']:.3f} med {r['median_rank_cos']:.3f} "
             f"top20% {r['frac_truth_top20pct_cos']:.2f} | mse {r['mean_rank_mse']:.3f} "
             f"| rho(E,MAE) {r['spearman_energy_vs_mae']:.3f}   [chance: 0.50 / 0.20 / 0.00]")
+        if r["mean_rank_cos_blind"] is not None:
+            logger.info(f"{'':28s}   rate-k={r['rate_k']}: true rank AWARE (w=1/k) "
+                        f"{r['mean_rank_cos']:.3f} vs BLIND (w=1) "
+                        f"{r['mean_rank_cos_blind']:.3f} "
+                        f"(delta {r['mean_rank_cos'] - r['mean_rank_cos_blind']:+.3f}; "
+                        f"negative = the FiLM learned w)")
 
     agg = {k: float(np.mean([r[k] for r in results.values()]))
            for k in ("mean_rank_cos", "mean_rank_mse",
