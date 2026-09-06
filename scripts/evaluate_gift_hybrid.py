@@ -249,6 +249,7 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
                 continue
             tp = pt[None, :]
             k_hist[max(ttm_comps, key=lambda c: c[1])[0]] += 1
+            accs["ttm"].add(inst.target, tp[0], None, scale)   # layered point
         else:
             tp = ttm_rollout(prop, inst.context.astype(np.float32), h,
                              n_jitter, rng)

@@ -77,3 +77,31 @@ def test_backtest_and_mix_run_on_the_adapter():
     assert diag["pooling"] == "crps" and diag["n_base"] == 4
     w = _mix_weights(diag["ratios"])
     assert abs(sum(w.values()) - 1.0) < 1e-9 and all(k >= 1 for k in w)
+
+
+def test_evaluate_config_layered_ttm_accumulates(monkeypatch, tmp_path):
+    """Regression (2026-09-06 pod run): with --ttm-flip the layered branch
+    produced forecasts but never fed the accumulator (MASE nan on every
+    config). The layered reader must report finite metrics on a synthetic
+    config, with as many instances as the raw reader."""
+    import evaluate_gift_hybrid as H
+    from timejepa.evaluation import gift
+
+    rng = np.random.default_rng(0)
+    t = np.arange(900, dtype=np.float32)
+    series = [(np.sin(2 * np.pi * t / 24) + 0.1 * rng.standard_normal(len(t))).astype(np.float32)
+              for _ in range(3)]
+    monkeypatch.setattr(gift, "load_series", lambda root, cfg: series)
+    monkeypatch.setattr(gift, "prediction_length", lambda cfg: 24)
+    monkeypatch.setattr(gift, "seasonality", lambda freq: 24)
+    monkeypatch.setattr(gift, "num_windows", lambda cfg, n: 2)
+    prop = _DriftProposer()
+    raw = H.evaluate_config("fake/H/short", None, prop, tmp_path, torch.device("cpu"),
+                            rng, max_inst=6, K=4, n_jitter=0)
+    lay = H.evaluate_config("fake/H/short", None, prop, tmp_path, torch.device("cpu"),
+                            rng, max_inst=6, K=4, n_jitter=0, ttm_flip=True,
+                            ttm_ratein=True, bt_series=3)
+    assert raw["n_instances"] == lay["n_instances"] > 0
+    assert np.isfinite(lay["ttm"]["MASE"]) and lay["ttm"]["n_instances"] == lay["n_instances"]
+    assert lay["ttm_layers"]["ratein"] == "mix-pool" and lay["ttm_layers"]["backtest"] is not None
+    assert sum(lay["ttm_layers"]["k_hist"].values()) == lay["n_instances"]
