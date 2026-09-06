@@ -1919,6 +1919,33 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (RATEIN SUR TTM-R3, première lecture à 10 instances/config : brut 0.7125 →
+  flip 0.7057 → flip + mix-pool 0.6829 (MASE vs SN officielle) — P-TTM.1 ✓, P-TTM.2 ✓
+  SOUS RÉSERVE d'appariement, P-TTM.3 ✓)** — Trois runs `--ttm-only --instances 10 --tag
+  inst10`. Brut : MASE 0.7125 sur 89 configs (leaderboard TTM-R3-PT 0.7240 : notre harnais
+  et 10 instances reproduisent la claim à 1.6 % près). Flip : **0.7057** (89), −0.95 %
+  relatif — P-TTM.1 (< 1 %) ✓ de justesse : TTM a son propre RevIN, la symétrie de signe
+  est presque déjà là. Flip + RateIN mix-pool (backtest poolé sur 32 séries) : **0.6829**
+  mais sur **88 configs** — bitbrains_rnd/5T/short (brut 6.47, catastrophique) tombe à 0
+  instance sur contextes décimés (NaN TTM), ce qui AVANTAGE le mix ; bitbrains_fast_storage/
+  5T/long passe de 2 à 1 instance. Lecture brute : −4.2 % relatif vs brut, −3.2 % vs flip ;
+  lecture honnête à faire sur les configs communes à instances identiques
+  (`scripts/ttm_layers_paired.py`, livré) — estimation : ~−3 % une fois bitbrains_rnd
+  remis, P-TTM.2 (≥ 2 %) tiendrait. Par config, le motif prédit est là : gains massifs
+  exactement où notre oracle gagne — bizitobs_l2c/5T/long 1.31 → **0.70** (k32-48),
+  /medium 0.94 → **0.45** (k12), jena/10T/long 0.82 → 0.65 (k3), loop_seattle/5T/long
+  1.05 → 0.76 (k12), electricity/15T long/medium 1.15 → 1.04, 0.72 → 0.65, bizitobs_service
+  10S long/medium 1.25 → 1.05, 0.98 → 0.82 ; et des faux positifs francs — bizitobs_
+  application/10S/short 1.68 → 2.58 (k6-8), bitbrains_fast_storage/H/short 0.47 → 0.61 (k16),
+  electricity/15T/short 0.71 → 0.81, bitbrains_fast_storage/5T/medium 0.37 → 0.43. Le
+  backtest sur un proposeur PONCTUEL (pinball d'un point = MAE) avec 32 séries est plus
+  bruité que le nôtre. P-TTM.3 ✓ : ~35 configs à k>1 dominant chez TTM contre 57/97 chez
+  nous — un modèle à embeddings de fréquence a moins besoin de canonicalisation, mais en
+  a encore besoin. **Lecture stratégique (provisoire)** : la couche transporte sur un
+  modèle étranger, à recette figée, sans métadonnées, et le mécanisme est le même
+  (cycles hors bande + rollout) — model-agnostic. Verdict définitif sur la lecture
+  appariée ; puis 30 instances si le budget le permet (barre d'erreur à 10).
+
 - **2026-09-06 (LES DEUX EXPÉRIENCES DU TITRE PRÉPARÉES : contrôle scratch et RateIN sur
   TTM-R3 — prédictions gravées)** — (1) **Scratch** : `lotsa_mini_v3_head8_scratch_{zeroshot,
   eval}`, recette head8 à l'identique SANS `pretrained_encoder_path` (corpus v3, tête ×8, 1
