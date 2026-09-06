@@ -1919,6 +1919,24 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (SCRATCH HEAD8 @5 % : 0.8012/0.5582 — déjà au niveau du mini pré-entraîné à
+  5 %, couverture 0.775 ; premier signal contre H1)** — Premier checkpoint (val 0.6699),
+  flip+backtest : MASE 0.8012 / CRPS **0.5582** / couv 0.775 (q10 0.106, q90 0.882 — meilleure
+  que head8), 34/97 décimées. Références à 5 % : mini standard pré-entraîné **0.5585**,
+  v4 head8 pré-entraîné 0.5484 (deux variables). Un finetune SANS pretrain rejoint donc en
+  5 % d'époque ce que le pretrain + finetune donnait au même point, à ~1 pt du meilleur 5 %
+  connu. Configs courtes : m4_yearly 5.19, covid 51 — pires (l'extrapolation est ce que le
+  pretrain apporte le plus tôt ?) ; le reste dans le bruit du head8. Verdict P-scr.1 au
+  meilleur checkpoint du run ; mais si la trajectoire suit le motif habituel (pic vers
+  25 %), le pretrain JEPA vaudra < 1 pt sur GIFT et H1 tombe. **Conséquence anticipée pour
+  xres** (crainte utilisateur, justifiée) : si le pretrain n'apporte presque rien, un
+  pretrain xres de 3 jours n'apporterait que ce que le finetune n'apprend pas seul ; or la
+  capacité xres (FiLM + paires w≠1) peut être apprise AU FINETUNE — le FiLM est né à zéro
+  (identité), `lotsa_mini_xres_v3_zeroshot` porte déjà p_multi_resolution_finetune 0.3 ;
+  charger le pretrain STANDARD val-best dans un modèle cross_resolution=true (clés w_film
+  absentes → allow_partial, identité exacte) donne un bras « xres-ft » d'une soirée.
+  Décision à prendre au verdict scratch : pretrain xres (3 j) ou xres-ft (1 soirée) d'abord.
+
 - **2026-09-06 (XRES : le risque de désapprentissage au finetune est RÉEL et NON MESURÉ —
   instruments go/no-go inscrits avant le lancement)** — Question utilisateur : ESJEPA a
   perdu z au finetune, E18b a montré que le full finetune détruit l'alignement énergétique
