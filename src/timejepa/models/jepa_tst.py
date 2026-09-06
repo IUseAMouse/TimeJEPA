@@ -628,6 +628,10 @@ class JEPATST(nn.Module):
         if return_representations:
             result['context_embeddings'] = context_embeddings
             result['future_representations'] = predictions
+            # S6 (2026-09-06): the normalized context, so the finetune's
+            # joint/critic terms can encode candidates in the head's frame
+            # without refitting a scaler. Key additive, absent otherwise.
+            result['context_norm'] = context_norm
 
         return result
 
