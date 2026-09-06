@@ -1442,6 +1442,11 @@ H2b, N = 0 majoritaire puis élargi ; (5) α et N randomisés, α par horizon, b
 sonde (E18c : contextualisé juge mieux). **AVANT TOUT : plafond de raffinement** — descente
 sur la vraie pinball (triche, jamais officiel), mêmes N et α : borne ce que dix pas peuvent
 rendre sur ce fan ; si < 0.5 pt, S6 est clos avant d'avoir coûté une nuit.
+**IMPLÉMENTÉ 2026-09-06 (non couru)** : `src/timejepa/training/critic.py` (référence),
+`src/timejepa/evaluation/refine.py`, clés `training.loss.{lambda_joint, joint_*, critic_*}`,
+flags `evaluate_gift +refine=energy|ceiling` (+refine_steps/alpha/eps/noise/target/judge),
+configs `lotsa_mini_v3_head8_{joint,critic}_{zeroshot,eval}`, 39 tests. Premier run :
+`+refine=ceiling +refine_alpha=<sweep 0.1/0.3/0.5>` sur le champion head8 mix-pool.
 
 ### XRES-MINI — go/no-go contre le désapprentissage (2026-09-06)
 

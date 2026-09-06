@@ -42,6 +42,8 @@ T2 - planning by backprop, ground truth in hand.
 Read-only, CPU (~2-4 min). Console output + JSON evaluation/control_ebm/.
 """
 
+# Reference implementation of the candidate energy (2026-09-06):
+# src/timejepa/training/critic.py - this script keeps its own copy of the recipe.
 import argparse
 import json
 import sys

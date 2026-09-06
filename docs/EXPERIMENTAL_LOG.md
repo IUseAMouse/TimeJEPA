@@ -1919,6 +1919,57 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (S6 CODE LIVRÉ, NON COURU : loss jointe H2b, boucle critique à
+  l'entraînement, raffinement à l'inférence, plafond — quatre briques, tous défauts
+  inertes)** — Décision utilisateur : implémentation complète pendant que les runs tournent.
+  **Module partagé** `src/timejepa/training/critic.py` (référence unique de l'énergie et du
+  pas de descente ; les sondes `probe_energy.py`/`control_ebm_probe.py` gardent leur copie,
+  notée comme telle) : `predict_latent`, `encode_candidate` (online par défaut, cible EMA/
+  gelée pour le terme joint, refus contextualisé sur xres), `energy_per_item` (cos | mse),
+  `energy_of_fan` (centre = trajectoire médiane, ou fan = 9 trajectoires empilées),
+  `refine_step` (feuille δ ajoutée au fan, `autograd.grad(..., create_graph)`, translation en
+  mode centre, tri en mode fan, `item_weight`, clip), `refine_loop`. `forward_finetune`
+  renvoie `context_norm` sous `return_representations` (clé additive).
+  **H2b** (`finetune_module.py`, clés `training.loss.*`) : `lambda_joint` (bloc séparé de
+  `lambda_anchor`, byte-identique ; exclusifs), `joint_target` frozen | ema (EMA via
+  `EMACallback` branché par train.py + `FinetuneModule.update_target_encoder`),
+  `joint_contextualized`, `joint_sigreg` (`jepa_loss` sigreg sur les embeddings de contexte,
+  config héritée du pretrain). z_pred = le tenseur consommé par la tête (pas de second
+  passage), z_y par l'encodeur cible sous no_grad, MSE sur les items à cible pleine.
+  Témoins `train_loss/joint`, `train_loss/sigreg`, `val_loss/joint`. Pinné : joint
+  frozen/standalone == ancre à 1e-6, avec et sans masque.
+  **S6 train** : `critic_steps` (N tirés par batch, `[0]` = off, eval = N_max déterministe),
+  `critic_alpha`, `critic_route` A (z_pred détaché dans E) | B (paysage entraîné, second
+  ordre), `critic_target` center | fan, `critic_energy`, `critic_step_weights` uniform |
+  last, `critic_noise`, `critic_batch_fraction`, `critic_max_abs_delta` (clip 5 + témoin).
+  Train : `loss = pinball_0 + λ·joint + Σ w_i·pinball_i`, un backward ; eval : loss =
+  pinball du fan raffiné, `results` remplacés par le fan raffiné (val_loss = forecast
+  déployé), descente sous `enable_grad` local. Guards : gated derrière `lambda_joint > 0`,
+  refus linear_probe, tête ponctuelle, contextualisé sur xres. Témoins `critic/n_steps`,
+  `energy_0`, `energy_N`, `energy_drop`, `pinball_0`, **`pinball_i` (LA courbe)**,
+  `pinball_N`, `delta_abs`, `delta_clipped_frac` (+ `val_critic/*`). Pinné : route A ⇒
+  aucun gradient prédicteur depuis la pinball de raffinement, route B ⇒ gradient non nul.
+  **Inférence** (`src/timejepa/evaluation/refine.py` + `evaluate_gift.py`) :
+  `+refine=energy|ceiling`, `+refine_steps=8`, `+refine_alpha=0.1`, `+refine_eps=1e-3`
+  (arrêt RELATIF), `+refine_noise`, `+refine_target=center|fan`, `+refine_energy`,
+  `+refine_judge=self|ckpt` (+energy_ckpt, refus si patch/stride diffèrent) ; hook batché
+  après `apply_quantile_gamma`, sur la grille du modèle (avant ré-interpolation, composantes
+  du mix incluses) ; re-fit des scalers du juge sur le contexte du batch (état RevIN périmé
+  après flip) ; arrêt par instance avec **garde de rejet** (un pas qui monte l'énergie est
+  annulé et gèle l'instance) ; fenêtre du juge `hj = min(h', prediction_length)`, au-delà
+  intouché (`judge_cover`) ; **ceiling** = descente sur la vraie pinball (cible décimée si
+  k>1, NaN masqués), bannière « never official », cache `_refine-ceiling<n>` ; energy :
+  `_refine-E<n>` (+ `-fan`, `-a<α>`, `-eps<ε>`, `-noise`, `-mse`, `-ctx`, `-judge`) ;
+  valeur inconnue ⇒ erreur. `res["refine"]` (mean_steps, frac_stopped_early, mean_dE,
+  mean_E0, mean_abs_delta, judge_cover, n_refined, official) + ligne de log + bloc résumé.
+  **Configs** : `lotsa_mini_v3_head8_joint_{zeroshot,eval}` (λ_joint 0.3, frozen, SIGReg),
+  `lotsa_mini_v3_head8_critic_{zeroshot,eval}` (N ∈ {0..4}, α 0.05 PLACEHOLDER à fixer par
+  le plafond, route A, centre, fraction 0.25). **Tests** : test_critic (11), test_h2b_joint
+  (9), test_s6_critic (8), test_refine (11) ; suite complète relancée. **Ordre de mesure** :
+  (0) `+refine=ceiling` sur le champion head8 mix-pool → si < 0.5 pt, S6 clos ; (1) H2b
+  → sonde E18b ≤ 0.30 ; (2) critic α = celui du plafond, courbe pinball_i ; (3)
+  `+refine=energy` sur le checkpoint critic. Aucun chiffre GIFT à ce stade.
+
 - **2026-09-06 (VEILLE : boucles de raisonnement dans l'architecture, générateur + critique —
   ce que la littérature dit, et ce que nos propres mesures disent déjà)** — Question
   utilisateur : GPT-6 Astra (profondeur récurrente) + notre paire juge latent / forecaster

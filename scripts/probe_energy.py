@@ -43,6 +43,8 @@ Outputs: console table + JSON under evaluation/probe_energy/.
 Modifies nothing: no training code touched, read-only.
 """
 
+# Reference implementation of the candidate energy (2026-09-06):
+# src/timejepa/training/critic.py - this script keeps its own copy of the recipe.
 import argparse
 import json
 import logging
