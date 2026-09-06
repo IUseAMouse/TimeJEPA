@@ -1403,6 +1403,18 @@ Mesure préalable P-tmp.1 (champion tiny `epoch00_valloss0.5949` en mix-pool) : 
 utilisateur : ablations sur mini, S5 annulé. P-xt.1..3 se reportent sur le MINI xres
 (pretrain 3 j 4 h, tête ×8, grille S4-c si positive, `+ratein_w`).
 
+### CAP — WORLD MODEL (direction déclarée 2026-09-06)
+
+But : lier actions et forecasts (thermostat → température, dose → BPM), contrôler une variable
+pour tenir un intervalle à 90 %. Ce qui existe déjà sous d'autres noms : le FiLM de xres
+(conditionnement d'un scalaire exogène sur les requêtes de futur, identité à l'init) = le
+gabarit du conditionnement par l'action ; l'énergie E18b = la plausibilité d'un futur ; le
+« planning by backprop » d'evaluate_energy (descente sur les candidats à travers l'énergie)
+= la planification ; le fan quantile = la contrainte de couverture. Dans ce cadre le pretrain
+JEPA se juge sur ce qu'il CONSERVE (énergie, conditionnement), pas sur le CRPS zero-shot :
+xres = première brique (conditionnement), H2b = deuxième (un modèle, deux pertes). Le
+papier v8 reste le forecaster adapté à l'inférence ; le world model est la suite.
+
 ### XRES-MINI — go/no-go contre le désapprentissage (2026-09-06)
 
 La mitigation G9.3 (paires w≠1 au finetune + ancre λ·MSE) n'a jamais été exercée en run réel.
@@ -1419,6 +1431,13 @@ TTM 3× l'écart CRPS. Trois hypothèses, un test d'une soirée chacun, une vari
 - **H1** pretrain ≠ goulot → scratch head8 (en cours, P-scr.1..2).
 - **H2** le finetune dérive loin de GIFT → `finetune_mode: linear_probe` depuis le val-best.
 - **H3** centre de la tête quantile mou → perte ponctuelle sur la médiane au finetune.
+- **H2b — LOSS JOINTE (décision utilisateur 2026-09-06, après H2)** : garder un terme JEPA
+  pendant le finetune (`lambda_anchor` 0.1-0.3 sur la recette head8, une soirée). Critère de
+  succès = ce que le modèle CONSERVE, pas ce qu'il ajoute : sonde E18b sur le checkpoint
+  finetuné, rang du vrai futur ≤ 0.30 (pinball seule : 0.409, pretrain : 0.245) pour un coût
+  CRPS ≤ 0.3 pt vs head8 apparié. Succès ⇒ un seul checkpoint = forecaster + juge (E18b
+  disait impossible avec la pinball seule) ; échec ⇒ deux modèles, assumé. Prédiction à
+  graver au lancement.
 - **H4 (conditionnel, si H1/H2 laissent la question ouverte)** le prédicteur nuit ou ne sert
   pas au finetune → tête quantile directement sur l'encodeur, prédicteur court-circuité
   (code : la tête attend les latents prédits). Jamais testé à ce jour.

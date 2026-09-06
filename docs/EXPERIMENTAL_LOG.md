@@ -1919,6 +1919,19 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (CAP WORLD MODEL et H2b gravés au PLAN — réponse aux questions de direction)**
+  — Le pretrain JEPA n'apporte probablement pas de précision zero-shot parce que le finetune
+  repasse sur le MÊME corpus de 10 Md d'observations avec un objectif plus direct (E15,
+  plateau du nu, scratch @5 %, E18b) ; il se justifie par ce qu'il conserve pour un world
+  model : conditionnement (FiLM xres = gabarit du conditionnement par l'action), énergie
+  (plausibilité, planning by backprop déjà écrit), fan (contrainte de couverture). H2b =
+  loss jointe au finetune, critère = énergie préservée (sonde E18b ≤ 0.30) à coût CRPS
+  ≤ 0.3 pt. Question « battre GIFT par les représentations riches ? » : aucune mesure ne le
+  soutient à ce jour (l'énergie dilue notre propre fan, le raffinement est un substitut du
+  centrage) ; la voie mesurée reste l'adaptation à l'inférence. Le seul chemin par lequel le
+  world model pourrait payer sur GIFT : un juge PRÉSERVÉ (H2b) lisant un fan par une lecture
+  qui ne dilue pas (centrée, T calibrée) — à tester après H2b, jamais avant.
+
 - **2026-09-06 (SONDE DE COHÉRENCE w LIVRÉE : `probe_energy.py --rate-k K`)** — Instrument (3)
   du go/no-go xres. `probe_instance` prend `w` (refus si le modèle n'a pas de FiLM) ; avec
   `--rate-k K`, le contexte est décimé par K (la paire d'entraînement k1=K, k2=1), les
