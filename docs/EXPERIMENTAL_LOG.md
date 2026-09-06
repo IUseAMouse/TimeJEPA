@@ -1919,6 +1919,41 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (AUDIT DE RECOUVREMENT GiftEvalPretrain × notre corpus, et PLAN DU PLATEAU :
+  trois hypothèses H1-H3, tests d'une soirée chacun)** — Question utilisateur : que
+  recouvre-t-on du corpus de pretrain sanctionné ? Croisement (liste HF du jour, 152
+  sous-ensembles) avec lotsa_v3 (67 fichiers LOTSA réels) et nos motifs d'exclusion :
+  **67/152 dans v3, 78/152 avec le bloc court v4** ; les 74 manquants se répartissent en (a)
+  **53 shards annuels volontairement sous-échantillonnés** (cmip6 6/41 années, era5 6/30,
+  largest 3/5 — la queue plafonnée, choix de composition, pas une perte) ; (b) **8 exclus par
+  nos motifs plus stricts que le benchmark** : traffic_hourly, traffic_weekly, weather,
+  oikolab_weather, cdc_fluview_ilinet, extended_web_traffic, kaggle_web_traffic_weekly,
+  wiki-rolling_nips — bloqués UNIQUEMENT par les suites locales Nixtla/Monash (décision de
+  périmètre, pas de sécurité, déjà notée dans lotsa.py) ; (c) **13 jamais convertis, hors
+  motifs** : BEIJING_SUBWAY_30MIN, HZMETRO, SHMETRO, cdc_fluview_who_nrevss, cif_2016_6/12,
+  covid_mobility, fred_md, godaddy, rideshare_with_missing, taxi_30min, uber_tlc_daily,
+  vehicle_trips_with_missing — petits sous-ensembles courts, tombés à la géométrie
+  (min-length 1280 du bloc dense). Inversement, **rien dans v3 n'est hors de
+  GiftEvalPretrain** : on joue strictement à l'intérieur du corpus sanctionné. Conclusion :
+  pas de levier données caché ; le seul « corpus v5 » possible est la réadmission des 8
+  (b) si les suites locales cessent d'être officielles (elles ne le sont plus de fait :
+  GIFT est la cible) plus les 13 (c) par le mécanisme pad+sidecar — gain attendu petit
+  (sous-ensembles de petite taille), à ne considérer qu'après H1-H3.
+  **Plan du plateau (décision utilisateur « on les mène rigoureusement »)** : le nu est à
+  0.613 depuis tiny, tout le gain est à l'inférence. Trois hypothèses, un test chacune :
+  **H1** le pretrain n'est pas le goulot → scratch head8 (EN COURS, P-scr.1..2 gravées) ;
+  **H2** le finetune dérive loin de GIFT (pic à ~25 % d'époque puis dégradation pendant que
+  la val loss descend, sur tous les runs) → finetune `linear_probe` (encodeur gelé, tête
+  seule) depuis le pretrain val-best, une soirée ; prédictions à graver au lancement (si nu
+  ≈ 0.61 : les features plafonnent ; si nettement pire : la recette de finetune vaut le
+  gain, et LR/arrêt précoce deviennent le levier) ; **H3** le centre de la tête quantile
+  est mou (écart MASE 3× l'écart CRPS vs TTM) → terme de perte ponctuelle sur la médiane au
+  finetune (`loss.finetune_type`), une soirée ; prédiction à graver : MASE apparié baisse
+  de ≥ 1 % sans dégrader le CRPS de plus de 0.2 pt. Séquence GPU : scratch → S4-c →
+  pretrain xres lancé (2 j) → H2 et H3 sur la carte libre pendant le pretrain → finetune
+  xres (+ grille S4-c si positive) + `+ratein_w`. CPU en parallèle : backtest à 4 fenêtres
+  (éval seule) et diagnostic W/M. Attribution : un bras = une variable, toujours.
+
 - **2026-09-06 (RATEIN SUR TTM-R3, LECTURE APPARIÉE : brut 0.7057 → flip 0.6989 → flip +
   mix-pool 0.6857 sur 87 configs identiques — P-TTM.2 ✓ (−2.8 %), LA COUCHE EST
   MODEL-AGNOSTIC ; V4@30 % clôt la trajectoire, verdict inchangé ; scratch lancé)** —
