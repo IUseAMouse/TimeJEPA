@@ -28,7 +28,11 @@ class RefineSpec:
     mode: str = "off"          # off | energy | ceiling
     target: str = "center"     # center | fan
     n_max: int = 8
-    alpha: float = 0.1         # step, normalized units
+    alpha: float = 0.1         # step, normalized units: with step_norm the largest
+                               # displacement of any point per step, so N*alpha
+                               # bounds the total move (the "box" shared by the
+                               # energy and the ceiling)
+    step_norm: bool = True     # per-item L-inf normalization of the gradient
     eps: float = 1e-3          # relative stop: (E_prev - E_new) < eps * max(E_0, 1e-8)
     noise: float = 0.0         # Langevin std per step, 0 = off
     energy: str = "cos"        # cos | mse
@@ -146,6 +150,8 @@ def refine_fan(judge, ctx_norm: torch.Tensor, fan_norm: torch.Tensor,
             fan_var[:, :hj] = fan[:, :hj] + delta
             obj = objective(fan_var)
             grad = torch.autograd.grad((obj * active.to(dtype)).sum(), delta)[0]
+            if spec.step_norm:
+                grad = grad / critic.unit_linf_scale(grad)
             step = -spec.alpha * grad
             if spec.noise > 0:
                 step = step + spec.noise * torch.randn(shape, dtype=dtype, generator=gen).to(device)

@@ -11,6 +11,7 @@
 # DEPLOYED (refined) forecast, comparable to the joint arm when N = 0.
 #
 # critic_alpha is a PLACEHOLDER: fix it from the inference-side ceiling
+# (normalized step: alpha = largest displacement of any point per step)
 # diagnostic (evaluate_gift +refine=ceiling) before launching.
 #
 #   python scripts/train.py --config-name lotsa_mini_v3_head8_critic_zeroshot \

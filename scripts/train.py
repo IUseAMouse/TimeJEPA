@@ -253,6 +253,7 @@ def main(cfg: DictConfig):
             critic_noise=float(cfg.training.loss.get('critic_noise', 0.0)),
             critic_batch_fraction=float(cfg.training.loss.get('critic_batch_fraction', 1.0)),
             critic_max_abs_delta=float(cfg.training.loss.get('critic_max_abs_delta', 5.0)),
+            critic_step_norm=bool(cfg.training.loss.get('critic_step_norm', True)),
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,

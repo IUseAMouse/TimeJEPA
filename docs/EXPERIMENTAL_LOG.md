@@ -1927,9 +1927,21 @@ constitue le test le plus direct de la thèse du §7.
   touche pas l'énergie : descente sur la vraie pinball, il borne ce que le MÉCANISME
   (translation du centre, N pas, α) peut rendre sur ce fan, indépendamment du critique —
   même geste que l'oracle de RateIN, borner avant d'optimiser. **P-ceil.1** (champion head8
-  mix-pool 0.5340, α ∈ {0.1, 0.3, 0.5}, N=8) : le meilleur plafond rend entre 0.5 et 1.5 pt
+  mix-pool 0.5340, N=8, α ∈ {0.02, 0.05, 0.1}, soit une BOÎTE de 0.16 / 0.4 / 0.8 écart-type
+  de déplacement maximal par point) : à la boîte 0.4, le plafond rend entre 0.5 et 1.5 pt
   de CRPS (bande large : le centre est déjà la médiane d'une pinball entraînée) ; < 0.5 pt ⇒
   S6 CLOS ; > 1.5 pt ⇒ le centre porte un biais systématique qu'un critique peut viser.
+  Le plafond est une COURBE gain(boîte), et la seule lecture honnête est à boîte égale à
+  celle que l'énergie utilisera ; à boîte infinie il est trivial (centrage parfait).
+  **Correction gravée le même jour, avant tout run** : le pas était `α·grad` ; la pinball
+  moyennée a un gradient en O(1/h) (0.0003 par pas à h=720, α=0.1) et l'énergie un gradient
+  d'échelle arbitraire à travers l'encodeur — les deux modes ne partageaient PAS la même
+  boîte, et un plafond « petit » aurait mesuré le budget, pas le mécanisme. Le pas est
+  désormais normalisé en L∞ par instance (`critic.unit_linf_scale`, dénominateur détaché) :
+  α EST le plus grand déplacement d'un point par pas, dans les deux modes, à l'inférence
+  (`+refine_step=norm`, défaut ; `raw` = ancien comportement, tag `-raw`) comme à
+  l'entraînement (`critic_step_norm: true`). Tests : boîte respectée, cible à 0.3 rattrapée
+  avec 8×0.1 et pas avec 2×0.1, mode raw quasi immobile (`test_refine`, `test_critic`).
   **P-ceil.2 (utilisateur)** : `+refine=energy` sur head8, témoin négatif : ≤ 0.1 pt de gain
   ou dégradation — un positif ici serait la surprise, pas le négatif. Le vrai test du
   critique est la courbe `critic/pinball_i` du bras critic, puis `+refine=energy` sur SON

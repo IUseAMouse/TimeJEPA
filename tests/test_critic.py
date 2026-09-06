@@ -166,3 +166,20 @@ def test_create_graph_chains_refinement_pinball_to_input_fan():
     fan_ref = out_b["fans"][-1].detach().requires_grad_(True)
     plain = torch.autograd.grad(model.decoder.decoder.loss(fan_ref, y), fan_ref)[0]
     assert torch.allclose(g_b, plain, atol=1e-6)
+
+
+def test_step_norm_bounds_the_displacement():
+    from timejepa.training import critic as C
+    torch.manual_seed(0)
+    model = _model()
+    x = torch.randn(2, 512, 1)
+    ctx = C.normalize_target_like_context  # noqa: F841  (module import check)
+    res = model.forecast(x, return_representations=True)
+    fan0 = res["quantiles"].detach()
+    z = res["future_representations"].detach()
+    fan1, _, step = C.refine_step(model, res["context_norm"].detach(), fan0, z, alpha=0.2,
+                                  median_idx=model.decoder.decoder.median_idx)
+    assert step.abs().amax(dim=(1, 2)).allclose(torch.full((2,), 0.2), atol=1e-6)
+    _, _, raw = C.refine_step(model, res["context_norm"].detach(), fan0, z, alpha=0.2,
+                              median_idx=model.decoder.decoder.median_idx, step_norm=False)
+    assert not torch.allclose(raw, step)

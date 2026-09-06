@@ -141,12 +141,20 @@ def energy_of_fan(model, ctx_norm: torch.Tensor, fan_norm: torch.Tensor,
     raise ValueError(f"unknown refine target {target!r} (center, fan)")
 
 
+def unit_linf_scale(grad: torch.Tensor, tiny: float = 1e-12) -> torch.Tensor:
+    """Per-item L-inf norm of a [B, ...] tensor, detached, [B, 1, ..., 1];
+    an all-zero item gets 1 (its step stays zero)."""
+    m = grad.detach().abs().amax(dim=tuple(range(1, grad.ndim)), keepdim=True)
+    return torch.where(m > tiny, m, torch.ones_like(m))
+
+
 def refine_step(model, ctx_norm: torch.Tensor, fan_norm: torch.Tensor,
                 z_pred: torch.Tensor, *, alpha: float, mode: EnergyMode = "cos",
                 contextualized: bool = False, target: RefineTarget = "center",
                 median_idx: int = 4, create_graph: bool = False,
                 noise_sigma: float = 0.0, item_weight: Optional[torch.Tensor] = None,
-                max_abs_delta: Optional[float] = None, generator=None):
+                max_abs_delta: Optional[float] = None, generator=None,
+                step_norm: bool = True):
     """One descent step of the fan down the energy.
 
     Returns (fan_next, energy_before, delta). The step is taken on a zero
@@ -155,6 +163,14 @@ def refine_step(model, ctx_norm: torch.Tensor, fan_norm: torch.Tensor,
     (chain to the head's output) and, if `z_pred` is in the graph, in the
     critic's weights (route B). `item_weight` [B] (0/1) excludes items from
     the objective (padded targets); `max_abs_delta` clips the step.
+
+    `step_norm=True` (default) scales the gradient per item to unit L-inf
+    norm, so that `alpha` IS the largest displacement of any point in one
+    step (normalized units) and N steps move nothing farther than N*alpha,
+    whatever the objective's scale (a mean pinball's gradient is O(1/h); an
+    energy gradient through the encoder has an arbitrary scale). The
+    denominator is detached: the direction stays differentiable, its scale
+    is a constant.
     """
     if target == "center":
         shape = (fan_norm.shape[0], fan_norm.shape[1], 1)
@@ -168,6 +184,8 @@ def refine_step(model, ctx_norm: torch.Tensor, fan_norm: torch.Tensor,
                            median_idx=median_idx)
     objective = energy if item_weight is None else energy * item_weight.view(-1, *([1] * (energy.ndim - 1)))
     grad = torch.autograd.grad(objective.sum(), delta, create_graph=create_graph)[0]
+    if step_norm:
+        grad = grad / unit_linf_scale(grad)
     step = -alpha * grad
     if noise_sigma > 0:
         step = step + noise_sigma * torch.randn(shape, dtype=step.dtype,

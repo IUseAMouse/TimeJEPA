@@ -1446,7 +1446,7 @@ rendre sur ce fan ; si < 0.5 pt, S6 est clos avant d'avoir coûté une nuit.
 `src/timejepa/evaluation/refine.py`, clés `training.loss.{lambda_joint, joint_*, critic_*}`,
 flags `evaluate_gift +refine=energy|ceiling` (+refine_steps/alpha/eps/noise/target/judge),
 configs `lotsa_mini_v3_head8_{joint,critic}_{zeroshot,eval}`, 39 tests. Premier run :
-`+refine=ceiling +refine_alpha=<sweep 0.1/0.3/0.5>` sur le champion head8 mix-pool.
+`+refine=ceiling +refine_alpha=<sweep 0.02/0.05/0.1>` (N=8, boîte 0.16/0.4/0.8 σ, pas normalisé L∞) sur le champion head8 mix-pool ; lire le plafond à la boîte que l'énergie utilisera, jamais à boîte infinie.
 
 ### XRES-MINI — go/no-go contre le désapprentissage (2026-09-06)
 

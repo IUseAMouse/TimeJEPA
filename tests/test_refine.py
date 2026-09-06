@@ -194,3 +194,37 @@ def test_unknown_plus_flag_raises():
     check_unknown_flags(["+tta_flip=true", "+refine=ceiling", "model.name=x", "++foo=1"])
     with pytest.raises(ValueError, match="refne"):
         check_unknown_flags(["+refne=ceiling"])
+
+
+def test_step_norm_box_and_ceiling_reaches_target_within_budget():
+    """alpha is the largest displacement of any point per step: the cumulative
+    move stays within N*alpha; a target one shift away (0.3) is reached by
+    the ceiling with 8 steps of 0.1 (box 0.8) and NOT with 2 steps (box 0.2)."""
+    model, x = _model(), _batch()
+    out = _out(model, x)
+    ctx_norm, fan_norm = R.normalize_with_context(model, x, out["quantiles_denorm"])
+    target = fan_norm[..., 4:5] + 0.3
+    fan, st = R.refine_fan(model, ctx_norm, fan_norm, LEVELS,
+                           R.RefineSpec(mode="ceiling", alpha=0.1, n_max=8, eps=0.0),
+                           target_norm=target)
+    moved = (fan - fan_norm)[..., 4]
+    assert moved.abs().max() <= 0.8 + 1e-6
+    assert torch.allclose(fan[..., 4:5], target, atol=0.1 + 1e-5)   # within one step of the truth
+    fan2, st2 = R.refine_fan(model, ctx_norm, fan_norm, LEVELS,
+                             R.RefineSpec(mode="ceiling", alpha=0.1, n_max=2, eps=0.0),
+                             target_norm=target)
+    assert (fan2 - fan_norm)[..., 4].abs().max() <= 0.2 + 1e-6
+    assert ((target - fan2[..., 4:5]).abs() > 0.05).float().mean() > 0.9
+    # energy mode shares the box
+    fan3, st3 = R.refine_fan(model, ctx_norm, fan_norm, LEVELS,
+                             R.RefineSpec(mode="energy", alpha=0.1, n_max=3, eps=0.0))
+    assert (fan3 - fan_norm)[..., 4].abs().max() <= 0.3 + 1e-6
+    # raw mode: the pinball gradient is O(1/h): the ceiling barely moves
+    fan4, _ = R.refine_fan(model, ctx_norm, fan_norm, LEVELS,
+                           R.RefineSpec(mode="ceiling", alpha=0.1, n_max=8, eps=0.0, step_norm=False),
+                           target_norm=target)
+    assert (fan4 - fan_norm)[..., 4].abs().max() < 0.05
+    _, _, tag = parse_refine_flags({"refine": "ceiling", "refine_step": "raw"})
+    assert tag.endswith("-raw")
+    with pytest.raises(ValueError):
+        parse_refine_flags({"refine": "ceiling", "refine_step": "sign"})

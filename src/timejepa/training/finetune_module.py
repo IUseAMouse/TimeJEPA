@@ -110,6 +110,7 @@ class FinetuneModule(pl.LightningModule):
         critic_noise: float = 0.0,
         critic_batch_fraction: float = 1.0,
         critic_max_abs_delta: float = 5.0,
+        critic_step_norm: bool = True,
 
         # Worksite 2 (native horizon) - merge the query table of a
         # SHORT-horizon checkpoint into a LONG-horizon model instead of
@@ -181,6 +182,7 @@ class FinetuneModule(pl.LightningModule):
         self.critic_noise = float(critic_noise)
         self.critic_batch_fraction = float(critic_batch_fraction)
         self.critic_max_abs_delta = float(critic_max_abs_delta)
+        self.critic_step_norm = bool(critic_step_norm)
         self._needs_latents = self.lambda_joint > 0 or self.critic_n_max > 0
         if self.lambda_joint > 0 and self.lambda_anchor > 0:
             raise ValueError("lambda_joint and lambda_anchor are mutually exclusive "
@@ -564,7 +566,8 @@ class FinetuneModule(pl.LightningModule):
                 median_idx=head.median_idx, create_graph=self.training,
                 noise_sigma=self.critic_noise if self.training else 0.0,
                 item_weight=full[sub].to(fan0.dtype),
-                max_abs_delta=self.critic_max_abs_delta)
+                max_abs_delta=self.critic_max_abs_delta,
+                step_norm=self.critic_step_norm)
         pinballs = [head.loss(f, target_norm[sub], mask=mask_sub) for f in out['fans'][1:]]
         e = torch.stack([en.reshape(en.shape[0], -1).mean(dim=1) for en in out['energies']])
         e_full = e[:, full[sub]] if bool(full[sub].any()) else e

@@ -720,6 +720,13 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     return res
 
 
+def _refine_step_norm(cfg) -> bool:
+    v = str(cfg.get("refine_step", "norm")).lower()
+    if v not in ("norm", "raw"):
+        raise ValueError(f"unknown +refine_step={v!r} (norm, raw)")
+    return v == "norm"
+
+
 def parse_refine_flags(cfg) -> tuple:
     """+refine flags -> (RefineSpec, judge_kind, cache tag). Absent = inert.
     An unknown value raises rather than landing in the plain cache dir."""
@@ -735,6 +742,7 @@ def parse_refine_flags(cfg) -> tuple:
         noise=float(cfg.get("refine_noise", 0.0)),
         energy=str(cfg.get("refine_energy", "cos")).lower(),
         contextualized=str(cfg.get("refine_contextualized", "")).lower() in ("true", "1", "on"),
+        step_norm=_refine_step_norm(cfg),
         seed=int(cfg.get("seed", 0) or 0),
     ).validate()
     judge_kind = str(cfg.get("refine_judge", "self")).lower()
@@ -757,6 +765,8 @@ def parse_refine_flags(cfg) -> tuple:
         tag += f"-{spec.energy}"
     if spec.contextualized:
         tag += "-ctx"
+    if not spec.step_norm:
+        tag += "-raw"
     if judge_kind == "ckpt":
         tag += "-judge"
     return spec, judge_kind, tag
@@ -805,7 +815,7 @@ KNOWN_FLAGS = frozenset((
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
-    "refine_eps", "refine_judge", "refine_noise", "refine_steps",
+    "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
 ))
 
@@ -884,6 +894,8 @@ def main(cfg: DictConfig):
     #                                           diagnostic, never official)
     #   +refine_steps=8 +refine_alpha=0.1 +refine_eps=1e-3 +refine_noise=0
     #   +refine_target=center|fan +refine_judge=self|ckpt (+energy_ckpt)
+    #   +refine_step=norm|raw (norm: alpha = largest displacement per step,
+    #                          the box N*alpha is the same for both modes)
     refine_spec, refine_judge_kind, refine_tag = parse_refine_flags(cfg)
     if refine_spec is not None and refine_spec.mode == "ceiling":
         logger.warning("REFINE-CEILING: descends the TRUE target - a diagnostic "
