@@ -1415,6 +1415,23 @@ JEPA se juge sur ce qu'il CONSERVE (énergie, conditionnement), pas sur le CRPS 
 xres = première brique (conditionnement), H2b = deuxième (un modèle, deux pertes). Le
 papier v8 reste le forecaster adapté à l'inférence ; le world model est la suite.
 
+### S6 — BOUCLE CRITIQUE (spec gravée 2026-09-06, gated derrière H2b)
+
+Générateur + critique dans un checkpoint, entraînés à travers le raffinement (lignée EBT
+2025, planning JEPA). Flux : (1) passe avant unique, z_pred = pred(enc(x), w) gardé EN
+GRAPHE, ŷ0 = tête ; pertes pinball(ŷ0, y) + λ·E(x, y) + SIGReg ; (2) E(x, ŷ) =
+dist(z_pred, enc_cible(ŷ)), enc_cible EMA ou gelé, traversé jamais mis à jour ; (3) N tiré
+par batch dans {0..4}, ŷ_{i+1} = ŷ_i − α·∇ŷE (create_graph=True), tri par quantile,
+pinball(ŷ_i, y) à chaque pas ; (4) UNE perte cumulée, UN backward, UNE mise à jour.
+Premier bras = route A seule (z_pred détaché à l'intérieur de E : le critique n'apprend que
+de λ·E(x, y)) ; route B (second ordre jusqu'à z_pred) ensuite. Inférence : arrêt sur
+ΔE < ε, plafond N_max = 8, fraction d'arrêts précoces comme témoin. Témoin décisif au
+finetune : pinball au pas i sur la validation DOIT décroître avec i. Métrique : battre le
+raffinement non entraîné d'E18f (+1-2 % sélectif), puis GIFT apparié head8. Coût : finetune
+×3-5, une nuit. Prérequis absolu : H2b (critique préservé, sonde E18b ≤ 0.30). Schéma :
+https://claude.ai/code/artifact/76b40ed0-b000-4111-8a6c-422de05f3aec. World model : même
+machine, a par le FiLM pour prévoir, descente sur a pour contrôler.
+
 ### XRES-MINI — go/no-go contre le désapprentissage (2026-09-06)
 
 La mitigation G9.3 (paires w≠1 au finetune + ancre λ·MSE) n'a jamais été exercée en run réel.
