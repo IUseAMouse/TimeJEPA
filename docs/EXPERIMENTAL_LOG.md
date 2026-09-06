@@ -1919,6 +1919,20 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (V4@10 % : 0.8113/0.5539 — recul vs le 5 % (0.5484) et sous le 10 % standard
+  (0.5517) ; les configs courtes reculent aussi)** — Checkpoint val 0.6571, flip+backtest :
+  MASE 0.8113 / CRPS 0.5539 / couv **0.776** (q10 0.104, q90 0.880 — la meilleure
+  calibration de la lignée mini), 37/97 décimées. Trajectoire v4 : 5 % 0.5484 → 10 %
+  0.5539 (+0.55 pt). Standard : 5 % 0.5585 → 10 % 0.5517. Configs courtes vs le 5 % v4 :
+  m4_yearly **4.138** (3.634 ; head8 25 % 3.801), covid **46.9** (33.0 ; 41.2), m4_quarterly
+  1.377 (1.322), m4_weekly 2.693 (2.658) — toutes en RECUL ; hospital 0.775 (0.784) et
+  car_parts 0.852 (0.853) stables. La val loss, meilleure qu'au 5 % (0.6571 vs 0.6598),
+  désigne le mauvais sens une fois de plus (G7.3c, 4e observation sur la lignée). Lecture
+  prudente : un checkpoint isolé sur une trajectoire bruitée (le standard a eu son creux
+  au 20 %) — mais l'inversion des configs courtes entre 5 % et 10 % est le premier signal
+  contre P-v4.1 ; si le 15 % ne les ramène pas sous le 5 %, le mécanisme « dose
+  homéopathique = bruit » prend le dessus sur « transfert ». Verdict au 15 % puis 25 %.
+
 - **2026-09-06 (MIX + POOL : 0.7842/0.5340 — PILE OFFICIELLE ; −0.93 pt de CRPS sur le
   champion en une journée d'éval, résidu oracle ramené de 2.43 à 1.50 pt)** — Head8 25 %,
   flip + mix poolé : **MASE 0.7842 / CRPS 0.5340 / couv 0.756** (q10 0.119, q90 0.876),
