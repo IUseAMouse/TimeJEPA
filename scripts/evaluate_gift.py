@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
 from timejepa.evaluation import gift  # noqa: E402
 from timejepa.evaluation import ratein as ratein_mod  # noqa: E402
+from timejepa.evaluation import refine as refine_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("evaluate_gift")
@@ -507,7 +508,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     quantile_gamma=None,
                     ratein_mode: str = "off", forced_k: int = 0,
                     ratein_w: bool = False, ratein_w_max_k: int = 4,
-                    ratein_pool: bool = False, energy_judge=None) -> dict:
+                    ratein_pool: bool = False, energy_judge=None,
+                    refine_spec=None, refine_judge=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -551,6 +553,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # RateIN-mix state: per instance, the weight-summed native fan/median of
     # the components that survived the guards (finalized after the loop).
     mix_state, mix_mid = {}, 0
+    refine_chunks = []
     for inst in gift.iter_test_instances(series, h, windows):
         if mix_weights is not None:
             comps = []
@@ -626,6 +629,20 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
                                    shifts=tta_shifts, w=w_vec)
             out = apply_quantile_gamma(out, quantile_gamma)
+            if refine_spec is not None and refine_spec.active:
+                # S6 refinement on the model's OWN grid (decimated context,
+                # h' = ceil(h/k) steps) before any re-interpolation; mix
+                # components are bucket items too, refined before weighting.
+                targets_chunk = None
+                if refine_spec.mode == "ceiling":
+                    kk = 1 if use_w else k
+                    targets_chunk = np.stack([
+                        refine_mod.decimated_target(c[1], kk, h_fc) for c in chunk])
+                out, rstats = refine_mod.refine_out(
+                    model, batch, out, refine_spec, judge=refine_judge,
+                    w=w_vec, targets=targets_chunk)
+                if rstats is not None:
+                    refine_chunks.append(rstats)
 
             median = out["forecast_denorm"].squeeze(-1).cpu().numpy()  # [B, h']
             quants = out.get("quantiles_denorm")
@@ -695,7 +712,67 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             res["ratein"]["mix"] = {
                 "tau": MIX_TAU,
                 "weights": {str(k): round(w, 4) for k, w in mix_weights.items()}}
+    if refine_spec is not None and refine_spec.active:
+        res["refine"] = refine_mod.summarize_refine(
+            refine_chunks, refine_spec,
+            "ckpt" if refine_judge is not None else "self")
     return res
+
+
+def parse_refine_flags(cfg) -> tuple:
+    """+refine flags -> (RefineSpec, judge_kind, cache tag). Absent = inert.
+    An unknown value raises rather than landing in the plain cache dir."""
+    raw = str(cfg.get("refine", "") or "").lower()
+    if raw in ("", "off", "false", "0", "none"):
+        return None, "self", ""
+    spec = refine_mod.RefineSpec(
+        mode=raw,
+        target=str(cfg.get("refine_target", "center")).lower(),
+        n_max=int(cfg.get("refine_steps", 8)),
+        alpha=float(cfg.get("refine_alpha", 0.1)),
+        eps=float(cfg.get("refine_eps", 1e-3)),
+        noise=float(cfg.get("refine_noise", 0.0)),
+        energy=str(cfg.get("refine_energy", "cos")).lower(),
+        contextualized=str(cfg.get("refine_contextualized", "")).lower() in ("true", "1", "on"),
+        seed=int(cfg.get("seed", 0) or 0),
+    ).validate()
+    judge_kind = str(cfg.get("refine_judge", "self")).lower()
+    if judge_kind not in ("self", "ckpt"):
+        raise ValueError(f"unknown +refine_judge={judge_kind!r} (self, ckpt)")
+    if judge_kind == "ckpt" and not cfg.get("energy_ckpt"):
+        raise ValueError("+refine_judge=ckpt needs +energy_ckpt=<pretrain checkpoint>")
+    if spec.mode == "ceiling" and judge_kind == "ckpt":
+        raise ValueError("+refine=ceiling descends the true pinball: no judge involved")
+    tag = f"_refine-{'ceiling' if spec.mode == 'ceiling' else 'E'}{spec.n_max}"
+    if spec.target == "fan":
+        tag += "-fan"
+    if spec.alpha != 0.1:
+        tag += f"-a{spec.alpha:g}"
+    if spec.eps != 1e-3:
+        tag += f"-eps{spec.eps:g}"
+    if spec.noise > 0:
+        tag += f"-noise{spec.noise:g}"
+    if spec.energy != "cos":
+        tag += f"-{spec.energy}"
+    if spec.contextualized:
+        tag += "-ctx"
+    if judge_kind == "ckpt":
+        tag += "-judge"
+    return spec, judge_kind, tag
+
+
+def _build_energy_judge(cfg, device):
+    """The judge is a PRETRAIN checkpoint loaded on its own config (its
+    predictor never saw a forecasting loss). Shared by +ratein=energy and
+    +refine_judge=ckpt."""
+    from hydra import compose as _compose
+    ecfg = (_compose(config_name=str(cfg.energy_config))
+            if cfg.get("energy_config") else cfg)
+    judge = create_model_from_config(ecfg)
+    judge = load_checkpoint(judge, str(cfg.energy_ckpt), device,
+                            allow_partial=True).eval()
+    logger.info(f"energy judge: {cfg.energy_ckpt}")
+    return judge
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +849,16 @@ def main(cfg: DictConfig):
         raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy")
     if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
         raise ValueError("+ratein=energy needs +energy_ckpt=<pretrain checkpoint>")
+    #   +refine=energy|ceiling                  S6 inference refinement of the
+    #                                           fan's center down the energy
+    #                                           (ceiling = TRUE pinball, a
+    #                                           diagnostic, never official)
+    #   +refine_steps=8 +refine_alpha=0.1 +refine_eps=1e-3 +refine_noise=0
+    #   +refine_target=center|fan +refine_judge=self|ckpt (+energy_ckpt)
+    refine_spec, refine_judge_kind, refine_tag = parse_refine_flags(cfg)
+    if refine_spec is not None and refine_spec.mode == "ceiling":
+        logger.warning("REFINE-CEILING: descends the TRUE target - a diagnostic "
+                       "bound on what refinement can give, never an official number")
     # RateIN x w (gated): +ratein_w=true - fan at native rate via w=1/k on
     # decimated buckets (k <= 4). Requires a cross_resolution model AND an
     # active ratein mode (without decimation, w=1 everywhere = misleading no-op).
@@ -833,19 +920,17 @@ def main(cfg: DictConfig):
     if ratein_pool:
         tag += "-pool"
     energy_judge = None
-    if ratein_mode_val == "energy":
-        # The judge is the PRETRAIN checkpoint (its predictor never saw a
-        # forecasting loss); a finetuned model's own trunk would do, but the
-        # pretrain is the hypothesis: "the rate the pretrain finds natural".
-        from hydra import compose as _compose
-        ecfg = (_compose(config_name=str(cfg.energy_config))
-                if cfg.get("energy_config") else cfg)
-        energy_judge = create_model_from_config(ecfg)
-        energy_judge = load_checkpoint(energy_judge, str(cfg.energy_ckpt), device,
-                                       allow_partial=True).eval()
-        logger.info(f"energy judge: {cfg.energy_ckpt}")
+    if ratein_mode_val == "energy" or refine_judge_kind == "ckpt":
+        energy_judge = _build_energy_judge(cfg, device)
+    refine_judge = energy_judge if refine_judge_kind == "ckpt" else None
+    if refine_judge is not None and (
+            refine_judge.patching.patch_size != model.patching.patch_size
+            or refine_judge.patching.stride != model.patching.stride):
+        raise ValueError("+refine_judge=ckpt: the judge's patch/stride differ from "
+                         "the evaluated model's - the fan grid would not align")
     if ratein_w:
         tag += "-w"
+    tag += refine_tag
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     tag += gamma_tag
@@ -896,7 +981,9 @@ def main(cfg: DictConfig):
                                           tta_flip=tta_flip,
                                           tta_shifts=tta_shifts,
                                           quantile_gamma=quantile_gamma,
-                                          forced_k=kk, ratein_w=ratein_w)
+                                          forced_k=kk, ratein_w=ratein_w,
+                                          refine_spec=refine_spec,
+                                          refine_judge=refine_judge)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
@@ -915,7 +1002,9 @@ def main(cfg: DictConfig):
                                       ratein_mode=ratein_mode_val,
                                       ratein_w=ratein_w,
                                       ratein_pool=ratein_pool,
-                                      energy_judge=energy_judge)
+                                      energy_judge=energy_judge,
+                                      refine_spec=refine_spec,
+                                      refine_judge=refine_judge)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return
@@ -935,6 +1024,11 @@ def main(cfg: DictConfig):
         if "oracle" in res:
             extra = (f" best_k={res['oracle']['best_k']} "
                      f"(gain {res['oracle']['gain_vs_k1']:+.1%} vs k=1)")
+        if "refine" in res:
+            rf = res["refine"]
+            extra += (f" {'CEILING ' if rf['mode'] == 'ceiling' else ''}refine: "
+                      f"{rf['mean_steps']:.1f} steps, early {rf['frac_stopped_early']:.0%}, "
+                      f"dE {rf['mean_dE']:.4f}, |d| {rf['mean_abs_delta']:.3f}")
         logger.info(
             f"[{i}/{len(configs)}] {config}: MASE {mm['MASE']:.3f} "
             f"CRPS {mm['CRPS']:.3f} ({res['n_instances']} inst, "
@@ -979,6 +1073,16 @@ def main(cfg: DictConfig):
         logger.info(f"  RateIN: {n_active}/{len(fr)} configs mostly "
                     f"decimated | share of k>1 instances (mean): "
                     f"{float(np.mean(fr)):.1%}")
+    rfs = [r["refine"] for r in results.values() if "refine" in r]
+    if rfs:
+        mode = rfs[0]["mode"]
+        logger.info(
+            f"  REFINE[{mode}]{' (diagnostic, never official)' if mode == 'ceiling' else ''}: "
+            f"steps {np.mean([r['mean_steps'] for r in rfs]):.2f} | early "
+            f"{np.mean([r['frac_stopped_early'] for r in rfs]):.0%} | dE "
+            f"{np.mean([r['mean_dE'] for r in rfs]):.4f} | |d| "
+            f"{np.mean([r['mean_abs_delta'] for r in rfs]):.3f} | judge cover "
+            f"{np.mean([r['judge_cover'] or 0 for r in rfs]):.2f}")
     if ratein_oracle:
         # THE reading of the P-RIN diagnostic failure: how many configs gain
         # > 5% even with the best k chosen by cheating.
