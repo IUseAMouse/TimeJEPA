@@ -187,3 +187,10 @@ def test_summarize_and_decimated_target():
     d = R.decimated_target(t, k=2, h_prime=16)
     assert d.shape == (16,) and np.isfinite(d[:10]).all() and np.isnan(d[10:]).all()
     assert np.array_equal(R.decimated_target(t, 1, 20), t)
+
+
+def test_unknown_plus_flag_raises():
+    from evaluate_gift import check_unknown_flags
+    check_unknown_flags(["+tta_flip=true", "+refine=ceiling", "model.name=x", "++foo=1"])
+    with pytest.raises(ValueError, match="refne"):
+        check_unknown_flags(["+refne=ceiling"])

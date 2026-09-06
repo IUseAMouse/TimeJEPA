@@ -45,6 +45,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import hydra
+from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import torch
 from omegaconf import DictConfig
@@ -799,8 +800,36 @@ def csv_row(config: str, model_name: str, r: dict) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
+KNOWN_FLAGS = frozenset((
+    "checkpoint_path", "energy_ckpt", "energy_config", "gift_batch_size",
+    "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
+    "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
+    "refine", "refine_alpha", "refine_contextualized", "refine_energy",
+    "refine_eps", "refine_judge", "refine_noise", "refine_steps",
+    "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
+))
+
+
+def check_unknown_flags(overrides, known=KNOWN_FLAGS):
+    """Every `+key=value` override on the command line must be a flag this
+    script reads. A typo, or a flag from a newer script version, would
+    otherwise be ignored in silence and the run would land in (or skip on)
+    the cache directory of a DIFFERENT configuration."""
+    unknown = []
+    for ov in overrides:
+        if not ov.startswith("+") or ov.startswith("++"):
+            continue
+        key = ov[1:].split("=", 1)[0].strip()
+        if key not in known:
+            unknown.append(key)
+    if unknown:
+        raise ValueError(f"unknown flag(s) {unknown}: not read by this version of "
+                         f"evaluate_gift.py (known: {sorted(known)})")
+
+
 @hydra.main(version_base=None, config_path="../configs/model", config_name="tiny")
 def main(cfg: DictConfig):
+    check_unknown_flags(HydraConfig.get().overrides.task)
     checkpoint_path = cfg.get("checkpoint_path")
     if not checkpoint_path:
         raise ValueError("pass +checkpoint_path=<...>")
