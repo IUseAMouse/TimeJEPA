@@ -1919,6 +1919,32 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-06 (REPOSITIONNEMENT DU PAPIER : ce que les mesures autorisent, et les DEUX
+  expériences bon marché qui tranchent la colonne vertébrale)** — Constat utilisateur :
+  4e sub-10M ; le papier doit mettre en avant l'adaptation à l'inférence (backtest, opérations
+  sur quantiles, zéro encodage fréquentiel) plutôt que JEPA « qui sert à rien sur GIFT ».
+  État des preuves, relu au registre : (a) **JEPA vs reconstruction** (E15/G6, tiny, corpus
+  d'époque, Nixtla) : MASE moyenne −1.4 % pour JEPA mais la reconstruction gagne 17/28
+  cellules appariées — égalité à queues lourdes ; seul signal robuste : l'écart croît avec
+  l'horizon (+0.8/+3.1/+6.6 % short/medium/long). JAMAIS mesuré sur GIFT ni à la recette
+  actuelle. « Sert à rien » n'est donc pas établi ; « pas démontré supérieur » l'est.
+  (b) **Pretrain vs scratch** (E8-E12) : égalité en domaine, −26 % MASE hors domaine
+  (E11/E12) — GIFT EST le hors-domaine, donc le pretrain devrait compter, mais jamais
+  mesuré sur GIFT. (c) **Énergie sur GIFT** : uplift réel sur un proposeur PONCTUEL (TTM
+  0.7258 → hybride 0.6508), 6/6 Nixtla ; échec sur notre propre fan (dilution) et comme
+  sélecteur de taux (0.5848). Un résultat « ce que l'énergie fait et ne fait pas », pas une
+  vitrine. (d) **Adaptation à l'inférence** : nu 0.6131 → flip 0.5842 → RateIN mix-pool
+  0.5340 (−7.9 pts), oracle 0.5190, variante FFT publiée (Reverso) 0.6022 sur le même
+  modèle ; capacité ×3.5 n'améliore PAS le nu mais améliore la réponse aux couches. C'est
+  la claim la plus solide. **Deux expériences qui décident du titre, une soirée chacune** :
+  (1) finetune head8 SANS pretrain (scratch, même recette, corpus v3, GPU une soirée) →
+  mesure directe de ce que le pretrain JEPA vaut sur GIFT ; si < 1 pt, le papier est « un
+  petit forecaster + adaptation sans métadonnées » et JEPA n'est qu'un moyen ; si > 2 pts,
+  JEPA reste dans le titre ; (2) RateIN (flip + mix-pool) appliqué à TTM-R3 via le harnais
+  hybride (éval seule) → si TTM gagne, la couche est model-agnostic et devient LE résultat ;
+  sinon, la sensibilité au taux est propre à notre lignée (argument JEPA/latent). Les deux
+  avant toute réécriture ; xres après.
+
 - **2026-09-06 (CLASSEMENT « FONDATIONS SEULES » : snapshot frais du leaderboard, doc
   `docs/GIFT_RANKINGS.md`, script `gift_foundation_rank.py`)** — Demande utilisateur : se
   comparer aux vrais modèles de fondation, pas aux orchestrateurs. Snapshot

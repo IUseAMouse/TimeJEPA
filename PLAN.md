@@ -1393,6 +1393,14 @@ sidecar `_reallen` (supprime les fenêtres à cible-pad) et pinball masquée. Re
 éventuelle S4-a' = contextes courts à longueur variable (collate par bucket) + cap dédié,
 après xres.
 
+### PAPIER v8 — repositionnement (décision utilisateur 2026-09-06, en attente de 2 mesures)
+
+Colonne vertébrale candidate : adaptation à l'inférence SANS métadonnées (flip, RateIN
+backtest poolé + mélange de quantiles, oracle et décomposition du résidu : −7.9 pts) ; le
+modèle comme vitrine ; l'énergie comme section « ce qu'elle fait / ne fait pas ». Deux
+mesures d'une soirée tranchent le titre AVANT réécriture : (1) finetune head8 from scratch
+(valeur du pretrain JEPA sur GIFT) ; (2) RateIN sur TTM-R3 (model-agnostic ou non).
+
 ### S4-c — CONTEXTE COURT au finetune (créé 2026-09-06, config seule, à lancer)
 
 La randomisation de contexte du finetune s'arrête à 128 ; les saigneurs MASE (m4_yearly
