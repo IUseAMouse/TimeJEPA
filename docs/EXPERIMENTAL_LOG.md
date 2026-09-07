@@ -1919,6 +1919,12 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (S4-c @5 % en STACK flip + mix + pool : 0.7957 / 0.5404, couverture 0.743 —
+  à 0.6 pt du champion head8 à 25 % (0.7842 / 0.5340) ; gain de couche −1.0 pt, identique à
+  celui du champion (−0.9), composabilité intacte)** — Si la trajectoire 5 → 25 % ressemble
+  à celle de head8 (−1.5 pt en bt), le 25 % de S4-c en stack passe sous 0.53. Extrapolation,
+  le 15 % tranche. Couverture un cran sous le champion, à suivre.
+
 - **2026-09-07 (S4-c @5 % : 0.8102 / 0.5506 — meilleur 5 % de la lignée v3 ; m4_yearly 3.76
   et m4_weekly 2.33 déjà au niveau du head8 à 25 %)** — `epoch00_valloss0.6620`, flip +
   backtest, couverture 0.750 (q10 0.121, q90 0.871), 34/97 décimées. Références à 5 % :
