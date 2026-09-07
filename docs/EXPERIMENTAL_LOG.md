@@ -1919,6 +1919,17 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (P-S6.6 CONFIRMÉE sur le pretrain mini `epoch00_valloss0.5495` : vallée locale
+  en 0 entre 2 et 14 % sur cinq configs, standalone et contextualisé ; Spearman(E, |c|)
+  0.33-0.65 : la vérité est sur le FLANC d'une cuvette dont le fond est ailleurs)** —
+  Aucun checkpoint de la lignée (tiny pretrain, tiny mix, head8, mini pretrain) n'a de
+  puits sur la vérité le long de l'axe translation. Raison : la loss JEPA ne compare jamais
+  y à y + 0.05 σ ; elle n'a pas de négatifs proches, rien ne façonne E localement. Le juge
+  classe des formes éloignées (E18b), il ignore la géométrie à 0.1 σ, là où sont les 17 pt
+  du plafond. Décision proposée à l'utilisateur : S6-b, denoising score matching (voir
+  entrée précédente) ; z-descent non abandonné mais second (il change l'espace de
+  mouvement, pas le savoir du juge). Bras critic B / λ0.1 / B-λ0.1 : à couper.
+
 - **2026-09-08 (SONDE « VÉRITÉ AU CENTRE » : l'énergie JEPA n'a PAS de vallée sur la vérité
   le long de l'axe translation — ni au pretrain ni au finetune ; c'est structurel, pas
   E18b ; sortie proposée : denoising score matching)** — `probe_energy_shift.py --center
