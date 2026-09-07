@@ -1919,6 +1919,18 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (SCRATCH head8 @15 % : 0.7995 / 0.5551 — le pretrain vaut ≈ 1 pt, apparaît
+  tard ; H1 tranchée « pas le goulot », run COUPÉ pour S4-c)** — Sans pretrain, flip +
+  backtest, `epoch00_valloss0.6565` : 0.7995 / 0.5551, couverture 0.755. Apparié head8
+  pretrained : 15 % 0.7974 / 0.5466. Écart 0.85 pt de CRPS à 15 % contre 0.03 à 5 % : le
+  pretrain ne se voit pas au début et s'écarte ensuite. P-scr.1 (≥ 2 pt à 25 %) non
+  atteinte à 15 % ; trajectoire compatible avec 1-1.5 pt à 25 %. Verdict H1 : le pretrain
+  JEPA vaut environ un point à budget égal — utile, pas décisif, pas le goulot. Run coupé
+  à 15 % (val 0.6565), la carte passe à S4-c (`lotsa_mini_v3_head8_ctx_zeroshot`, P-ctx.1..3
+  gravées le 2026-09-06, apparié à 0.5466 à 15 %). Note : l'éval a été lancée avec
+  `head8_eval` et a atterri sous `timejepa_lotsa_mini_v3_head8_zs/epoch00_valloss0.6565`
+  (à déplacer sous `..._head8_scratch_zs/`, jamais supprimer).
+
 - **2026-09-07 (DOUBLE ORACLE oracle-k + plafond 0.05 : 0.4539 / 0.3467 / couv. 0.913 —
   RateIN et le raffinement sont ORTHOGONAUX ; bras joint rétrogradé en ablation
   conditionnelle)** — Sur le champion head8 : oracle-k seul 0.5190 (−1.5 pt), plafond 0.05
