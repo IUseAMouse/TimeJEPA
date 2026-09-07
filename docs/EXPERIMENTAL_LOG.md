@@ -1919,6 +1919,33 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (P-S6.3 ÉCHOUE : route B dévie la trajectoire de < 1 % et laisse les pinball_i
+  identiques ; SONDE DE DÉCALAGE `probe_energy_shift.py` sur tiny : le juge n'est PAS
+  aveugle aux translations, il a une PRÉFÉRENCE de translation décorrélée de la vérité)**
+  — B : `train_loss/joint` et `sigreg` divergent de ~1 % de A, tous les `pinball_k`
+  identiques à l'affichage. Mécanisme : le gradient propre à B est celui de pinball_i −
+  pinball_0 = un ε de 0.0005 ; un signal proportionnel à un effet nul ne l'amorce pas —
+  vaut aussi pour les bras λ. Hypothèse testée sans GPU : le candidat encodé seul
+  (patching linéaire + LayerNorm) serait quasi invariant à un décalage constant, le
+  mouvement même que la descente doit guider. Sonde : centre du fan décalé de c ∈ ±{0.05,
+  0.1, 0.3, 0.5} σ, E = 1 − cos(z_pred, enc(centre + c)), standalone et contextualisé, 48
+  instances × 3 configs (m_dense/D, loop_seattle/H, m_dense/H), tiny mix. Résultats :
+  (1) E n'est PAS plate : |ΔE| ≈ 0.001-0.003 à ±0.05, 0.01-0.03 à ±0.5, soit 0.3 à 5 % de
+  E — sensibilité faible mais réelle, ET identique en contextualisé (l'hypothèse
+  « jonction visible » ne tient pas) ; (2) **argmin_c E est au bord de la grille dans
+  ~100 % des cas, jamais en 0** : E est monotone en c — le juge préfère TOUJOURS décaler
+  le centre, loin, dans une direction propre à l'instance ; (3) **cette direction coïncide
+  avec le signe du résidu vrai à 0.57 / 0.53 / 0.25** (pile ou face, anti-corrélé sur
+  m_dense/H) ; (4) Spearman(E, |c − c*|) 0.24 / 0.24 / −0.08 : pas de vallée sur la vérité.
+  Lecture : la descente du critic baisse toujours l'énergie (energy_drop stable 0.08) en
+  suivant ce biais de translation, sans rapport avec y — c'est exactement ce que le run A
+  montrait. Le problème est en amont de la route et de λ : l'axe « translation du centre »
+  n'a pas de puits sur la vérité dans ce latent. Les trois bras vont à 5k steps pour le
+  registre, puis coupure sauf surprise. Prochain diagnostic : même sonde sur le champion
+  head8 (base réelle du critic) sur le pod, et sur tout checkpoint d'un bras critic dès
+  qu'il en existe un (la question : l'entraînement à travers le raffinement déplace-t-il
+  « argmin sign = residual sign » au-dessus de 0.5 ?).
+
 - **2026-09-08 (critic A COUPÉ à ~6k steps sans attendre la validation ; trois bras en
   parallèle, une variable chacun contre A : route B, λ_joint 0.1, et le bundle B + λ 0.1)**
   — Le train de A suffit (gain 0.0005 en baisse, ≈ 0.3 % du plafond) ; une validation à
