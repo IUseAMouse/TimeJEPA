@@ -10,8 +10,10 @@
 # Validation runs N = max deterministically: val_loss is the loss of the
 # DEPLOYED (refined) forecast, comparable to the joint arm when N = 0.
 #
-# critic_alpha is a PLACEHOLDER: fix it from the inference-side ceiling
-# (normalized step: alpha = largest displacement of any point per step)
+# critic_alpha 0.05 FIXED from the inference-side ceiling curve (2026-09-07):
+# normalized step, alpha = largest displacement of any point per step;
+# N <= 4 at train = box 0.2 sigma, N = 8 at inference = box 0.4 sigma
+# (ceiling there: 0.3657 CRPS vs 0.5340, G = 16.8 pt on the head8 champion)
 # diagnostic (evaluate_gift +refine=ceiling) before launching.
 #
 #   python scripts/train.py --config-name lotsa_mini_v3_head8_critic_zeroshot \

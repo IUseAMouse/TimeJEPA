@@ -1919,6 +1919,38 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (COURBE DU PLAFOND gain(boîte), pas normalisé — le biais de position tient
+  dans 0.8 σ et vaut 17 pt de CRPS à la boîte 0.4 ; α du critic FIXÉ à 0.05 ; P-S6.1 gravée)**
+  — Champion head8 mix-pool (0.7842 / 0.5340 / couverture 80 % 0.756), `+refine=ceiling`
+  N=8, pas L∞-normalisé, boîte = N·α en écarts-types normalisés. ORACLE, jamais officiel.
+
+  | boîte | α | MASE | CRPS | couv. 80 % | \|d\| | early |
+  |---|---|---|---|---|---|---|
+  | raw (O(1/h)) | 0.3 | 0.6762 | 0.4695 | 0.816 | 0.061 | 14 % |
+  | 0.16 | 0.02 | 0.6381 | 0.4443 | 0.837 | 0.083 | 5 % |
+  | 0.4 | 0.05 | 0.4909 | 0.3657 | 0.896 | 0.180 | 14 % |
+  | 0.8 | 0.1 | 0.3563 | 0.3022 | 0.940 | 0.293 | 29 % |
+  | 4.0 (asymptote) | 0.5 | 0.2722 | 0.2932 | 0.938 | 0.459 | 98 % |
+
+  Lectures. (1) La courbe est quasi à l'asymptote dès 0.8 σ : le « mal posé » est PETIT et
+  PARTOUT (les longs horizons, sans budget au point raw, contribuent autant que les
+  courts). (2) L'asymptote 0.293 est la part de la DISPERSION (médiane parfaite, fan
+  inchangé) ; la couverture y monte à 0.94 pour 0.80 nominal : le fan est calibré pour un
+  centre mal posé — un modèle qui apprend à centrer doit aussi resserrer, ce que la
+  supervision profonde du bras critic fait d'elle-même (pinball sur le fan raffiné) ;
+  témoin : couverture en validation. (3) P-ceil.1 (0.5-1.5 pt à la boîte 0.4) est dépassée
+  d'un ordre de grandeur : G = 16.8 pt. Le plafond est plus dur à récupérer que celui de
+  RateIN (un choix parmi K contre h signes par instance), mais six fois plus large.
+  **Décisions** : `critic_alpha: 0.05` (pas normalisé ; N ≤ 4 en entraînement = boîte 0.2,
+  le modèle apprend le pas ; N = 8 à l'inférence = boîte 0.4, référence du plafond).
+  **P-S6.1** (bras critic, sur SON checkpoint, à boîte 0.4, `+refine=energy` contre son
+  propre mix-pool et son propre plafond) : récupération 10-25 % de G, soit ≈ 0.50-0.517
+  si G y vaut ce qu'il vaut ici ; < 5 % ⇒ le signe du résidu n'est pas lisible dans le
+  latent avec cette boucle, S6 clos en l'état. **Prédiction utilisateur** : 0.49, soit
+  ≈ 26 % de récupération. Prérequis rappelé par l'utilisateur lui-même : ne se mesure que
+  sur un modèle entraîné à travers le raffinement (bras joint puis critic), jamais sur
+  head8 (P-ceil.2). Double oracle (oracle-k + plafond 0.05) en cours, pour l'additivité.
+
 - **2026-09-07 (PLAFOND DE RAFFINEMENT, point « raw » : le centre du fan porte un biais de
   position petit et cohérent — 0.4695 CRPS à 0.06 σ de déplacement, ORACLE, jamais officiel)**
   — Champion head8 mix-pool (0.7842 / 0.5340, couverture 80 % 0.756), `+refine=ceiling`
