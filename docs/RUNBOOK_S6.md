@@ -1,4 +1,4 @@
-# Runbook S4-c → critic (2026-09-07)
+# Runbook S4-c → critic → score matching (2026-09-07 / 08)
 
 Toutes les commandes depuis la racine du repo, sur le pod, après `git pull`.
 `PT` = le pretrain mini v3, `logs/` est ignoré par git.
@@ -134,6 +134,38 @@ PYTHONUNBUFFERED=1 python scripts/train.py --config-name lotsa_mini_v3_head8_joi
   "+training.pretrained_encoder_path=\"$PT\"" 2>&1 | tee logs/train_head8_joint.log
 # éval : lotsa_mini_v3_head8_joint_eval, nu / flip / stack comme en 3
 ```
+
+## 5. Bras S6-b : score matching (2026-09-08, remplace la voie critic, close par diagnostic)
+
+Une variable contre le bras joint : le terme de score (λ 0.1, route B, perturbations niveau /
+bruit / pente / médiane du fan, moitié du batch). Boucle critic OFF. Base head8 + pretrain mini.
+
+```bash
+PYTHONUNBUFFERED=1 python scripts/train.py --config-name lotsa_mini_v3_head8_score_zeroshot \
+  "+training.pretrained_encoder_path=\"$PT\"" 2>&1 | tee logs/train_head8_score.log
+grep -n "H2b/S6 settings" logs/train_head8_score.log      # audit des clés au démarrage
+```
+
+Témoins wandb, dans l'ordre où ils tombent :
+- `score/cos` et surtout `score/cos_level` (l'axe du plafond) qui montent vers 1 dès les premiers
+  milliers de steps ; `score/cos_forecast` = la direction depuis le fan réel ;
+- premier point de validation : **`val_score/valley_frac` > 0.8** (la sonde, interne), `val_loss`
+  contre head8 au même step (coût sur le fan nu, P-S6b.4) ;
+- débit it/s (attendu ≈ ×1.5 contre le finetune plain).
+
+Réception sur le checkpoint 5 % (`CK`), sans GPU d'entraînement :
+
+```bash
+CK=checkpoints/timejepa_lotsa_mini_v3_head8_score_zs/pretrain_False/<CKPT>
+P="python scripts/probe_energy_shift.py --checkpoint $CK --model-config lotsa_mini_v3_head8_score_eval \
+   --configs m_dense/D/short,loop_seattle/H/short,m_dense/H/short,electricity/H/short,solar/H/short --instances 64"
+$P --center truth --out logs/probe_score_truth.json 2>&1 | tee logs/probe_score_truth.log   # P-S6b.1 : vallée en 0 > 80 %
+$P --center fan   --out logs/probe_score_fan.json   2>&1 | tee logs/probe_score_fan.log     # P-S6b.2 : signe > 0.7
+```
+
+Puis, au 15 %, les évals (même schéma que §3, config `lotsa_mini_v3_head8_score_eval`) : nu, flip,
+stack, stack + `+refine=energy +refine_alpha=0.05` (le chiffre de S6-b, P-S6b.3), stack +
+`+refine=ceiling +refine_alpha=0.05` (son plafond). Récupération = (stack − refine) / (stack − ceiling).
 
 ## Digest à m'envoyer
 

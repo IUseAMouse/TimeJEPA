@@ -1919,6 +1919,29 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (S6-b CODE LIVRÉ, NON COURU — denoising score matching sur l'énergie :
+  `critic.perturb_target` / `score_cos` / `valley_witness`, terme `lambda_score` au finetune,
+  configs `lotsa_mini_v3_head8_score_{zeroshot,eval}`, 11 tests dont l'APPRENABILITÉ)** —
+  Mécanisme : ỹ = y + ε (niveau |c| ∈ [0.05, 0.5] σ, bruit σ ∈ [0.02, 0.3], pente, ou la médiane
+  du fan détachée = erreurs réelles du forecaster), g = ∂E/∂ỹ (create_graph), g normalisé L∞
+  détaché (la direction même de `refine_step`), loss = 1 − cos(−g, y − ỹ). Route B (z_pred dans
+  le graphe). Sous-batch moitié, items à cible pleine seulement, avant la boucle critic (OFF
+  dans ce bras). Témoins : `train_loss/score`, `score/cos`, `score/cos_<kind>`, `score/frac_<kind>` ;
+  en validation (perturbations seedées) `val_loss/score`, `val_score/cos*`, **`val_score/valley_frac`**
+  (la métrique de la sonde, δ 0.1). **Test d'apprenabilité** (tiny d32, batch fixe de sinusoïdes,
+  terme seul, 150 pas AdamW) : cos(−g, y−ỹ) de 0 → 0.5-0.85, vallée locale à δ 0.3 de 0 → 0.75-1.0
+  dès 50-100 pas — le terme creuse le puits que la loss JEPA ne creuse pas. **Calibration** : à
+  l'init du jouet le gradient du terme sur l'encodeur vaut 13.6× celui de la pinball ⇒ λ_score
+  0.1 (≈ ×1.4), pas 0.3 (×4, coût sur le fan nu) ; garde P-S6b.4. Coût attendu ≈ ×1.5 sur les
+  it/s (une passe encodeur + double backward sur la moitié du batch ; critic : ×2.7).
+  **Prédictions** (checkpoint 5 % du bras score) : P-S6b.1 sonde `--center truth` vallée en 0
+  > 80 % sur cinq configs (contre 2-14 %), `val_score/valley_frac` > 0.8 ; P-S6b.2 sonde
+  `--center fan` signe de l'argmin = signe du résidu > 0.7 (contre ≈ 0.5) ; P-S6b.3 (15 %) stack
+  + `+refine=energy` α 0.05 récupère ≥ 10 % de SON plafond (≈ 1.5 pt si G ≈ 17), < 3 % ⇒ le champ
+  ne transfère pas de ỹ synthétique à ŷ₀ réel ; P-S6b.4 pinball nue ≤ +0.3 pt vs head8 apparié.
+  ÉCHEC-DIAGNOSTIC si P-S6b.1 tient et P-S6b.3 échoue ⇒ second bras avec `forecast` à 0.6.
+  Défauts inertes bit-identiques (test). Runbook §5.
+
 - **2026-09-08 (P-S6.6 CONFIRMÉE sur le pretrain mini `epoch00_valloss0.5495` : vallée locale
   en 0 entre 2 et 14 % sur cinq configs, standalone et contextualisé ; Spearman(E, |c|)
   0.33-0.65 : la vérité est sur le FLANC d'une cuvette dont le fond est ailleurs)** —

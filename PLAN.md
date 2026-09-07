@@ -1415,7 +1415,25 @@ JEPA se juge sur ce qu'il CONSERVE (énergie, conditionnement), pas sur le CRPS 
 xres = première brique (conditionnement), H2b = deuxième (un modèle, deux pertes). Le
 papier v8 reste le forecaster adapté à l'inférence ; le world model est la suite.
 
-### S6 — BOUCLE CRITIQUE (spec gravée 2026-09-06, gated derrière H2b)
+### S6 — BOUCLE CRITIQUE (spec gravée 2026-09-06, gated derrière H2b) — **CLOSE PAR DIAGNOSTIC 2026-09-08**
+
+**Verdict** : bras A, B et λ 0.1 superposés (gain de pinball 0.0005 ≈ 0.3 % du plafond). Cause
+structurelle mesurée par `scripts/probe_energy_shift.py` : l'énergie n'a pas de vallée locale sur
+la vérité le long de l'axe translation, sur AUCUN checkpoint (pretrain compris, 2-14 %) — la loss
+JEPA ne voit jamais de mauvais futur proche. Le puits ne peut pas émerger du second ordre d'un
+effet nul. Le plafond (0.3657 à boîte 0.4) reste la borne de ce que le mécanisme vaut.
+
+### S6-b — SCORE MATCHING SUR L'ÉNERGIE (voie active, implémenté 2026-09-08, non couru)
+
+Creuser le puits directement : ỹ = y + ε (niveau, bruit, pente, médiane du fan), g = ∂E/∂ỹ
+normalisé L∞, loss = 1 − cos(−g, y − ỹ) (denoising score matching, Vincent 2011) ; route B ;
+boucle critic OFF (une variable). Config `lotsa_mini_v3_head8_score_zeroshot` (λ 0.1, calibré
+au smoke : gradient du terme 13.6× la pinball à l'init), test d'apprenabilité vert (puits creusé
+en 100 pas sur tiny). Réception = la sonde sur le checkpoint 5 % : P-S6b.1 vallée en 0 > 80 %,
+P-S6b.2 signe > 0.7 ; puis P-S6b.3 (≥ 10 % du plafond au 15 %) et P-S6b.4 (fan nu ≤ +0.3 pt).
+Descente dans z : second, seulement si le juge a un puits (elle change l'espace de mouvement,
+pas le savoir du juge). Runbook `docs/RUNBOOK_S6.md` §5.
+
 
 Générateur + critique dans un checkpoint, entraînés à travers le raffinement (lignée EBT
 2025, planning JEPA). Flux : (1) passe avant unique, z_pred = pred(enc(x), w) gardé EN
