@@ -1919,6 +1919,30 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (SONDE « VÉRITÉ AU CENTRE » : l'énergie JEPA n'a PAS de vallée sur la vérité
+  le long de l'axe translation — ni au pretrain ni au finetune ; c'est structurel, pas
+  E18b ; sortie proposée : denoising score matching)** — `probe_energy_shift.py --center
+  truth` (défaut ; `--judge-checkpoint` pour juger le fan d'un autre modèle) : la vérité y
+  est en c = 0, décalée de c ∈ ±{0.05, 0.1, 0.3, 0.5} σ. Tiny pretrain (lignée
+  contextualisée, `epoch00_valloss0.3450`) et tiny mix finetune, 48 inst × 3 configs :
+  **argmin en 0 et vallée locale en 0 : 0-6 % partout**, standalone comme contextualisé ;
+  Spearman(E, |c|) entre −0.18 et +0.43. Décaler la vérité de 0.05 σ dans un sens baisse
+  toujours E. Champion head8 en mode fan (pod, 64 inst × 5 configs) : signe de l'argmin =
+  signe du résidu 0.46 / 0.50 / 0.37 / 0.54 / 0.84 (solar seul), argmin en 0 ≤ 5 %, Spearman
+  ≈ −0.1 (solar +0.38). Mécanisme : E(ŷ₀) ≈ 0.6-0.9 donc cos(z_pred, enc(y)) ≈ 0.1-0.4 —
+  z_pred est LOIN du latent du vrai futur ; le minimum de E est le candidat dont l'encodage
+  est le plus proche de z_pred, pas y (E18b : rang 0.245 = premier quart, pas minimum).
+  Un juge « premier quart » classe des formes et ne guide pas une descente : depuis la
+  vérité, la descente s'en éloigne. Route, λ, contextualisé n'y changent rien ; les trois
+  bras critic sont à couper après leur capture à 5k. **P-S6.6** : pretrain mini
+  (`epoch00_valloss0.5495`, config `lotsa_mini_v3`) : vallée locale en 0 < 10 % sur les
+  cinq configs. **Sortie proposée (S6-b, une soirée de code)** : creuser le puits
+  DIRECTEMENT par denoising score matching (Vincent 2011) — ỹ = y + ε (décalage de niveau
+  + bruit), g = ∂E/∂ỹ avec create_graph, L_score = 1 − cos(−g, y − ỹ) ; signal d'ordre σ,
+  supervisé, indépendant de l'effet initial de la boucle (le critic n'avait qu'un ε par le
+  second ordre). Le raffinement à l'inférence devient quelques pas du champ de score
+  depuis ŷ₀ ; la sonde « vérité au centre » est son test de réception (vallée en 0 > 80 %).
+
 - **2026-09-08 (P-S6.3 ÉCHOUE : route B dévie la trajectoire de < 1 % et laisse les pinball_i
   identiques ; SONDE DE DÉCALAGE `probe_energy_shift.py` sur tiny : le juge n'est PAS
   aveugle aux translations, il a une PRÉFÉRENCE de translation décorrélée de la vérité)**

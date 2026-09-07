@@ -21,10 +21,21 @@ share of instances where argmin_c E(c) has the sign of the true residual
 (0.5 = coin flip), and the Spearman between E(c) and |c - c*| where c* is
 the residual mean (does the energy valley sit on the truth?).
 
+Two centers. `--center truth` (default): the TRUE target sits at c = 0, so
+the question is simply "does E have a valley at the truth along the
+translation axis" - works on a PRETRAIN checkpoint (no quantile head
+needed), the cleanest form of the question, before the finetune touched the
+landscape (E18b). `--center fan`: the proposer's own median (needs a quantile
+head; the judge may be another checkpoint via --judge-checkpoint), the
+situation the critic loop is actually in.
+
 Usage:
-    python scripts/probe_energy_shift.py --checkpoint <ckpt> \
-        --model-config lotsa_mini_v3_head8_eval \
-        --configs m_dense/D/short,loop_seattle/H/short --instances 64
+    # pretrain judge, truth at the center
+    python scripts/probe_energy_shift.py --checkpoint <pretrain.ckpt> \
+        --model-config lotsa_mini_v3 --configs m_dense/D/short --instances 64
+    # finetuned proposer, its own fan at the center
+    python scripts/probe_energy_shift.py --checkpoint <head8.ckpt> \
+        --model-config lotsa_mini_v3_head8_eval --center fan
 """
 
 import argparse
@@ -71,6 +82,11 @@ def main():
     ap.add_argument("--instances", type=int, default=64)
     ap.add_argument("--gift-root", default="data/gift_eval")
     ap.add_argument("--out", default="")
+    ap.add_argument("--center", choices=("truth", "fan"), default="truth")
+    ap.add_argument("--judge-checkpoint", default="",
+                    help="fan mode only: judge the proposer's fan with ANOTHER "
+                         "checkpoint (e.g. the pretrain); same patch/stride required")
+    ap.add_argument("--judge-config", default="")
     args = ap.parse_args()
 
     config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
@@ -80,7 +96,18 @@ def main():
     model = create_model_from_config(cfg)
     load_checkpoint(model, args.checkpoint, device)
     model.to(device).eval()
-    can_ctx = getattr(model.predictor, "w_film", None) is None
+    judge = model
+    if args.judge_checkpoint:
+        with initialize_config_dir(version_base=None, config_dir=config_dir):
+            jcfg = compose(config_name=args.judge_config or args.model_config)
+        judge = create_model_from_config(jcfg)
+        load_checkpoint(judge, args.judge_checkpoint, device)
+        judge.to(device).eval()
+        if (judge.patching.patch_size != model.patching.patch_size
+                or judge.patching.stride != model.patching.stride):
+            raise ValueError("judge patch/stride differ from the proposer's")
+    can_ctx = getattr(judge.predictor, "w_film", None) is None
+    print(f"center={args.center} judge={'self' if judge is model else args.judge_checkpoint}")
 
     grid = np.array(GRID, dtype=np.float32)
     results = {}
@@ -100,21 +127,26 @@ def main():
                 continue
             x = torch.as_tensor(ctx, dtype=torch.float32, device=device).view(1, -1, 1)
             with torch.no_grad():
-                out = tta_forecast(model, x, h)
-                fan = out["quantiles_denorm"]
-                if fan.ndim == 4:
-                    fan = fan[..., 0]
-                ctx_norm, fan_norm = refine_mod.normalize_with_context(model, x, fan)
                 y = torch.as_tensor(inst.target, dtype=torch.float32, device=device).view(1, -1, 1)
-                _, y_norm = refine_mod.normalize_with_context(model, x, y)
-                mid = fan_norm.shape[-1] // 2
-                center = fan_norm[..., mid:mid + 1]
-                hj = min(h, int(model.prediction_length))
-                center, y_norm = center[:, :hj], y_norm[:, :hj]
-                z_pred = critic.predict_latent(model, ctx_norm, None)[0]
-                e_sa = [float(energies_for_shift(model, ctx_norm, center, z_pred, float(c), False))
+                hj = min(h, int(judge.prediction_length))
+                if args.center == "fan":
+                    out = tta_forecast(model, x, h)
+                    fan = out["quantiles_denorm"]
+                    if fan.ndim == 4:
+                        fan = fan[..., 0]
+                    # the judge's frame (its own scalers refit on the raw context)
+                    ctx_norm, fan_norm = refine_mod.normalize_with_context(judge, x, fan)
+                    _, y_norm = refine_mod.normalize_with_context(judge, x, y)
+                    mid = fan_norm.shape[-1] // 2
+                    center = fan_norm[..., mid:mid + 1][:, :hj]
+                else:
+                    ctx_norm, y_norm = refine_mod.normalize_with_context(judge, x, y)
+                    center = y_norm[:, :hj]
+                y_norm = y_norm[:, :hj]
+                z_pred = critic.predict_latent(judge, ctx_norm, None)[0]
+                e_sa = [float(energies_for_shift(judge, ctx_norm, center, z_pred, float(c), False))
                         for c in grid]
-                e_cx = ([float(energies_for_shift(model, ctx_norm, center, z_pred, float(c), True))
+                e_cx = ([float(energies_for_shift(judge, ctx_norm, center, z_pred, float(c), True))
                          for c in grid] if can_ctx else [float("nan")] * len(grid))
             E_sa.append(e_sa)
             E_cx.append(e_cx)
@@ -132,10 +164,13 @@ def main():
             nz = np.abs(resid) > 0.02
             sign_ok = float((np.sign(argmin[nz]) == np.sign(resid[nz])).mean()) if nz.any() else float("nan")
             stay = float((argmin == 0.0).mean())
+            # local valley at the center: both neighbours (+-0.05) higher
+            valley = float(((E[:, i0 - 1] > E[:, i0]) & (E[:, i0 + 1] > E[:, i0])).mean())
             sp = [spearman(E[i], np.abs(grid - resid[i])) for i in range(len(E))]
             return {"mean_abs_dE_per_c": {f"{c:+.2f}": round(float(d), 5) for c, d in zip(grid, dE)},
                     "argmin_sign_matches_residual": round(sign_ok, 3),
                     "argmin_stays_at_zero": round(stay, 3),
+                    "local_valley_at_center": round(valley, 3),
                     "spearman_E_vs_dist_to_truth_mean": round(float(np.nanmean(sp)), 3),
                     "n": int(len(E))}
 
@@ -148,8 +183,10 @@ def main():
             if r is None:
                 print(f"  {name}: n/a"); continue
             print(f"  {name}: |dE| per c " + " ".join(f"{k}:{v:.4f}" for k, v in r["mean_abs_dE_per_c"].items()))
-            print(f"  {name}: argmin sign = residual sign {r['argmin_sign_matches_residual']:.2f} | "
-                  f"argmin at 0: {r['argmin_stays_at_zero']:.2f} | spearman(E, |c-c*|) {r['spearman_E_vs_dist_to_truth_mean']:.3f}")
+            print(f"  {name}: argmin at 0: {r['argmin_stays_at_zero']:.2f} | local valley at center: "
+                  f"{r['local_valley_at_center']:.2f} | argmin sign = residual sign "
+                  f"{r['argmin_sign_matches_residual']:.2f} | spearman(E, |c-c*|) "
+                  f"{r['spearman_E_vs_dist_to_truth_mean']:.3f}")
     if args.out:
         Path(args.out).write_text(json.dumps(results, indent=2))
 
