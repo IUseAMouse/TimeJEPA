@@ -1919,6 +1919,20 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (S4-c @5 % : 0.8102 / 0.5506 — meilleur 5 % de la lignée v3 ; m4_yearly 3.76
+  et m4_weekly 2.33 déjà au niveau du head8 à 25 %)** — `epoch00_valloss0.6620`, flip +
+  backtest, couverture 0.750 (q10 0.121, q90 0.871), 34/97 décimées. Références à 5 % :
+  mini standard 0.5585, scratch head8 0.8012 / 0.5582 (couv. 0.775), v4 head8 0.5484 (deux
+  variables). Six configs P-ctx.1 (S4-c 5 % / réf. head8 25 % / scratch 5 %) : m4_yearly
+  3.76 / 3.80 / 5.19, m4_quarterly 1.30 / 1.31 / 1.37, m4_monthly 1.015 / 1.01 / 1.03,
+  m4_weekly 2.33 / 2.35 / 2.47, hospital 0.788 / 0.79 / 0.78, car_parts 0.879 / 0.87 /
+  0.85. Le signal est sur m4_yearly et m4_weekly (13-70 pas de contexte), les quatre autres
+  sont au plateau dès le début et ne discriminent pas. Métriques ponctuelles d'entraînement
+  (train_rmse/mae) plus hautes que les autres bras : normalisation par un contexte de 32-64
+  points, attendu, pas un bug (registre du jour). Couverture 0.750 à surveiller. Verdict
+  P-ctx.1..3 au 15 % (contre 0.5466) puis au 25 %. Éval tombée sous le namespace head8_zs
+  (config `head8_eval`) : utiliser `lotsa_mini_v3_head8_ctx_eval`, déplacer le dossier.
+
 - **2026-09-07 (bras critic : N tiré dans {0,1,2,4,8} — même boîte à l'entraînement, en
   validation et à l'inférence)** — Remarque utilisateur : avec N ≤ 4 la boîte vue à
   l'entraînement est 0.2 σ contre 0.4 σ au plafond de référence et à l'inférence (N = 8) ;
