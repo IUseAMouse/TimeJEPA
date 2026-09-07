@@ -86,6 +86,18 @@ PYTHONUNBUFFERED=1 python scripts/train.py --config-name lotsa_mini_v3_head8_cri
 # éval : même config lotsa_mini_v3_head8_critic_eval avec model.name=timejepa_lotsa_mini_v3_head8_criticB_zs
 ```
 
+Bras λ_joint 0.1 et bundle B + λ 0.1 (2026-09-08, P-S6.4 / P-S6.5 au registre) :
+
+```bash
+C="python scripts/train.py --config-name lotsa_mini_v3_head8_critic_zeroshot +training.pretrained_encoder_path=\"$PT\""
+PYTHONUNBUFFERED=1 $C training.loss.lambda_joint=0.1 model.name=timejepa_lotsa_mini_v3_head8_criticA-l01_zs \
+  2>&1 | tee logs/train_head8_criticA_l01.log
+PYTHONUNBUFFERED=1 $C training.loss.critic_route=B training.loss.lambda_joint=0.1 model.name=timejepa_lotsa_mini_v3_head8_criticB-l01_zs \
+  2>&1 | tee logs/train_head8_criticB_l01.log
+```
+
+Lecture à 5k steps : les courbes `pinball_0 − pinball_N` lissées superposées ; A = 0.0005 en baisse.
+
 ## 3. Évals du checkpoint critic (à 15 % puis au meilleur)
 
 `CK` = son checkpoint, `checkpoints/timejepa_lotsa_mini_v3_head8_critic_zs/pretrain_False/...`.

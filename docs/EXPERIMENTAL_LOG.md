@@ -1919,6 +1919,21 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (critic A COUPÉ à ~6k steps sans attendre la validation ; trois bras en
+  parallèle, une variable chacun contre A : route B, λ_joint 0.1, et le bundle B + λ 0.1)**
+  — Le train de A suffit (gain 0.0005 en baisse, ≈ 0.3 % du plafond) ; une validation à
+  5 % coûterait 9 h pour mesurer proprement un effet déjà connu comme nul. Bras lancés :
+  `criticB_zs` (`critic_route=B`), `criticA-l01_zs` (`lambda_joint=0.1`), `criticB-l01_zs`
+  (les deux, bundle déclaré, couvre le cas où chaque effet est nécessaire mais pas
+  suffisant). Lecture unique à 5k steps, quatre courbes superposées (expression pinball_0 −
+  pinball_N lissée) : **P-S6.3** (B) : gain ≥ 0.0015 sans décroissance ; **P-S6.4**
+  (λ 0.1) : si le joint verrouille z_pred sur enc(y), abaisser λ ralentit la décroissance
+  du gain de A (facteur < 2 entre 500 et 5k au lieu de 4) sans le faire remonter ;
+  **P-S6.5** (bundle) : gain ≥ 0.002 et croissant si les deux effets sont nécessaires. Le
+  bras qui tient continue seul au 15 %. Si aucun ne tient : l'encodeur ne lit pas des
+  déplacements de 0.1 σ, et la suite est la descente dans un z latent d'entrée du
+  prédicteur (formulation LeCun), pas un réglage de plus.
+
 - **2026-09-08 (critic à 5.5k steps : P-S6.2 RÉFUTÉE dans sa forme — energy_drop stable
   (0.05-0.12), energy_0 en plateau à 0.6, energy_N à 0.5 ; constat réel : la descente
   baisse l'énergie SANS rapprocher de la vérité ; route B proposée en parallèle,
