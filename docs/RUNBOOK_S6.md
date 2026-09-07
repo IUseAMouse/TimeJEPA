@@ -69,7 +69,10 @@ grep -o "critic/pinball_[0-8][^,]*" logs/train_head8_critic.log | tail -20
 grep -o "val_critic/pinball_[0-8][^,]*" logs/train_head8_critic.log | tail -10
 ```
 
-Il faut `pinball_i` qui baisse avec i, `critic/energy_drop > 0`, `critic/delta_clipped_frac ≈ 0`.
+Les `pinball_i` absolues sont dominées par quelques items extrêmes du quart de batch : lire
+`critic/pinball_gain` (= pinball_0 − pinball_N) et `critic/pinball_rel_gain`, lissés sur 50 points
+(sur un run lancé avant ce témoin : expression wandb `${critic/pinball_0} - ${critic/pinball_N}`).
+Il faut ce gain positif et croissant, `critic/energy_drop > 0`, `critic/delta_clipped_frac ≈ 0`.
 Si `val_critic/pinball_8 ≥ val_critic/pinball_0` après un décile complet, le juge ne lit rien : couper.
 
 ## 3. Évals du checkpoint critic (à 15 % puis au meilleur)

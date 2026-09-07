@@ -1919,6 +1919,29 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (BRAS CRITIC LANCÉ — base head8, α 0.05, N ∈ {0,1,2,4,8}, cible EMA ; premiers
+  1.8k steps : mécanique confirmée, signal pinball pas encore lisible ; témoins de gain
+  ajoutés)** — Débit ~3 it/s contre 8 (confondu avec une éval concurrente), ~8 jours par
+  époque, mémoire 40 % ; verdict au 15 % (≈ 29 h) comme les autres bras, la dégradation
+  post-25 % rendant la fin de l'époque sans objet. Courbes wandb à 1.8k steps : `n_steps`
+  tire bien dans {0,1,2,4,8} ; `delta_clipped_frac` = 0 ; `delta_abs` 0.01-0.055 σ (cohérent
+  avec α normalisé) ; `energy_drop` toujours > 0 (0.03-0.17) ; **`energy_0` descend de 0.98 à
+  0.65** : à l'init cos(z_pred, enc(ŷ₀)) ≈ 0.02, espaces quasi orthogonaux, le terme joint
+  à cible EMA les ré-aligne (ce que la décision EMA visait). `pinball_N` visuellement
+  identique à `pinball_0` : PAS un négatif — pinball sur un quart de batch, unités
+  normalisées, dominées par quelques items extrêmes (mêmes pics que train_mae), un
+  déplacement de 0.03 σ y est invisible. Ajout de `critic/pinball_gain` (pinball_0 −
+  pinball_N) et `critic/pinball_rel_gain` (code + test) ; sur le run en cours, expression
+  wandb `${critic/pinball_0} - ${critic/pinball_N}` lissée. Verdict réel : premier point de
+  validation, `val_critic/pinball_0` contre `val_critic/pinball_8` (N = 8 déterministe,
+  set complet).
+
+- **2026-09-07 (S4-c @15 % en STACK : 0.7920 / 0.5437, couverture 0.768 — sous son propre
+  5 % en stack (0.5404), à 1 pt du champion 0.5340 ; ligne fermée)** — Gain de couche
+  0.5521 → 0.5437 (−0.84 pt), la couche compose normalement ; le modèle sous-jacent ne
+  progresse pas entre 5 et 15 %. Couverture 0.768 contre 0.756 au champion : seul actif du
+  bras. Confirme le verdict 15 % : S4-c n'est pas la base du critic.
+
 - **2026-09-07 (S4-c @15 % : 0.8015 / 0.5521, couverture 0.774 — NE PROGRESSE PAS (5 % :
   0.5506), apparié head8 15 % 0.5466 ; P-ctx.1 ÉCHEC-DIAGNOSTIC : le régime court n'est
   pas un problème de données ; S4-c n'est pas la base du critic)** — `epoch00_valloss0.6568`,

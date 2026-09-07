@@ -65,7 +65,8 @@ def test_train_loop_adds_step_pinballs_and_witnesses():
     st = m._critic_stats
     assert st["n_steps"] == 3.0
     for k in ("energy_0", "energy_N", "energy_drop", "pinball_0", "pinball_1",
-              "pinball_2", "pinball_3", "pinball_N", "delta_abs", "delta_clipped_frac"):
+              "pinball_2", "pinball_3", "pinball_N", "pinball_gain", "pinball_rel_gain",
+              "delta_abs", "delta_clipped_frac"):
         assert k in st and st[k] == st[k]          # present, not NaN
     assert st["delta_abs"] > 0 and torch.isfinite(loss)
     loss.backward()                                 # one backward through 3 steps

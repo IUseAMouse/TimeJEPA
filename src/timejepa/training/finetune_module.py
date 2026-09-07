@@ -580,6 +580,11 @@ class FinetuneModule(pl.LightningModule):
         for i, pb in enumerate(pinballs, start=1):
             stats[f'pinball_{i}'] = float(pb.detach())
         stats['pinball_N'] = stats[f'pinball_{n}']
+        # THE readable witness: the absolute pinballs are dominated by a few
+        # extreme items of the sub-batch, a 0.03 sigma move is invisible on
+        # them; the gain and its relative version are not.
+        stats['pinball_gain'] = stats['pinball_0'] - stats['pinball_N']
+        stats['pinball_rel_gain'] = stats['pinball_gain'] / max(stats['pinball_0'], 1e-8)
         stats['delta_abs'] = float(delta.detach().abs().mean())
         stats['delta_clipped_frac'] = float(
             (delta.detach().abs() >= self.critic_max_abs_delta - 1e-6).float().mean())
