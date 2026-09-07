@@ -43,3 +43,16 @@ def test_critic_arm_inherits_joint_and_declares_the_loop():
 def test_eval_twins_share_the_namespace(name, expected):
     c = _compose(name)
     assert c.model.name == expected and c.model.decoder.quantile_hidden_dim == 1536
+
+
+def test_score_arm_declares_the_score_term_only():
+    c = _compose("lotsa_mini_v3_head8_score_zeroshot")
+    L = c.training.loss
+    assert c.model.name == "timejepa_lotsa_mini_v3_head8_score_zs"
+    assert L.lambda_score > 0 and L.score_route == "B"
+    assert list(L.get("critic_steps") or []) == []          # the loop is OFF: one variable
+    assert L.lambda_joint > 0 and L.joint_target == "ema"
+    assert abs(sum(float(v) for v in L.score_perturb.values()) - 1.0) < 1e-6
+    e = _compose("lotsa_mini_v3_head8_score_eval")
+    assert e.model.name == "timejepa_lotsa_mini_v3_head8_score_zs"
+    assert e.model.decoder.quantile_hidden_dim == 1536

@@ -254,6 +254,15 @@ def main(cfg: DictConfig):
             critic_batch_fraction=float(cfg.training.loss.get('critic_batch_fraction', 1.0)),
             critic_max_abs_delta=float(cfg.training.loss.get('critic_max_abs_delta', 5.0)),
             critic_step_norm=bool(cfg.training.loss.get('critic_step_norm', True)),
+            # S6-b (2026-09-08) - score matching on the energy; inert defaults.
+            lambda_score=float(cfg.training.loss.get('lambda_score', 0.0)),
+            score_route=str(cfg.training.loss.get('score_route', 'B')),
+            score_perturb=(OmegaConf.to_container(cfg.training.loss.score_perturb, resolve=True)
+                           if cfg.training.loss.get('score_perturb') else None),
+            score_batch_fraction=float(cfg.training.loss.get('score_batch_fraction', 0.5)),
+            score_contextualized=bool(cfg.training.loss.get('score_contextualized', False)),
+            score_energy=str(cfg.training.loss.get('score_energy', 'cos')),
+            score_valley_delta=float(cfg.training.loss.get('score_valley_delta', 0.1)),
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,

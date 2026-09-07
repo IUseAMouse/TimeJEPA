@@ -112,6 +112,22 @@ class FinetuneModule(pl.LightningModule):
         critic_max_abs_delta: float = 5.0,
         critic_step_norm: bool = True,
 
+        # S6-b (2026-09-08) - denoising score matching on the energy: the true
+        # target is perturbed (level shift, noise, slope, or the head's own
+        # median) and the energy's descent direction at the perturbed point
+        # must point back to the truth (module critic.score_cos). Digs the
+        # valley at the truth that the JEPA loss never shapes (probe
+        # scripts/probe_energy_shift.py). score_route 'B' keeps z_pred in the
+        # graph (the predictor learns to place z_pred so that the field points
+        # home). lambda_score == 0 => inert, bit-identical.
+        lambda_score: float = 0.0,
+        score_route: Literal['A', 'B'] = 'B',
+        score_perturb: Optional[Dict[str, float]] = None,
+        score_batch_fraction: float = 0.5,
+        score_contextualized: bool = False,
+        score_energy: Literal['cos', 'mse'] = 'cos',
+        score_valley_delta: float = 0.1,
+
         # Worksite 2 (native horizon) - merge the query table of a
         # SHORT-horizon checkpoint into a LONG-horizon model instead of
         # dropping it. Opt-in: without this flag a mismatch stays a loud
@@ -183,8 +199,37 @@ class FinetuneModule(pl.LightningModule):
         self.critic_batch_fraction = float(critic_batch_fraction)
         self.critic_max_abs_delta = float(critic_max_abs_delta)
         self.critic_step_norm = bool(critic_step_norm)
-        self._needs_latents = self.lambda_joint > 0 or self.critic_n_max > 0
-        if self.lambda_joint > 0 or self.critic_n_max > 0:
+        self.lambda_score = float(lambda_score)
+        self.score_route = str(score_route)
+        default_perturb = {'level': 0.35, 'noise': 0.25, 'slope': 0.15, 'forecast': 0.25}
+        self.score_perturb = dict(score_perturb) if score_perturb else default_perturb
+        self.score_batch_fraction = float(score_batch_fraction)
+        self.score_contextualized = bool(score_contextualized)
+        self.score_energy = str(score_energy)
+        self.score_valley_delta = float(score_valley_delta)
+        self._needs_latents = (self.lambda_joint > 0 or self.critic_n_max > 0
+                               or self.lambda_score > 0)
+        if self.lambda_score > 0:
+            if finetune_mode == 'linear_probe':
+                raise ValueError("lambda_score > 0 with finetune_mode='linear_probe': "
+                                 "the score term needs a trainable encoder")
+            if self.score_route not in ('A', 'B'):
+                raise ValueError(f"score_route must be 'A' or 'B', got {score_route!r}")
+            if self.score_energy not in ('cos', 'mse'):
+                raise ValueError(f"score_energy must be 'cos' or 'mse', got {score_energy!r}")
+            for k in self.score_perturb:
+                if k not in critic.PERTURB_KINDS:
+                    raise ValueError(f"unknown score perturbation {k!r} "
+                                     f"(choose from {critic.PERTURB_KINDS})")
+            if sum(float(v) for v in self.score_perturb.values()) <= 0:
+                raise ValueError("score_perturb weights sum to zero")
+            if (float(self.score_perturb.get('forecast', 0.0)) > 0
+                    and not getattr(self.model.decoder, 'is_probabilistic', False)):
+                raise ValueError("score perturbation 'forecast' needs a quantile head "
+                                 "(the head's median is the perturbed point)")
+            if not (0.0 < self.score_batch_fraction <= 1.0):
+                raise ValueError("score_batch_fraction must be in (0, 1]")
+        if self.lambda_joint > 0 or self.critic_n_max > 0 or self.lambda_score > 0:
             # Printed at init so a launch can be audited from the log alone.
             logger.info(
                 f"H2b/S6 settings: lambda_joint={self.lambda_joint} joint_target={self.joint_target} "
@@ -192,7 +237,10 @@ class FinetuneModule(pl.LightningModule):
                 f"critic_alpha={self.critic_alpha} critic_route={self.critic_route} "
                 f"critic_target={self.critic_target} critic_energy={self.critic_energy} "
                 f"critic_batch_fraction={self.critic_batch_fraction} "
-                f"critic_step_norm={getattr(self, 'critic_step_norm', True)}")
+                f"critic_step_norm={getattr(self, 'critic_step_norm', True)} | "
+                f"lambda_score={self.lambda_score} score_route={self.score_route} "
+                f"score_perturb={self.score_perturb} score_batch_fraction={self.score_batch_fraction} "
+                f"score_energy={self.score_energy} score_contextualized={self.score_contextualized}")
         if self.lambda_joint > 0 and self.lambda_anchor > 0:
             raise ValueError("lambda_joint and lambda_anchor are mutually exclusive "
                              "(the same latent MSE would be counted twice; the "
@@ -204,7 +252,8 @@ class FinetuneModule(pl.LightningModule):
         if self.joint_target not in ('frozen', 'ema'):
             raise ValueError(f"joint_target must be 'frozen' or 'ema', got {joint_target!r}")
         has_film = getattr(self.model.predictor, 'w_film', None) is not None
-        if (self.joint_contextualized or self.critic_contextualized) and has_film:
+        if (self.joint_contextualized or self.critic_contextualized
+                or self.score_contextualized) and has_film:
             raise ValueError("contextualized candidate encoding is not defined on a "
                              "cross-resolution model (context and target grids differ)")
         if self.critic_n_max > 0:
@@ -468,6 +517,7 @@ class FinetuneModule(pl.LightningModule):
         self._last_joint = None
         self._last_sigreg = None
         self._critic_stats = {}
+        self._score_stats = {}
         if self.lambda_anchor > 0:
             # Invariance MSE ALONE, no SIGReg: the target (frozen encoder) is
             # fixed, nothing can collapse - the argument already written for
@@ -497,6 +547,10 @@ class FinetuneModule(pl.LightningModule):
 
         if self.lambda_joint > 0:
             loss = loss + self.lambda_joint * self._joint_term(results, target, target_mask)
+        if self.lambda_score > 0:
+            # Before the critic loop: in eval the loop replaces the fan by the
+            # refined one, and the 'forecast' perturbation is the RAW median.
+            loss = loss + self.lambda_score * self._score_term(results, target, target_mask)
         if self.critic_n_max > 0 and 'quantiles' in results:
             loss = self._critic_loop(loss, results, target, target_mask)
 
@@ -539,6 +593,55 @@ class FinetuneModule(pl.LightningModule):
             self._last_sigreg = reg.detach()
             joint = joint + float(self.sigreg_config.get('lambda', 1.0)) * reg
         return joint
+
+    def _score_term(self, results, target_norm, target_mask) -> torch.Tensor:
+        """S6-b: 1 - cos(descent direction of E at a perturbed truth, direction
+        to the truth), on a contiguous sub-batch of full-target items. Train:
+        random perturbations, create_graph. Eval: seeded perturbations (no
+        graph), plus the valley witness (share of items where E rises on both
+        sides of the truth along a level shift)."""
+        z_pred = results['future_representations']
+        ctx_norm = results['context_norm']
+        B = z_pred.shape[0]
+        full = self._full_items(target_mask, B, z_pred.device)
+        m = max(1, int(round(B * self.score_batch_fraction)))
+        if self.training:
+            start = int(torch.randint(B - m + 1, (1,)).item())
+            gen = None
+        else:
+            start = 0
+            gen = torch.Generator(device='cpu').manual_seed(0)   # recreated per call, never stored
+        idx = torch.arange(start, start + m, device=z_pred.device)
+        idx = idx[full[idx]]
+        self._score_stats = {'n_items': int(idx.numel())}
+        if idx.numel() == 0:
+            return z_pred.sum() * 0.0
+        kinds = [k for k, v in self.score_perturb.items() if float(v) > 0]
+        weights = [float(self.score_perturb[k]) for k in kinds]
+        median = None
+        if 'forecast' in kinds:
+            head = self.model.decoder.decoder
+            median = head.median(results['quantiles']).detach()[idx]
+        y = target_norm[idx]
+        y_tilde, kind_idx = critic.perturb_target(y, kinds, weights, gen, median=median)
+        z_e = z_pred[idx].detach() if self.score_route == 'A' else z_pred[idx]
+        cos = critic.score_cos(self.model, ctx_norm[idx], y, y_tilde, z_e,
+                               mode=self.score_energy,
+                               contextualized=self.score_contextualized,
+                               create_graph=self.training)
+        st = self._score_stats
+        st['cos'] = float(cos.detach().mean())
+        for i, k in enumerate(kinds):
+            sel = kind_idx == i
+            st[f'frac_{k}'] = float(sel.float().mean())
+            if bool(sel.any()):
+                st[f'cos_{k}'] = float(cos.detach()[sel].mean())
+        if not self.training:
+            st['valley_frac'] = float(critic.valley_witness(
+                self.model, ctx_norm[idx], y, z_pred[idx].detach(),
+                delta=self.score_valley_delta, mode=self.score_energy,
+                contextualized=self.score_contextualized))
+        return (1.0 - cos).mean()
 
     def _critic_loop(self, loss, results, target_norm, target_mask):
         """S6: N descent steps of the fan's center down the energy, a
@@ -689,6 +792,14 @@ class FinetuneModule(pl.LightningModule):
             # critic/pinball_i decreasing in i is THE decisive S6 curve.
             self.log(f'critic/{key}', value, on_step=True, on_epoch=True,
                      logger=True, sync_dist=True)
+        if self._score_stats:
+            # score/cos rising toward 1 (per kind: score/cos_level is the
+            # ceiling's axis) is THE decisive S6-b curve.
+            self.log('train_loss/score', 1.0 - self._score_stats.get('cos', 1.0),
+                     on_step=True, on_epoch=True, logger=True, sync_dist=True)
+            for key, value in self._score_stats.items():
+                self.log(f'score/{key}', value, on_step=True, on_epoch=True,
+                         logger=True, sync_dist=True)
         
         if batch_idx % self.log_every_n_steps == 0:
             with torch.no_grad():
@@ -723,6 +834,12 @@ class FinetuneModule(pl.LightningModule):
         for key, value in self._critic_stats.items():
             self.log(f'val_critic/{key}', value, on_step=False, on_epoch=True,
                      logger=True, sync_dist=True)
+        if self._score_stats:
+            self.log('val_loss/score', 1.0 - self._score_stats.get('cos', 1.0),
+                     on_step=False, on_epoch=True, logger=True, sync_dist=True)
+            for key, value in self._score_stats.items():
+                self.log(f'val_score/{key}', value, on_step=False, on_epoch=True,
+                         logger=True, sync_dist=True)
 
         # WQL is the metric GIFT-Eval ranks on, so track it directly rather than
         # inferring it from the point losses.

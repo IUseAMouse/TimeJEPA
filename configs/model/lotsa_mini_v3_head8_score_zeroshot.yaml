@@ -1,0 +1,55 @@
+# @package _global_
+# S6-b SCORE MATCHING arm (2026-09-08). The probe (scripts/probe_energy_shift.py)
+# showed that the energy E = 1 - cos(z_pred, enc(y-hat)) has NO local valley at
+# the truth along a level shift, on every checkpoint of the lineage (2-14% of
+# instances): the JEPA loss never sees a wrong future nearby. The critic loop
+# (S6) had to grow that valley through the second-order gradient of a 0.0005
+# effect and could not bootstrap (arms A, B, lambda 0.1 all flat).
+#
+# Here the valley is dug directly (denoising score matching, Vincent 2011):
+# the TRUE target is perturbed - level shift (the ceiling's axis), white
+# noise, slope, or the head's own median (the forecaster's real errors) -
+# and the energy's descent direction at the perturbed point must point back
+# to the truth: loss = 1 - cos(-dE/dy, y - y_tilde), gradient L-inf-normalized
+# exactly like the refinement step. Signal O(sigma), supervised. Route B: the
+# predictor learns to place z_pred so that the field points home. The critic
+# loop is OFF here (one variable: the score term); inference unchanged
+# (+refine=energy descends the field from the head's fan).
+#
+# lambda_score 0.1: the loss is bounded in [0, 2] (about 1 at init, random
+# direction) but its ENCODER gradient is 13.6x the pinball's at init on the
+# tiny smoke (full sub-batch); 0.1 puts the term at ~1.4x the pinball, 0.3
+# would let it dominate 4x and pay on the nude fan. Guard: val_loss vs head8
+# at the same step and the nude eval (P-S6b.4, cost <= 0.3 pt); halve if not.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_score_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # THE decisive curves: score/cos (and score/cos_level) rising toward 1,
+#   # val_score/valley_frac > 0.8 at the first validation. Reception test on
+#   # the 5% checkpoint: scripts/probe_energy_shift.py --center truth (valley
+#   # at 0 > 80%) and --center fan (argmin sign = residual sign > 0.7).
+#   # Eval config: lotsa_mini_v3_head8_score_eval (+refine=energy +refine_alpha=0.05).
+defaults:
+  - lotsa_mini_v3_head8_joint_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_score_zs"
+
+training:
+  loss:
+    critic_steps: []
+    lambda_score: 0.1
+    score_route: B
+    score_perturb:
+      level: 0.35
+      noise: 0.25
+      slope: 0.15
+      forecast: 0.25
+    score_batch_fraction: 0.5
+    score_contextualized: false
+    score_energy: cos
+    score_valley_delta: 0.1
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "joint", "score-matching", "robust-scale"]
