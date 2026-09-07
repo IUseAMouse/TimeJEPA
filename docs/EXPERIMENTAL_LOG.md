@@ -1919,6 +1919,25 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (critic à 5.5k steps : P-S6.2 RÉFUTÉE dans sa forme — energy_drop stable
+  (0.05-0.12), energy_0 en plateau à 0.6, energy_N à 0.5 ; constat réel : la descente
+  baisse l'énergie SANS rapprocher de la vérité ; route B proposée en parallèle,
+  prédiction gravée)** — ŷ₀ n'est pas au minimum de E (la descente trouve toujours −0.08),
+  mais le gain de pinball a chuté d'un facteur 4 sur la même plage : la corrélation entre
+  « descendre E » et « aller vers y » s'érode. Le minimum de E n'est ni en ŷ₀ ni en y ;
+  le paysage est façonné par pinball₀ et le joint, et le second ordre (seul lien entre les
+  deux en route A) ne pèse pas. Échelle : gain 0.0005 par item, pinball ordinaire 0.3-0.5,
+  plafond 0.1-0.2 par instance ⇒ récupération ≈ 0.3 %, sous E18f (juge non entraîné,
+  propositions lointaines). Décisions : (1) critic A jusqu'au premier point de validation
+  (5 %, ~9 h) ; `val_critic/pinball_8` vs `pinball_0` à < 0.5 % d'écart relatif ⇒ couper ;
+  (2) S4-c coupé (verdict rendu), **route B** lancée sur la carte libérée, une variable
+  (`critic_route=B`, `model.name=..._criticB_zs`) : le prédicteur reçoit le gradient des
+  pinball_i à travers z_pred dans E et apprend à placer z_pred là où la descente depuis ŷ₀
+  va vers y. **P-S6.3** : sur route B, le gain de pinball (expression pinball_0 − pinball_N
+  lissée) ne décroît PAS entre 500 et 5k steps (reste ≥ 0.0015) là où A perdait un
+  facteur 4 ; s'il décroît pareil, la route n'est pas le mécanisme et le suspect suivant
+  est λ_joint (0.3) qui verrouille z_pred sur enc(y).
+
 - **2026-09-08 (critic à 4.5k steps : gain de pinball POSITIF mais DÉCROISSANT, 0.002 →
   0.0005 en unités normalisées — hypothèse « le minimum de E migre vers ŷ₀ », prédiction
   gravée)** — Expression wandb pinball_0 − pinball_N lissée : signe positif partout, facteur

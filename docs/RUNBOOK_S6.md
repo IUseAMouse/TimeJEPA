@@ -75,6 +75,17 @@ Les `pinball_i` absolues sont dominées par quelques items extrêmes du quart de
 Il faut ce gain positif et croissant, `critic/energy_drop > 0`, `critic/delta_clipped_frac ≈ 0`.
 Si `val_critic/pinball_8 ≥ val_critic/pinball_0` après un décile complet, le juge ne lit rien : couper.
 
+Variante B (2026-09-08, une variable contre A : le prédicteur reçoit le gradient des pas
+raffinés via z_pred dans E ; P-S6.3 au registre) :
+
+```bash
+PYTHONUNBUFFERED=1 python scripts/train.py --config-name lotsa_mini_v3_head8_critic_zeroshot \
+  "+training.pretrained_encoder_path=\"$PT\"" \
+  training.loss.critic_route=B model.name=timejepa_lotsa_mini_v3_head8_criticB_zs \
+  2>&1 | tee logs/train_head8_criticB.log
+# éval : même config lotsa_mini_v3_head8_critic_eval avec model.name=timejepa_lotsa_mini_v3_head8_criticB_zs
+```
+
 ## 3. Évals du checkpoint critic (à 15 % puis au meilleur)
 
 `CK` = son checkpoint, `checkpoints/timejepa_lotsa_mini_v3_head8_critic_zs/pretrain_False/...`.
