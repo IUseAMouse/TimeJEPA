@@ -1919,6 +1919,20 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (DOUBLE ORACLE oracle-k + plafond 0.05 : 0.4539 / 0.3467 / couv. 0.913 —
+  RateIN et le raffinement sont ORTHOGONAUX ; bras joint rétrogradé en ablation
+  conditionnelle)** — Sur le champion head8 : oracle-k seul 0.5190 (−1.5 pt), plafond 0.05
+  seul sur mix-pool 0.3657 (−16.8), somme attendue 0.351 (−18.3), empilés mesuré 0.3467
+  (−18.7) : interaction +0.4 pt, raffiner sur la bonne grille est un peu plus facile. Le
+  plafond rend 17.2 pt sur oracle-k contre 16.8 sur mix-pool : le biais de position n'est
+  PAS un artefact du rythme. Deux couches indépendantes pour le papier. Diagnostic pur,
+  jamais officiel. **Décision d'ordonnancement** : le bras critic (`..._critic_zeroshot`,
+  α 0.05) se lance AVANT le bras joint ; joint (N=0) devient une ablation conditionnelle
+  (critic gagne ⇒ prouver que c'est la boucle et non le terme ; critic perd ⇒ savoir si
+  le terme seul est neutre). Le checkpoint critic évalué sans raffinement (mix-pool nu)
+  couvre déjà la moitié de l'attribution. Premier signal : `critic/pinball_i` et
+  `val_critic/pinball_i` dès les premières heures, avant toute éval GIFT.
+
 - **2026-09-07 (COURBE DU PLAFOND gain(boîte), pas normalisé — le biais de position tient
   dans 0.8 σ et vaut 17 pt de CRPS à la boîte 0.4 ; α du critic FIXÉ à 0.05 ; P-S6.1 gravée)**
   — Champion head8 mix-pool (0.7842 / 0.5340 / couverture 80 % 0.756), `+refine=ceiling`
