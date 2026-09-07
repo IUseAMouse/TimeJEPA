@@ -184,6 +184,15 @@ class FinetuneModule(pl.LightningModule):
         self.critic_max_abs_delta = float(critic_max_abs_delta)
         self.critic_step_norm = bool(critic_step_norm)
         self._needs_latents = self.lambda_joint > 0 or self.critic_n_max > 0
+        if self.lambda_joint > 0 or self.critic_n_max > 0:
+            # Printed at init so a launch can be audited from the log alone.
+            logger.info(
+                f"H2b/S6 settings: lambda_joint={self.lambda_joint} joint_target={self.joint_target} "
+                f"joint_sigreg={self.joint_sigreg} | critic_steps={self.critic_steps} "
+                f"critic_alpha={self.critic_alpha} critic_route={self.critic_route} "
+                f"critic_target={self.critic_target} critic_energy={self.critic_energy} "
+                f"critic_batch_fraction={self.critic_batch_fraction} "
+                f"critic_step_norm={getattr(self, 'critic_step_norm', True)}")
         if self.lambda_joint > 0 and self.lambda_anchor > 0:
             raise ValueError("lambda_joint and lambda_anchor are mutually exclusive "
                              "(the same latent MSE would be counted twice; the "
