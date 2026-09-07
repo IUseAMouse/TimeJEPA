@@ -30,6 +30,11 @@ model:
 
 training:
   loss:
+    # The energy judges y-hat through the ONLINE encoder (the landscape is
+    # trained through the refinement), so the joint target must live in the
+    # same space: EMA of the online encoder (pretrain convention), not a
+    # frozen copy that the pinball would drift away from.
+    joint_target: ema
     critic_steps: [0, 1, 2, 3, 4]
     critic_alpha: 0.05
     critic_route: A

@@ -1919,6 +1919,20 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (bras critic : cible jointe EMA, pas gelée — l'énergie juge ŷ par l'encodeur
+  EN LIGNE, le terme joint doit vivre dans le même espace)** — Revue de la loss avant
+  lancement (question utilisateur). Vérifié dans le code : loss = pinball(ŷ₀) + λ_joint·
+  [MSE(z_pred, target_enc(y)) + λ_sig·SIGReg(ctx)] + moyenne des pinball(ŷ_i), ŷ_{i+1} = ŷ_i −
+  α·∇E/‖∇‖∞ avec E = 1 − cos(z_pred.detach(), online_enc(ŷ_i)) ; N ∈ {0..4} par batch, un
+  quart du batch, un backward ; val N = 4, val_loss = pinball du fan raffiné. Tension
+  relevée : avec `joint_target: frozen`, z_pred est tiré vers la copie gelée du pretrain
+  tandis que l'énergie compare z_pred à l'encodeur en ligne qui dérive sous la pinball —
+  le minimum de E n'est plus garanti en ŷ = y, un négatif serait ambigu. Décision :
+  `joint_target: ema` sur le bras critic (convention pretrain, `EMACallback`, testé) ; le
+  bras joint, s'il est lancé en ablation, hérite de la même valeur. Le pretrain reste chargé
+  (`pretrained_encoder_path`) : « zeroshot » = zero-shot sur GIFT, et l'énergie est définie
+  à travers l'encodeur — un encodeur aléatoire donnerait un paysage aléatoire.
+
 - **2026-09-07 (SCRATCH head8 @15 % : 0.7995 / 0.5551 — le pretrain vaut ≈ 1 pt, apparaît
   tard ; H1 tranchée « pas le goulot », run COUPÉ pour S4-c)** — Sans pretrain, flip +
   backtest, `epoch00_valloss0.6565` : 0.7995 / 0.5551, couverture 0.755. Apparié head8

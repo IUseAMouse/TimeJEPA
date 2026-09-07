@@ -24,7 +24,7 @@ model:
 training:
   loss:
     lambda_joint: 0.3
-    joint_target: frozen
+    joint_target: ema   # aligned with the critic arm (2026-09-07): same space as the online-encoder energy
     joint_contextualized: false
     joint_sigreg: true
 

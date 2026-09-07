@@ -17,7 +17,7 @@ def test_joint_arm_declares_only_the_joint_loss():
     base = _compose("lotsa_mini_v3_head8_zeroshot")
     joint = _compose("lotsa_mini_v3_head8_joint_zeroshot")
     assert joint.model.name == "timejepa_lotsa_mini_v3_head8_joint_zs"
-    assert joint.training.loss.lambda_joint > 0 and joint.training.loss.joint_target == "frozen"
+    assert joint.training.loss.lambda_joint > 0 and joint.training.loss.joint_target == "ema"
     assert joint.training.loss.joint_sigreg is True and joint.training.loss.get("sigreg")
     assert float(joint.training.loss.get("lambda_anchor", 0.0)) == 0.0
     assert list(joint.training.loss.get("critic_steps") or []) == []
@@ -29,6 +29,7 @@ def test_critic_arm_inherits_joint_and_declares_the_loop():
     critic = _compose("lotsa_mini_v3_head8_critic_zeroshot")
     L = critic.training.loss
     assert critic.model.name == "timejepa_lotsa_mini_v3_head8_critic_zs"
+    assert L.joint_target == "ema"          # same space as the online-encoder energy
     assert L.lambda_joint > 0
     assert list(L.critic_steps) == [0, 1, 2, 3, 4]
     assert L.critic_route == "A" and L.critic_target == "center"
