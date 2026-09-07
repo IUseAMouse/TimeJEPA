@@ -1919,6 +1919,19 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (S4-c @15 % : 0.8015 / 0.5521, couverture 0.774 — NE PROGRESSE PAS (5 % :
+  0.5506), apparié head8 15 % 0.5466 ; P-ctx.1 ÉCHEC-DIAGNOSTIC : le régime court n'est
+  pas un problème de données ; S4-c n'est pas la base du critic)** — `epoch00_valloss0.6568`,
+  flip + backtest. CRPS +0.15 pt entre 5 et 15 % là où head8 gagnait 1.2 pt sur le même
+  segment ; −0.55 pt contre la référence appariée. Seul gain : couverture 0.774 (head8 15 % :
+  0.734, drapeau P-head.2). Six configs P-ctx.1 (15 % / head8 25 %) : m4_yearly 3.83 / 3.80,
+  m4_quarterly 1.29 / 1.31, m4_monthly 1.025 / 1.01, m4_weekly 2.70 / 2.35, hospital 0.787 /
+  0.79, car_parts 0.858 / 0.87 : 1/6 en baisse, deux remontent. Verdict gravé le 2026-09-06 :
+  « le régime court n'est pas le mécanisme du saignement MASE — c'est l'extrapolation
+  elle-même (tête/objectif), et on arrête de chercher côté données ». Le run peut aller au
+  25 % pour la couverture (why not, carte libre), mais le bras critic part de head8
+  (runbook §2, variante a). Stack 15 % à venir pour fermer la ligne.
+
 - **2026-09-07 (S4-c @5 % en STACK flip + mix + pool : 0.7957 / 0.5404, couverture 0.743 —
   à 0.6 pt du champion head8 à 25 % (0.7842 / 0.5340) ; gain de couche −1.0 pt, identique à
   celui du champion (−0.9), composabilité intacte)** — Si la trajectoire 5 → 25 % ressemble

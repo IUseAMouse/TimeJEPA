@@ -40,9 +40,9 @@ PYTHONUNBUFFERED=1 python scripts/evaluate_gift.py --config-name lotsa_mini_v3_h
   +checkpoint_path=$CK +tta_flip=true +ratein=backtest 2>&1 | tee logs/eval_ctx_15_bt.log
 ```
 
-Verdict P-ctx : CRPS contre 0.5466, et les six configs courtes (m4_yearly, car_parts, hospital,
-m4_quarterly, m4_monthly, m4_weekly) contre le head8 à 15 %. Si S4-c gagne, il devient la base
-du bras critic (section 2, variante b) ; sinon le critic part de head8 (variante a).
+Verdict P-ctx (2026-09-07, 15 %) : 0.8015 / 0.5521 contre 0.5466 apparié, 1/6 configs courtes en
+baisse : ÉCHEC-DIAGNOSTIC, le régime court n'est pas un problème de données. **Le critic part de
+head8 (section 2, variante a).** La variante b reste documentée mais n'est pas la voie.
 
 ## 2. Bras critic (S6, route A, α 0.05, N tiré dans {0,1,2,4,8}, cible jointe EMA)
 
