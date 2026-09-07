@@ -217,3 +217,117 @@ def refine_loop(model, ctx_norm: torch.Tensor, fan_norm: torch.Tensor,
             target=step_kwargs.get("target", "center"),
             median_idx=step_kwargs.get("median_idx", 4)).detach())
     return {"fans": fans, "energies": energies, "deltas": deltas}
+
+
+# ---------------------------------------------------------------------------
+# S6-b (2026-09-08): denoising score matching on the energy.
+#
+# The probe (scripts/probe_energy_shift.py) showed that E has no local valley
+# at the truth along a level shift, on every checkpoint of the lineage: the
+# JEPA loss never sees a "wrong future nearby", nothing shapes E at 0.1 sigma.
+# The critic loop had to grow that valley through the second-order gradient
+# of a 0.0005 effect - it cannot bootstrap. Here the valley is dug directly:
+# perturb the TRUE target, y_tilde = y + eps with eps known, and ask the
+# energy's gradient at y_tilde to point back to y (Vincent 2011). The signal
+# is O(sigma) and supervised. At inference nothing changes: +refine=energy
+# descends the field from the head's fan, whose residual (0.1-0.3 sigma) is
+# inside the trained range.
+# ---------------------------------------------------------------------------
+
+PERTURB_KINDS = ("level", "noise", "slope", "forecast")
+
+
+def perturb_target(y_norm: torch.Tensor, kinds, weights, generator=None,
+                   median: Optional[torch.Tensor] = None):
+    """Perturbed copies of the true target [B, h, 1], one kind per item drawn
+    from `kinds` with probabilities `weights`. Scalars are drawn on CPU with
+    `generator` (deterministic under a seeded one) and moved to the device.
+
+      level    : y + c, |c| ~ U[0.05, 0.5], random sign (the ceiling's axis)
+      noise    : y + white noise, sigma ~ logU[0.02, 0.3]
+      slope    : y + ramp 0 -> +-a, a ~ U[0.1, 0.5]
+      forecast : the head's median itself (detached), the REAL error
+                 distribution of the forecaster; needs `median`
+
+    Returns (y_tilde, kind_idx [B] long). The target direction is computed by
+    the caller as y - y_tilde, never from a returned eps (no sign trap).
+    """
+    kinds = list(kinds)
+    w = torch.as_tensor([float(x) for x in weights], dtype=torch.float32)
+    if len(kinds) != len(w) or len(kinds) == 0:
+        raise ValueError("perturb_target: kinds and weights must be non-empty and aligned")
+    for k in kinds:
+        if k not in PERTURB_KINDS:
+            raise ValueError(f"unknown perturbation kind {k!r} (choose from {PERTURB_KINDS})")
+    if float(w.sum()) <= 0:
+        raise ValueError("perturb_target: weights sum to zero")
+    if "forecast" in kinds and w[kinds.index("forecast")] > 0 and median is None:
+        raise ValueError("perturbation 'forecast' needs the head's median")
+    B, h, _ = y_norm.shape
+    device, dtype = y_norm.device, y_norm.dtype
+    kind_idx = torch.multinomial(w / w.sum(), B, replacement=True, generator=generator)
+    u = torch.rand(B, 4, generator=generator)                     # CPU uniforms
+    sign = torch.where(u[:, 0] < 0.5, -1.0, 1.0)
+    level = (0.05 + 0.45 * u[:, 1]) * sign                        # |c| in [0.05, 0.5]
+    sigma = torch.exp(torch.log(torch.tensor(0.02)) + u[:, 2]
+                      * (torch.log(torch.tensor(0.3)) - torch.log(torch.tensor(0.02))))
+    slope_a = (0.1 + 0.4 * u[:, 3]) * sign
+    white = torch.randn(B, h, 1, generator=generator)
+    ramp = torch.linspace(0.0, 1.0, h).view(1, h, 1)
+    level_p = level.view(B, 1, 1) * torch.ones(1, h, 1)
+    noise_p = sigma.view(B, 1, 1) * white
+    slope_p = slope_a.view(B, 1, 1) * ramp
+    y_cpu = y_norm.detach().to("cpu", dtype=torch.float32)
+    out = y_cpu.clone()
+    for i, k in enumerate(kinds):
+        sel = kind_idx == i
+        if not bool(sel.any()):
+            continue
+        if k == "level":
+            out[sel] = y_cpu[sel] + level_p[sel]
+        elif k == "noise":
+            out[sel] = y_cpu[sel] + noise_p[sel]
+        elif k == "slope":
+            out[sel] = y_cpu[sel] + slope_p[sel]
+        elif k == "forecast":
+            out[sel] = median.detach().to("cpu", dtype=torch.float32)[sel]
+    return out.to(device=device, dtype=dtype), kind_idx.to(device)
+
+
+def score_cos(model, ctx_norm: torch.Tensor, y_norm: torch.Tensor, y_tilde: torch.Tensor,
+              z_pred: torch.Tensor, *, mode: EnergyMode = "cos", contextualized: bool = False,
+              create_graph: bool = False) -> torch.Tensor:
+    """[B] cosine between the energy's descent direction at y_tilde and the
+    true direction y - y_tilde. The loss is 1 - cos (caller).
+
+    The gradient is normalized per item with the DETACHED L-inf scale of
+    refine_step: the cosine is scale invariant, the weight gradient stays
+    O(1) when |g| -> 0, and the direction trained is exactly the one the
+    refinement will follow. `create_graph=True` at train time: the loss then
+    reaches the encoder weights (through the Jacobian of enc at y_tilde) and,
+    if `z_pred` is in the graph (route B), the predictor.
+
+    Note: `Patching` re-pads to the stride inside the graph when
+    (h - P) % stride != 0 (the last step then also feeds the pad); the native
+    horizons 256 / 128 need no pad.
+    """
+    with torch.enable_grad():
+        y_var = y_tilde.detach().requires_grad_(True)
+        z_y = encode_candidate(model, ctx_norm, y_var, contextualized)
+        e = energy_per_item(z_y, z_pred, mode)
+        g = torch.autograd.grad(e.sum(), y_var, create_graph=create_graph)[0]
+    g = g / unit_linf_scale(g)
+    d = (y_norm - y_tilde).detach()
+    return F.cosine_similarity(-g.flatten(1), d.flatten(1), dim=1, eps=1e-6)
+
+
+@torch.no_grad()
+def valley_witness(model, ctx_norm: torch.Tensor, y_norm: torch.Tensor, z_pred: torch.Tensor,
+                   delta: float = 0.05, mode: EnergyMode = "cos",
+                   contextualized: bool = False) -> torch.Tensor:
+    """Scalar in [0, 1]: share of items where E(y + delta) > E(y) and
+    E(y - delta) > E(y) - the probe's "local valley at the truth"."""
+    def e(y):
+        return energy_per_item(encode_candidate(model, ctx_norm, y, contextualized), z_pred, mode)
+    e0, ep, em = e(y_norm), e(y_norm + delta), e(y_norm - delta)
+    return ((ep > e0) & (em > e0)).float().mean()
