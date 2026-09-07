@@ -1919,6 +1919,24 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (critic à 4.5k steps : gain de pinball POSITIF mais DÉCROISSANT, 0.002 →
+  0.0005 en unités normalisées — hypothèse « le minimum de E migre vers ŷ₀ », prédiction
+  gravée)** — Expression wandb pinball_0 − pinball_N lissée : signe positif partout, facteur
+  4 de baisse entre 500 et 4.5k steps ; gain relatif ≈ 0.01-0.05 % (pinball du quart de
+  batch entre 1 et 40), contre 0.1-0.2 par instance au plafond à la même boîte : < 1 % de
+  l'oracle. Débit 3.15 it/s, 15 % ≈ 29 h. Mécanisme suspecté, structurel en route A : le
+  joint tire z_pred vers enc_EMA(y), la pinball tire ŷ₀ vers y donc enc(ŷ₀) vers enc(y),
+  d'où enc(ŷ₀) → z_pred et le minimum de E en ŷ₀ (energy_0 : 0.98 → 0.65) ; au fond du
+  puits le gradient est bruité, le pas normalisé part au hasard, le gain → 0 ; seul le
+  second ordre (pinball_i → poids de l'encodeur via ∂E/∂ŷ) s'y oppose, faible face au
+  joint direct. **P-S6.2** : `energy_drop` lissé décroît en parallèle du gain et `energy_0`
+  continue vers 0.3-0.4 ⇒ hypothèse confirmée ; au premier point de validation
+  `val_critic/pinball_8` ≈ `val_critic/pinball_0` (écart relatif < 0.5 %). Si confirmée :
+  ne pas continuer 8 jours ; bras suivant à décider sur les chiffres de validation —
+  route B (z_pred dans E, le prédicteur apprend à placer z_pred pour que la descente aille
+  vers y), λ_joint plus bas, ou poids `last`. Si infirmée (gain repart à la hausse avec
+  energy_drop stable) : le second ordre prend le dessus, laisser courir au 15 %.
+
 - **2026-09-07 (BRAS CRITIC LANCÉ — base head8, α 0.05, N ∈ {0,1,2,4,8}, cible EMA ; premiers
   1.8k steps : mécanique confirmée, signal pinball pas encore lisible ; témoins de gain
   ajoutés)** — Débit ~3 it/s contre 8 (confondu avec une éval concurrente), ~8 jours par
