@@ -1919,6 +1919,14 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-07 (bras critic : N tiré dans {0,1,2,4,8} — même boîte à l'entraînement, en
+  validation et à l'inférence)** — Remarque utilisateur : avec N ≤ 4 la boîte vue à
+  l'entraînement est 0.2 σ contre 0.4 σ au plafond de référence et à l'inférence (N = 8) ;
+  la pinball au pas 8 serait de l'extrapolation, et la garde de rejet ne doit pas servir
+  de filet. Tirage clairsemé {0,1,2,4,8} : max 8, coût moyen 3 pas au lieu de 2 (pas 4),
+  `val_loss` (N = 8) directement comparable au chiffre d'inférence. Pic mémoire à N = 8 sur
+  un quart du batch ≈ deux batches d'encodeur. Runbook et test de config mis à jour.
+
 - **2026-09-07 (bras critic : cible jointe EMA, pas gelée — l'énergie juge ŷ par l'encodeur
   EN LIGNE, le terme joint doit vivre dans le même espace)** — Revue de la loss avant
   lancement (question utilisateur). Vérifié dans le code : loss = pinball(ŷ₀) + λ_joint·

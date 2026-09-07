@@ -44,7 +44,7 @@ Verdict P-ctx : CRPS contre 0.5466, et les six configs courtes (m4_yearly, car_p
 m4_quarterly, m4_monthly, m4_weekly) contre le head8 à 15 %. Si S4-c gagne, il devient la base
 du bras critic (section 2, variante b) ; sinon le critic part de head8 (variante a).
 
-## 2. Bras critic (S6, route A, α 0.05, N tiré dans {0..4})
+## 2. Bras critic (S6, route A, α 0.05, N tiré dans {0,1,2,4,8}, cible jointe EMA)
 
 Variante a, base head8 :
 
@@ -65,12 +65,12 @@ PYTHONUNBUFFERED=1 python scripts/train.py --config-name lotsa_mini_v3_head8_cri
 Le premier signal, dès les premières heures, sur wandb ou dans le log :
 
 ```bash
-grep -o "critic/pinball_[0-4][^,]*" logs/train_head8_critic.log | tail -20
-grep -o "val_critic/pinball_[0-4][^,]*" logs/train_head8_critic.log | tail -10
+grep -o "critic/pinball_[0-8][^,]*" logs/train_head8_critic.log | tail -20
+grep -o "val_critic/pinball_[0-8][^,]*" logs/train_head8_critic.log | tail -10
 ```
 
 Il faut `pinball_i` qui baisse avec i, `critic/energy_drop > 0`, `critic/delta_clipped_frac ≈ 0`.
-Si `val_critic/pinball_4 ≥ val_critic/pinball_0` après un décile complet, le juge ne lit rien : couper.
+Si `val_critic/pinball_8 ≥ val_critic/pinball_0` après un décile complet, le juge ne lit rien : couper.
 
 ## 3. Évals du checkpoint critic (à 15 % puis au meilleur)
 

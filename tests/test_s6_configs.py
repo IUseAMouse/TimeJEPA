@@ -31,7 +31,7 @@ def test_critic_arm_inherits_joint_and_declares_the_loop():
     assert critic.model.name == "timejepa_lotsa_mini_v3_head8_critic_zs"
     assert L.joint_target == "ema"          # same space as the online-encoder energy
     assert L.lambda_joint > 0
-    assert list(L.critic_steps) == [0, 1, 2, 3, 4]
+    assert list(L.critic_steps) == [0, 1, 2, 4, 8]   # max = inference budget
     assert L.critic_route == "A" and L.critic_target == "center"
     assert 0 < L.critic_batch_fraction <= 1 and L.critic_alpha > 0
 
