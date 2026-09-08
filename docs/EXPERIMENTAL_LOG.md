@@ -1919,6 +1919,37 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-09 (SpreadIN et TTT CODE LIVRÉ, NON COURUS sur le champion — deux couches
+  d'éval, un par un ; prédictions gravées)** — **SpreadIN** (`biasin.choose_spread`,
+  `scale_fan`, flags `+spread=backtest`, `+spread_grid`, tag `_spread-bt`) : un facteur s ∈
+  {0.8, 0.9, 1.1, 1.25, 1.5, 2} du fan autour de sa médiane, par config, choisi sur les
+  fenêtres de backtest de RateIN (pinball poolée, marge 1 %, s = 1 sinon) ; la médiane ne
+  bouge pas (MASE inchangée), seuls CRPS et couverture. La volatilité, contrairement au
+  niveau (BiasIN), persiste d'une fenêtre à l'autre. Tests : fan trop étroit → s = 2, fan
+  juste → 1, stub harnais CRPS ↓ MASE = ; smoke tiny (m_dense D/H) : s = 0.8 sur les deux,
+  CRPS 0.4471 → 0.4432, couverture 0.831 → 0.760 (tiny sur-couvre ; le champion mini
+  sous-couvre à 0.756, sens attendu opposé). **TTT** (`src/timejepa/evaluation/ttt.py`,
+  flags `+ttt=norm|all`, `+ttt_steps`, `+ttt_lr`, `+ttt_gate`, `+ttt_margin`) : avant
+  d'évaluer une config, N pas d'AdamW de la loss JEPA auto-supervisée sur les lookbacks de
+  ses séries (contexte = début du lookback, « futur » = ses `prediction_length` derniers
+  pas, z_y = encodeur en ligne sous stop-gradient, MSE latent), sur une copie ; `norm` =
+  affines LayerNorm/RevIN (lr 1e-3), `all` = encodeur + prédicteur (lr 1e-5). Porte
+  causale par défaut : la même adaptation sur les passés d'AVANT les fenêtres de backtest,
+  pinball poolée des fenêtres avec et sans, acceptée si ratio < 0.99. Causal : lookbacks
+  seulement, jamais de cible. La reformulation honnête de l'intuition S6 : la
+  représentation s'adapte, depuis le passé (information) et non depuis le forecast. Tests :
+  sélection de paramètres, loss ↓ et original intact, chemin harnais avec porte, flags.
+  Note d'étiquetage : le modèle apprend sur les lookbacks du split de test sans cible ;
+  à déclarer comme TTT si soumis. **P-SP.1** (champion, stack) : 30-70 configs
+  rescalées, s > 1 majoritaires, couverture 0.756 → 0.78-0.80, CRPS −0.2 à −0.6 pt, MASE
+  identique. **P-TTT.1** (`norm`, 16 pas) : porte acceptée sur 20-60 % des configs, CRPS
+  −0.2 à −0.8 pt ; ÉCHEC si < 10 % acceptées ou CRPS ≥ 0.5340 (le prétexte JEPA ne
+  transfère pas à la pinball au test, cohérent avec un pretrain qui vaut ≈ 1 pt). Smoke
+  tiny `+ttt=norm +ttt_steps=8` (m_dense D/H, flip) : porte acceptée 1/2 (ratio moyen
+  1.065), CRPS 0.4471 → 0.4523 — la config acceptée nuit au test, même signature de faux
+  positif que BiasIN sur 30 séries ; signal d'alerte sur tiny, le champion (97 configs)
+  tranche.
+
 - **2026-09-08 (BiasIN CLOS avec l'estimateur médiane : backtest 0.7947 / 0.5413 (94/97
   refus, 3 nocifs inchangés), oracle constant par instance 0.6198 / 0.4431 / couv. 0.821 —
   lecture : la moitié de l'erreur du champion est une DÉRIVE DE NIVEAU RÉALISÉE, absente du

@@ -136,3 +136,52 @@ def oracle_shift(target: np.ndarray, median: np.ndarray) -> float:
     d = np.asarray(target, dtype=np.float64) - np.asarray(median, dtype=np.float64)
     d = d[np.isfinite(d)]
     return float(np.median(d)) if d.size else 0.0      # L1-optimal constant
+
+
+# ---------------------------------------------------------------------------
+# SpreadIN (2026-09-08): causal width calibration of the fan.
+#
+# The level of the residual does not persist from one window to the next
+# (BiasIN, closed); its MAGNITUDE does - volatility clusters. The champion's
+# 80% interval covers 0.756. A single scale factor of the fan around its
+# median, chosen per config on the backtest windows (pooled pinball, small
+# margin, s = 1 otherwise), is the conformal-style correction of that
+# persistent quantity. The median is untouched: MASE cannot move, only the
+# CRPS and the coverage.
+# ---------------------------------------------------------------------------
+
+DEFAULT_SPREAD_GRID = (0.8, 0.9, 1.1, 1.25, 1.5, 2.0)
+SPREAD_MARGIN = 0.01
+
+
+def scale_fan(fan: Optional[np.ndarray], median: np.ndarray, s: float):
+    """fan' = median + s * (fan - median); the median column stays put."""
+    if fan is None or s == 1.0:
+        return fan
+    fan = np.asarray(fan, dtype=np.float64)
+    med = np.asarray(median, dtype=np.float64)[:, None]
+    return med + s * (fan - med)
+
+
+def choose_spread(records: List[dict], levels: Sequence[float], median_idx: int,
+                  grid: Sequence[float] = DEFAULT_SPREAD_GRID,
+                  margin: float = SPREAD_MARGIN) -> dict:
+    """Per-config scale of the fan from the backtest windows.
+
+    records: {"fan": [h, Q], "known": [h]} for EVERY backtest window (both
+    windows of every series). Pooled pinball of the rescaled fan over all
+    records; the best s is kept if its ratio to s = 1 is below 1 - margin.
+    """
+    valid = [r for r in records if r["fan"] is not None]
+    if not valid:
+        return {"s": 1.0, "ratios": {}, "n_windows": 0}
+    base = sum(pinball(r["fan"], r["known"], levels) for r in valid)
+    ratios = {}
+    for s in grid:
+        tot = sum(pinball(scale_fan(r["fan"], r["fan"][:, median_idx], s), r["known"], levels)
+                  for r in valid)
+        ratios[float(s)] = float(tot / max(base, 1e-12))
+    best = min(ratios, key=ratios.get)
+    s_star = best if ratios[best] < 1.0 - margin else 1.0
+    return {"s": float(s_star), "ratios": {f"{k:g}": round(v, 5) for k, v in ratios.items()},
+            "n_windows": len(valid)}

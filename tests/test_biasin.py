@@ -172,3 +172,45 @@ def test_flags_and_tags():
     check_unknown_flags(["+bias=backtest", "+bias_lambdas=0.5,1"])
     with pytest.raises(ValueError):
         check_unknown_flags(["+bias_lambda=1"])
+
+
+# ------------------------------------------------------------- SpreadIN
+def test_choose_spread_widens_a_narrow_fan_and_keeps_a_right_one():
+    rng = np.random.default_rng(5)
+    h, n = 48, 40
+    narrow, right = [], []
+    for _ in range(n):
+        truth = rng.normal(size=h)                 # noise sigma 1
+        med = np.zeros(h)
+        narrow.append({"fan": _fan_from_median(med, width=0.5), "known": truth})
+        right.append({"fan": _fan_from_median(med, width=1.0), "known": truth})
+    a = B.choose_spread(narrow, LEVELS, median_idx=4)
+    assert a["s"] == 2.0 and a["n_windows"] == n
+    b = B.choose_spread(right, LEVELS, median_idx=4)
+    assert b["s"] == 1.0
+    fan = _fan_from_median(np.zeros(h), 0.5)
+    sc = B.scale_fan(fan, fan[:, 4], 2.0)
+    assert np.allclose(sc[:, 4], fan[:, 4]) and np.allclose(sc - fan[:, 4:5], 2 * (fan - fan[:, 4:5]))
+    assert B.scale_fan(None, fan[:, 4], 2.0) is None
+
+
+class _NarrowStub(_StubModel):
+    """Unbiased seasonal naive with a fan half as wide as the noise."""
+    def __init__(self):
+        super().__init__(bias=0.0, width=0.15)
+
+
+def test_harness_spread_lowers_crps_keeps_mase(harness):
+    EG = harness
+    model = _NarrowStub()
+    plain = _run(EG, model)
+    sp = _run(EG, model, spread_mode="backtest")
+    assert sp["spread"]["s"] > 1.0 and sp["spread"]["official"] is True
+    assert sp["model"]["CRPS"] < plain["model"]["CRPS"]
+    assert sp["model"]["MASE"] == pytest.approx(plain["model"]["MASE"], rel=1e-9)
+    cov_p, cov_s = plain["model"]["coverage"], sp["model"]["coverage"]
+    assert (cov_s["0.9"] - cov_s["0.1"]) > (cov_p["0.9"] - cov_p["0.1"])
+    both = _run(EG, model, spread_mode="backtest", ratein_mode="mix", ratein_pool=True)
+    assert both["spread"]["s"] > 1.0
+    from evaluate_gift import check_unknown_flags
+    check_unknown_flags(["+spread=backtest", "+spread_grid=0.9,1.1"])

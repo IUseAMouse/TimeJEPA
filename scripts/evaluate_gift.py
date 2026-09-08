@@ -57,6 +57,7 @@ from timejepa.evaluation import gift  # noqa: E402
 from timejepa.evaluation import ratein as ratein_mod  # noqa: E402
 from timejepa.evaluation import refine as refine_mod  # noqa: E402
 from timejepa.evaluation import biasin as biasin_mod  # noqa: E402
+from timejepa.evaluation import ttt as ttt_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("evaluate_gift")
@@ -414,8 +415,10 @@ def _backtest_bias(model, series, h: int, windows: int, max_len: int,
                 per_series[idx][j] = {
                     "beta": biasin_mod.level_bias(known, median[b], sc),
                     "fan": None if q is None else q[b], "known": known, "scale": sc}
-    records, betas = [], {}
+    records, betas, all_windows = [], {}, []
     for idx, wins in per_series.items():
+        for w in wins.values():
+            all_windows.append({"fan": w["fan"], "known": w["known"]})
         betas[idx] = biasin_mod.series_beta([w["beta"] for w in wins.values()])
         if 1 in wins and 2 in wins:
             records.append({"fan": wins[1]["fan"], "known": wins[1]["known"],
@@ -426,8 +429,62 @@ def _backtest_bias(model, series, h: int, windows: int, max_len: int,
     diag = {"lambda": choice["lambda"], "ratios": choice["ratios"],
             "n_val": choice["n_val"], "n_series": len(finite),
             "mean_abs_beta": float(np.mean(np.abs(finite))) if finite else 0.0,
-            "mean_beta": float(np.mean(finite)) if finite else 0.0}
-    return betas, diag
+            "mean_beta": float(np.mean(finite)) if finite else 0.0,
+            "levels": levels}
+    return betas, diag, all_windows
+
+
+def _ttt_adapt_config(model, series, h: int, windows: int, max_len: int, stride: int,
+                      patch: int, device, batch_size: int, spec: dict,
+                      tta_lookbacks=None, tta_flip: bool = False, tta_shifts=None) -> tuple:
+    """JEPA test-time adaptation of one config (module timejepa.evaluation.ttt).
+
+    Gate (causal, default on): adapt a copy on the pasts BEFORE the backtest
+    windows, forecast those windows with the base model and with the copy,
+    keep the adaptation only if the pooled pinball drops by more than the
+    margin. Then adapt on the full test lookbacks (no target) and return the
+    adapted model. Returns (model_to_use, diag)."""
+    diag = {"params": spec["params"], "steps": spec["steps"], "lr": spec["lr"],
+            "gate": bool(spec.get("gate", True)), "accepted": True}
+    if spec.get("gate", True):
+        pasts = []
+        for y in series:
+            past = y[:len(y) - windows * h]
+            h_bt = min(h, len(past) - 4 * patch)
+            if h_bt < 16:
+                continue
+            c = prepare_context(past[:len(past) - h_bt], max_len, stride, patch)
+            if c is not None:
+                pasts.append(c)
+        m_gate, st_gate = ttt_mod.adapt(model, pasts, device, steps=spec["steps"], lr=spec["lr"],
+                                        params=spec["params"], batch_size=batch_size,
+                                        seed=spec.get("seed", 0))
+        _, d0, w0 = _backtest_bias(model, series, h, windows, max_len, stride, patch, device,
+                                   batch_size, biasin_mod.DEFAULT_LAMBDAS, tta_lookbacks,
+                                   tta_flip, tta_shifts)
+        _, _, w1 = _backtest_bias(m_gate, series, h, windows, max_len, stride, patch, device,
+                                  batch_size, biasin_mod.DEFAULT_LAMBDAS, tta_lookbacks,
+                                  tta_flip, tta_shifts)
+        lv = d0["levels"]
+        base = sum(biasin_mod.pinball(r["fan"], r["known"], lv) for r in w0 if r["fan"] is not None)
+        adapted = sum(biasin_mod.pinball(r["fan"], r["known"], lv) for r in w1 if r["fan"] is not None)
+        ratio = float(adapted / max(base, 1e-12)) if w0 else float("nan")
+        diag.update({"gate_ratio": ratio, "gate_windows": len(w0),
+                     "gate_loss_first": st_gate["loss_first"], "gate_loss_last": st_gate["loss_last"]})
+        diag["accepted"] = bool(np.isfinite(ratio) and ratio < 1.0 - float(spec.get("margin", 0.01)))
+        del m_gate
+        if not diag["accepted"]:
+            return model, diag
+    contexts = []
+    for inst in gift.iter_test_instances(series, h, windows):
+        c = prepare_context(inst.context, max_len, stride, patch)
+        if c is not None:
+            contexts.append(c)
+    m_ad, st = ttt_mod.adapt(model, contexts, device, steps=spec["steps"], lr=spec["lr"],
+                             params=spec["params"], batch_size=batch_size,
+                             seed=spec.get("seed", 0))
+    diag.update({k: v for k, v in st.items()})
+    return m_ad, diag
 
 
 def _pool_ratios(scores: dict, pooled: bool) -> tuple:
@@ -582,7 +639,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     ratein_w: bool = False, ratein_w_max_k: int = 4,
                     ratein_pool: bool = False, energy_judge=None,
                     refine_spec=None, refine_judge=None,
-                    bias_mode: str = "off", bias_lambdas=None) -> dict:
+                    bias_mode: str = "off", bias_lambdas=None,
+                    spread_mode: str = "off", spread_grid=None,
+                    ttt_spec=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -594,6 +653,15 @@ def evaluate_config(model, config: str, gift_root: Path, device,
 
     model_acc = gift.MetricAccumulator()
     sn_acc = gift.MetricAccumulator()
+    ttt_diag = None
+    if ttt_spec:
+        # JEPA test-time adaptation on the lookbacks, BEFORE anything else
+        # (the backtest layers then see the adapted model, consistently).
+        model, ttt_diag = _ttt_adapt_config(
+            model, series, h, windows,
+            max_context or (model.input_length if hasattr(model, "input_length") else 1024),
+            model.patching.stride, model.patching.patch_size, device, batch_size, ttt_spec,
+            tta_lookbacks=tta_lookbacks, tta_flip=tta_flip, tta_shifts=tta_shifts)
 
     # Bucket instances by prepared-context length so each forward pass gets a
     # rectangular batch. Within a config almost everything lands in one bucket
@@ -629,11 +697,19 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     refine_chunks = []
     # BiasIN: per-series causal level bias + per-config shrink, once.
     bias_betas, bias_diag, bias_shifts = None, None, []
-    if bias_mode == "backtest":
-        bias_betas, bias_diag = _backtest_bias(
+    spread_diag = None
+    if bias_mode == "backtest" or spread_mode == "backtest":
+        bias_betas, bias_diag, bt_windows = _backtest_bias(
             model, series, h, windows, max_len, stride, model.patching.patch_size,
             device, batch_size, bias_lambdas or biasin_mod.DEFAULT_LAMBDAS,
             tta_lookbacks=tta_lookbacks, tta_flip=tta_flip, tta_shifts=tta_shifts)
+        if spread_mode == "backtest":
+            # SpreadIN: one scale of the fan around its median per config.
+            lv = bias_diag["levels"]
+            mid_bt = min(range(len(lv)), key=lambda j: abs(lv[j] - 0.5))
+            spread_diag = biasin_mod.choose_spread(
+                bt_windows, lv, mid_bt, spread_grid or biasin_mod.DEFAULT_SPREAD_GRID)
+    spread_s = spread_diag["s"] if spread_diag is not None else 1.0
 
     def _bias_shift(inst_series_idx, context, target, med_nat):
         if bias_mode == "oracle":
@@ -777,6 +853,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 if bias_mode != "off":
                     sh = _bias_shift(item[4], past, target, med_nat)
                     fan_nat, med_nat = biasin_mod.shift_fan(fan_nat, med_nat, sh)
+                if spread_s != 1.0:
+                    fan_nat = biasin_mod.scale_fan(fan_nat, med_nat, spread_s)
                 model_acc.add(target, med_nat, fan_nat, scale)
                 sn = gift.seasonal_naive_forecast(past, h, m)
                 sn_acc.add(target, sn, None, scale)
@@ -792,6 +870,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         if bias_mode != "off":
             sh = _bias_shift(st["sidx"], st["past"], st["target"], med)
             fan, med = biasin_mod.shift_fan(fan, med, sh)
+        if spread_s != 1.0:
+            fan = biasin_mod.scale_fan(fan, med, spread_s)
         model_acc.add(st["target"], med, fan, st["scale"])
         sn_acc.add(st["target"], gift.seasonal_naive_forecast(st["past"], h, m),
                    None, st["scale"])
@@ -811,6 +891,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             res["ratein"]["mix"] = {
                 "tau": MIX_TAU,
                 "weights": {str(k): round(w, 4) for k, w in mix_weights.items()}}
+    if ttt_diag is not None:
+        res["ttt"] = {"official": True, **ttt_diag}
+    if spread_diag is not None:
+        res["spread"] = {"mode": spread_mode, "official": True, **spread_diag}
     if bias_mode != "off":
         res["bias"] = {"mode": bias_mode, "official": bias_mode == "backtest",
                        "mean_abs_shift_sigma": float(np.mean(np.abs(bias_shifts))) if bias_shifts else 0.0,
@@ -921,7 +1005,8 @@ KNOWN_FLAGS = frozenset((
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
-    "bias", "bias_lambdas",
+    "bias", "bias_lambdas", "spread", "spread_grid",
+    "ttt", "ttt_steps", "ttt_lr", "ttt_gate", "ttt_margin",
 ))
 
 
@@ -1014,8 +1099,30 @@ def main(cfg: DictConfig):
     bias_lambdas = ([float(x) for x in str(cfg.bias_lambdas).split(",")]
                     if cfg.get("bias_lambdas") else None)
     if bias_mode == "oracle":
-        logger.warning("BIAS-ORACLE: shifts the center by the target's mean residual - "
-                       "a diagnostic bound on the systematic level bias, never official")
+        logger.warning("BIAS-ORACLE: shifts the center by the target's median residual - "
+                       "a diagnostic bound on the level drift, never official")
+    #   +spread=backtest                        SpreadIN: one scale of the fan around
+    #                                           its median per config, chosen on the
+    #                                           backtest windows (official)
+    #   +spread_grid='0.8,0.9,1.1,1.25,1.5,2'   candidate scales
+    spread_mode = str(cfg.get("spread", "off")).lower()
+    if spread_mode not in ("off", "backtest"):
+        raise ValueError(f"unknown +spread={spread_mode!r} (backtest)")
+    spread_grid = ([float(x) for x in str(cfg.spread_grid).split(",")]
+                   if cfg.get("spread_grid") else None)
+    #   +ttt=norm|all                           JEPA test-time adaptation on the
+    #                                           lookbacks (params: LayerNorm/RevIN
+    #                                           affine, or encoder + predictor)
+    #   +ttt_steps=16 +ttt_lr=<1e-3 norm, 1e-5 all> +ttt_gate=true +ttt_margin=0.01
+    ttt_spec = None
+    ttt_params = str(cfg.get("ttt", "off")).lower()
+    if ttt_params not in ("off", "norm", "all"):
+        raise ValueError(f"unknown +ttt={ttt_params!r} (norm, all)")
+    if ttt_params != "off":
+        ttt_spec = {"params": ttt_params, "steps": int(cfg.get("ttt_steps", 16)),
+                    "lr": float(cfg.get("ttt_lr", 1e-3 if ttt_params == "norm" else 1e-5)),
+                    "gate": str(cfg.get("ttt_gate", "true")).lower() in ("true", "1", "on"),
+                    "margin": float(cfg.get("ttt_margin", 0.01)), "seed": int(cfg.get("seed", 0) or 0)}
     if refine_spec is not None and refine_spec.mode == "ceiling":
         logger.warning("REFINE-CEILING: descends the TRUE target - a diagnostic "
                        "bound on what refinement can give, never an official number")
@@ -1096,6 +1203,12 @@ def main(cfg: DictConfig):
                              "-l" + "-".join(f"{x:g}" for x in bias_lambdas))
     elif bias_mode == "oracle":
         tag += "_bias-oracle"
+    if spread_mode == "backtest":
+        tag += "_spread-bt" + ("" if spread_grid is None else
+                               "-g" + "-".join(f"{x:g}" for x in spread_grid))
+    if ttt_spec is not None:
+        tag += (f"_ttt-{ttt_spec['params']}{ttt_spec['steps']}-lr{ttt_spec['lr']:g}"
+                + ("" if ttt_spec["gate"] else "-nogate"))
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     tag += gamma_tag
@@ -1150,7 +1263,10 @@ def main(cfg: DictConfig):
                                           refine_spec=refine_spec,
                                           refine_judge=refine_judge,
                                           bias_mode=bias_mode,
-                                          bias_lambdas=bias_lambdas)
+                                          bias_lambdas=bias_lambdas,
+                                          spread_mode=spread_mode,
+                                          spread_grid=spread_grid,
+                                          ttt_spec=ttt_spec)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
@@ -1173,7 +1289,10 @@ def main(cfg: DictConfig):
                                       refine_spec=refine_spec,
                                       refine_judge=refine_judge,
                                       bias_mode=bias_mode,
-                                      bias_lambdas=bias_lambdas)
+                                      bias_lambdas=bias_lambdas,
+                                      spread_mode=spread_mode,
+                                      spread_grid=spread_grid,
+                                      ttt_spec=ttt_spec)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return
@@ -1198,6 +1317,13 @@ def main(cfg: DictConfig):
             extra += (f" {'ORACLE ' if bs['mode'] == 'oracle' else ''}bias: "
                       + (f"lambda {bs['lambda']:g}, n_val {bs['n_val']}, " if 'lambda' in bs else "")
                       + f"|shift| {bs['mean_abs_shift_sigma']:.3f}s, shifted {bs['frac_shifted']:.0%}")
+        if "ttt" in res:
+            tt = res["ttt"]
+            extra += (f" ttt: {'ON' if tt['accepted'] else 'off'}"
+                      + (f" gate {tt['gate_ratio']:.3f}" if 'gate_ratio' in tt else "")
+                      + (f" loss {tt['loss_first']:.3f}->{tt['loss_last']:.3f}" if tt['accepted'] and tt.get('steps') else ""))
+        if "spread" in res:
+            extra += f" spread: s {res['spread']['s']:g} ({res['spread']['n_windows']} win)"
         if "refine" in res:
             rf = res["refine"]
             extra += (f" {'CEILING ' if rf['mode'] == 'ceiling' else ''}refine: "
@@ -1259,6 +1385,17 @@ def main(cfg: DictConfig):
                      f"lambda hist " + " ".join(f"{k:g}:{v}" for k, v in sorted(Counter(lams).items()))
                      + f" | mean |beta| {np.mean([b.get('mean_abs_beta', 0) for b in bss]):.3f}")
         logger.info(line)
+    tts = [r["ttt"] for r in results.values() if "ttt" in r]
+    if tts:
+        acc = [t for t in tts if t["accepted"]]
+        gr = [t["gate_ratio"] for t in tts if np.isfinite(t.get("gate_ratio", float("nan")))]
+        logger.info(f"  TTT[{tts[0]['params']}{tts[0]['steps']}]: accepted {len(acc)}/{len(tts)} configs"
+                    + (f" | gate ratio mean {np.mean(gr):.3f}" if gr else ""))
+    sps = [r["spread"] for r in results.values() if "spread" in r]
+    if sps:
+        ss = [p["s"] for p in sps]
+        logger.info(f"  SPREAD[backtest]: configs rescaled {sum(1 for x in ss if x != 1.0)}/{len(ss)} | "
+                    f"s hist " + " ".join(f"{k:g}:{v}" for k, v in sorted(Counter(ss).items())))
     rfs = [r["refine"] for r in results.values() if "refine" in r]
     if rfs:
         mode = rfs[0]["mode"]

@@ -201,6 +201,26 @@ Témoin wandb : `lr-AdamW` (ou `lr-*`) descend vers `min_lr` en fin de run (~22 
 puis stack (`+ratein=mix +ratein_pool=true`). P-ann.1 / P-ann.2 au registre ; référence
 apparié 15 % 0.5466, 25 % 0.5433, stack 0.5340.
 
+## 8. SpreadIN et adaptation au test (2026-09-09, éval seule, un par un)
+
+Ordre : SpreadIN d'abord (sûr), TTT ensuite (pari). Chaque couche se compare au stack du champion
+0.7842 / 0.5340 / couverture 0.756, puis s'empile sur l'autre si elle tient.
+
+```bash
+# SpreadIN : un facteur d'échelle du fan autour de la médiane par config, choisi sur le backtest
+python scripts/evaluate_gift.py --config-name lotsa_mini_v3_head8_eval +checkpoint_path=checkpoints/timejepa_lotsa_mini_v3_head8_zs/pretrain_False/epoch00_valloss0.6522.ckpt +tta_flip=true +ratein=mix +ratein_pool=true +spread=backtest
+
+# TTT : adaptation JEPA sur les lookbacks, affines seulement, 16 pas, porte causale par backtest
+python scripts/evaluate_gift.py --config-name lotsa_mini_v3_head8_eval +checkpoint_path=checkpoints/timejepa_lotsa_mini_v3_head8_zs/pretrain_False/epoch00_valloss0.6522.ckpt +tta_flip=true +ratein=mix +ratein_pool=true +ttt=norm
+
+# TTT, encodeur + prédicteur (lr 1e-5), seulement si `norm` montre quelque chose
+python scripts/evaluate_gift.py --config-name lotsa_mini_v3_head8_eval +checkpoint_path=checkpoints/timejepa_lotsa_mini_v3_head8_zs/pretrain_False/epoch00_valloss0.6522.ckpt +tta_flip=true +ratein=mix +ratein_pool=true +ttt=all
+```
+
+Dossiers : `..._spread-bt`, `..._ttt-norm16-lr0.001`, `..._ttt-all16-lr1e-05`. Lignes à lire :
+`SPREAD[backtest]` (configs rescalées, histogramme de s), `TTT[...]` (configs acceptées par la
+porte, ratio moyen), `vs_official`, `coverage`. P-SP.1 / P-TTT.1 au registre.
+
 ## Digest à m'envoyer
 
 ```bash
