@@ -1934,7 +1934,9 @@ constitue le test le plus direct de la thèse du §7.
   largeur du fan, payé en CRPS. Raffinement `+refine=energy` α 0.05, six premières configs :
   0.787 → 0.780, 0.787 → 0.813, 0.432 → 0.497 (+15 %), 0.838 → 0.836, 0.617 → 0.623, 0.702 →
   0.727 ; dE 0.08-0.14, |d| 0.09-0.13 : la descente trouve le fond de la cuvette et ce fond
-  n'est pas la vérité — P-S6b.3 ÉCHOUE avec dommage (chiffre final à compléter). **Verdict** :
+  n'est pas la vérité — P-S6b.3 ÉCHOUE avec dommage. **Chiffre final (97 configs)** : stack
+  0.8258 / 0.5621 → raffiné **0.8638 / 0.5838** (+3.8 pt MASE, +2.2 pt CRPS), q10 0.139 /
+  q90 0.882, 6.6 pas, early 32 %, dE 0.096, |d| 0.109. **Verdict** :
   un juge apprend à ramener une vérité corrompue (corruption anormale par rapport au
   contexte, cos 0.75) mais pas à situer la vérité depuis un forecast cohérent avec le
   contexte : l'information n'y est pas. Deux tentatives indépendantes (critic S6, score
