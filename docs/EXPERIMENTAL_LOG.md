@@ -1919,6 +1919,26 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (S6-b PREMIÈRE VALIDATION à 108k steps / 5 % : le juge apprend les directions
+  synthétiques (val `cos_level` 0.75, `cos_slope` 0.58, `cos_noise` 0.31) mais PAS le résidu
+  réel (`cos_forecast` 0.07, plat depuis le début) ; `valley_frac` δ 0.1 = 0.36 ; tout en
+  PLATEAU depuis 40k steps)** — P-S6b.5 : `cos_level` > 0.5 ✓, `valley_frac` > 0.8 ✗,
+  `cos_forecast` < 0.1 ⇒ branche ÉCHEC-DIAGNOSTIC pressentie. `train_loss/score` 0.93 → 0.58
+  (plateau à 40k), joint 0.4 stable, SIGReg stable. Mécanisme, l'asymétrie qui ferme la
+  question : une vérité décalée est ANORMALE par rapport au contexte, le juge détecte
+  l'anomalie et sait la corriger (le terme fonctionne : cos 0.05 → 0.75) ; le fan du
+  forecaster est COHÉRENT avec le contexte par construction, son erreur est la part que le
+  contexte ne détermine pas, et un juge qui voit la même information que le forecaster ne la
+  détermine pas davantage — l'avantage « vérifier plutôt que générer » (EBT) est mesuré ici à
+  0.07. Conséquence : depuis ŷ₀ le champ appris est quasi orthogonal au résidu ; la descente
+  dans z ou un poids `forecast` plus haut ne changent pas le goulot (l'information). Le 15 %
+  n'apportera rien (plateau) : mesures sur le checkpoint 5 %. **Prédictions** : sonde
+  `--center truth` vallée en 0 entre 0.3 et 0.5 (réel mais partiel, contre 0.03-0.14) ; sonde
+  `--center fan` signe 0.5-0.6 ; stack + `+refine=energy` α 0.05 : récupération du plafond
+  < 3 % (P-S6b.3 échoue). Si confirmé, S6-b CLOS avec la claim EBM honnête : le latent
+  classe des candidats lointains (E18b), il ne corrige pas localement ; le plafond mesure ce
+  qu'il aurait fallu savoir. P-S6b.4 en attente (val_loss vs head8 au même step).
+
 - **2026-09-08 (S6-b LANCÉ, 5.3 it/s ; à 3k steps le puits se creuse sur les directions
   synthétiques, `cos_forecast` redescend ; P-S6b.5 gravée)** — `score/cos_level` 0.05 → 0.27
   (l'axe du plafond, le plus rapide), `cos_noise` 0.15 → 0.30, `cos_slope` 0.05 → 0.18,
