@@ -1441,7 +1441,7 @@ Leçon 12 du registre appliquée au finetune : `training.schedule_fraction: 0.3`
 descend à min_lr là où tous les bras s'arrêtent. P-ann.1 (dernier checkpoint bat 0.5340 de
 0.3-1 pt), P-ann.2 (15/25 % dans le bruit). Même clé pour le prochain pretrain. Runbook §7.
 
-### BiasIN — correction causale du biais de niveau depuis le backtest — **VERDICT À RE-MESURER 2026-09-08** (estimateur passé en médiane ; première mesure 0.5428 rendue avec la moyenne) (0.5428 contre 0.5340, 94/97 refus, les 3 acceptés nuisent : le biais de niveau ne persiste pas)
+### BiasIN — correction causale du biais de niveau depuis le backtest — **CLOS 2026-09-08** (médiane : 0.5413 contre 0.5340, 94/97 refus ; oracle constant 0.4431 = dérive réalisée, inaccessible) (0.5428 contre 0.5340, 94/97 refus, les 3 acceptés nuisent : le biais de niveau ne persiste pas)
 
 Le plafond mélangeait biais systématique et bruit réalisé ; BiasIN ne garde que la part qui
 persiste d'une fenêtre à l'autre (β sur les fenêtres de backtest de RateIN, λ validé par config,

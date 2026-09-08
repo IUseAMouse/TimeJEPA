@@ -1919,6 +1919,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (BiasIN CLOS avec l'estimateur médiane : backtest 0.7947 / 0.5413 (94/97
+  refus, 3 nocifs inchangés), oracle constant par instance 0.6198 / 0.4431 / couv. 0.821 —
+  lecture : la moitié de l'erreur du champion est une DÉRIVE DE NIVEAU RÉALISÉE, absente du
+  contexte et de la fenêtre précédente ; S6-b clos sans éval au 15 %)** — Médiane ou moyenne,
+  même verdict backtest : ce qui passe de la fenêtre ancienne à la récente ne passe pas de la
+  récente au test ; les 3 acceptées (electricity/D MASE 4.26, electricity/H/long 1.74,
+  m4_hourly 1.82) sont des faux positifs d'une validation à 3 λ sur 2 fenêtres, plus le
+  confound k = 1 → fan mélangé. P-BI.2 : clôture. Oracle (P-BI.1 : prédit 0.50-0.52, mesuré
+  0.4431) : un décalage constant connu du futur vaut 9 pt, mais c'est la dérive réalisée sur
+  l'horizon, pas un biais systématique — ni les juges (contexte) ni BiasIN (fenêtre
+  précédente) n'y ont accès. Diagnostic pur. Score 15 % : `val_loss` au-dessus du 5 %, pas
+  d'éval, S6-b clos. Bras anneal-30 lancé (P-ann.1..2). Deux couches proposées, à choisir :
+  (a) adaptation au test sur le contexte (loss JEPA auto-supervisée sur le passé de la série,
+  quelques pas, causal, nombre de pas validable par backtest — la seule chose que seul un JEPA
+  peut faire au test ; pari 0.3-1 pt) ; (b) calibration de largeur du fan depuis le backtest
+  (la volatilité persiste, couverture 0.756 → nominal ; 0.3-0.6 pt).
+
 - **2026-09-08 (BiasIN : l'estimateur passe en MÉDIANE — l'oracle « moyenne » du champion
   dégradait bitbrains (MASE 3.47 → 5.31, |shift| à 5000 σ), donc INVALIDE, et le verdict
   backtest du matin est à re-mesurer ; ANNEAL-30 : code livré, prédictions gravées ; soupe
