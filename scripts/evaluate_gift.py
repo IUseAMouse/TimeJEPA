@@ -56,6 +56,7 @@ from timejepa.evaluation import create_model_from_config, load_checkpoint  # noq
 from timejepa.evaluation import gift  # noqa: E402
 from timejepa.evaluation import ratein as ratein_mod  # noqa: E402
 from timejepa.evaluation import refine as refine_mod  # noqa: E402
+from timejepa.evaluation import biasin as biasin_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("evaluate_gift")
@@ -359,6 +360,76 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     return {idx: K for idx in range(len(series))}, diag
 
 
+def _backtest_bias(model, series, h: int, windows: int, max_len: int,
+                   stride: int, patch: int, device, batch_size: int,
+                   lambdas, tta_lookbacks=None, tta_flip: bool = False,
+                   tta_shifts=None) -> tuple:
+    """BiasIN (2026-09-08) - per-series level bias of the median, estimated
+    on the RateIN backtest windows (k=1, same TTA as the test forecast),
+    expressed in units of the local context scale; per-config shrink chosen
+    by applying the OLDER window's bias to the RECENT window's forecast
+    (pooled pinball ratio, 5% margin, no-op otherwise). Strictly causal: the
+    windows precede the first test target. Returns (betas {series_idx:
+    beta}, diag)."""
+    N_BT_WINDOWS = 2
+    entries = []                                    # (idx, j, sub_hist, known)
+    for idx, y in enumerate(series):
+        past = y[:len(y) - windows * h]
+        avail = len(past) - 4 * patch
+        h_bt = min(h, avail)
+        if h_bt < 16:
+            continue
+        for j in range(1, min(N_BT_WINDOWS, avail // h_bt) + 1):
+            lo = len(past) - j * h_bt
+            sub_hist, known = past[:lo], past[lo:lo + h_bt]
+            if not np.isfinite(known).all():
+                continue
+            entries.append((idx, j, sub_hist, known))
+    buckets = defaultdict(list)
+    for idx, j, sub_hist, known in entries:
+        ctx = prepare_context(sub_hist, max_len, stride, patch)
+        if ctx is None:
+            continue
+        buckets[(len(ctx), len(known))].append((idx, j, ctx, sub_hist, known))
+    per_series = defaultdict(dict)                  # idx -> j -> record
+    levels_seen = None
+    for (length, h_bt), items in buckets.items():
+        for i in range(0, len(items), batch_size):
+            chunk = items[i:i + batch_size]
+            batch = torch.from_numpy(np.stack([c[2] for c in chunk]))
+            batch = batch.unsqueeze(-1).to(device)
+            with torch.no_grad():
+                out = tta_forecast(model, batch, h_bt, lookbacks=tta_lookbacks,
+                                   flip=tta_flip, shifts=tta_shifts)
+            median = out["forecast_denorm"].squeeze(-1).cpu().numpy()
+            q = out.get("quantiles_denorm")
+            if q is not None:
+                q = q.cpu().numpy()
+                if q.ndim == 4:
+                    q = q[..., 0]
+                levels_seen = list(out.get("quantile_levels",
+                                           [0.1 * jj for jj in range(1, 10)]))
+            for b, (idx, j, _, sub_hist, known) in enumerate(chunk):
+                sc = biasin_mod.level_scale(sub_hist)
+                per_series[idx][j] = {
+                    "beta": biasin_mod.level_bias(known, median[b], sc),
+                    "fan": None if q is None else q[b], "known": known, "scale": sc}
+    records, betas = [], {}
+    for idx, wins in per_series.items():
+        betas[idx] = biasin_mod.series_beta([w["beta"] for w in wins.values()])
+        if 1 in wins and 2 in wins:
+            records.append({"fan": wins[1]["fan"], "known": wins[1]["known"],
+                            "beta_old": wins[2]["beta"], "scale": wins[1]["scale"]})
+    levels = levels_seen or [0.1 * jj for jj in range(1, 10)]
+    choice = biasin_mod.choose_shrink(records, levels, lambdas)
+    finite = [b for b in betas.values() if np.isfinite(b)]
+    diag = {"lambda": choice["lambda"], "ratios": choice["ratios"],
+            "n_val": choice["n_val"], "n_series": len(finite),
+            "mean_abs_beta": float(np.mean(np.abs(finite))) if finite else 0.0,
+            "mean_beta": float(np.mean(finite)) if finite else 0.0}
+    return betas, diag
+
+
 def _pool_ratios(scores: dict, pooled: bool) -> tuple:
     """Per-config ratio table k -> score(k)/score(1) from per-series scores.
 
@@ -510,7 +581,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     ratein_mode: str = "off", forced_k: int = 0,
                     ratein_w: bool = False, ratein_w_max_k: int = 4,
                     ratein_pool: bool = False, energy_judge=None,
-                    refine_spec=None, refine_judge=None) -> dict:
+                    refine_spec=None, refine_judge=None,
+                    bias_mode: str = "off", bias_lambdas=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -555,6 +627,25 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # the components that survived the guards (finalized after the loop).
     mix_state, mix_mid = {}, 0
     refine_chunks = []
+    # BiasIN: per-series causal level bias + per-config shrink, once.
+    bias_betas, bias_diag, bias_shifts = None, None, []
+    if bias_mode == "backtest":
+        bias_betas, bias_diag = _backtest_bias(
+            model, series, h, windows, max_len, stride, model.patching.patch_size,
+            device, batch_size, bias_lambdas or biasin_mod.DEFAULT_LAMBDAS,
+            tta_lookbacks=tta_lookbacks, tta_flip=tta_flip, tta_shifts=tta_shifts)
+
+    def _bias_shift(inst_series_idx, context, target, med_nat):
+        if bias_mode == "oracle":
+            sh = biasin_mod.oracle_shift(target, med_nat)
+        elif bias_mode == "backtest":
+            sh = biasin_mod.test_shift(bias_betas.get(inst_series_idx, float("nan")),
+                                       bias_diag["lambda"], context)
+        else:
+            return 0.0
+        bias_shifts.append(sh / max(biasin_mod.level_scale(context), 1e-12))
+        return sh
+
     for inst in gift.iter_test_instances(series, h, windows):
         if mix_weights is not None:
             comps = []
@@ -573,10 +664,11 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             scale = gift.seasonal_error(inst.context, m)
             iid = n_inst
             mix_state[iid] = {"target": inst.target, "past": inst.context,
-                              "scale": scale, "fan": None, "med": None, "w": 0.0}
+                              "scale": scale, "fan": None, "med": None, "w": 0.0,
+                              "sidx": inst.series_idx}
             for kk, wk, ctx in comps:
                 buckets[(len(ctx), kk)].append(
-                    (ctx, inst.target, inst.context, scale, iid, wk))
+                    (ctx, inst.target, inst.context, scale, iid, wk, inst.series_idx))
             k_hist[max(comps, key=lambda c: c[1])[0]] += 1
             n_inst += 1
             continue
@@ -603,7 +695,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # MASE scale uses the FULL past, not the capped context - gluonts
         # computes the seasonal error on the entire history of the series.
         scale = gift.seasonal_error(inst.context, m)
-        buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale))
+        buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale, inst.series_idx))
         k_hist[k] += 1
         n_inst += 1
 
@@ -672,7 +764,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 else:
                     fan_nat = quants[b] if quants is not None else None
                     med_nat = median[b]
-                if len(item) == 6:                      # RateIN-mix component
+                if len(item) == 7:                      # RateIN-mix component
                     st = mix_state[item[4]]
                     wk = item[5]
                     if fan_nat is not None:
@@ -682,6 +774,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                  else st["med"] + wk * med_nat)
                     st["w"] += wk
                     continue
+                if bias_mode != "off":
+                    sh = _bias_shift(item[4], past, target, med_nat)
+                    fan_nat, med_nat = biasin_mod.shift_fan(fan_nat, med_nat, sh)
                 model_acc.add(target, med_nat, fan_nat, scale)
                 sn = gift.seasonal_naive_forecast(past, h, m)
                 sn_acc.add(target, sn, None, scale)
@@ -694,6 +789,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             continue
         fan = None if st["fan"] is None else st["fan"] / st["w"]
         med = fan[:, mix_mid] if fan is not None else st["med"] / st["w"]
+        if bias_mode != "off":
+            sh = _bias_shift(st["sidx"], st["past"], st["target"], med)
+            fan, med = biasin_mod.shift_fan(fan, med, sh)
         model_acc.add(st["target"], med, fan, st["scale"])
         sn_acc.add(st["target"], gift.seasonal_naive_forecast(st["past"], h, m),
                    None, st["scale"])
@@ -713,6 +811,12 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             res["ratein"]["mix"] = {
                 "tau": MIX_TAU,
                 "weights": {str(k): round(w, 4) for k, w in mix_weights.items()}}
+    if bias_mode != "off":
+        res["bias"] = {"mode": bias_mode, "official": bias_mode == "backtest",
+                       "mean_abs_shift_sigma": float(np.mean(np.abs(bias_shifts))) if bias_shifts else 0.0,
+                       "frac_shifted": float(np.mean([abs(x) > 0 for x in bias_shifts])) if bias_shifts else 0.0}
+        if bias_diag is not None:
+            res["bias"].update(bias_diag)
     if refine_spec is not None and refine_spec.active:
         res["refine"] = refine_mod.summarize_refine(
             refine_chunks, refine_spec,
@@ -817,6 +921,7 @@ KNOWN_FLAGS = frozenset((
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
+    "bias", "bias_lambdas",
 ))
 
 
@@ -897,6 +1002,20 @@ def main(cfg: DictConfig):
     #   +refine_step=norm|raw (norm: alpha = largest displacement per step,
     #                          the box N*alpha is the same for both modes)
     refine_spec, refine_judge_kind, refine_tag = parse_refine_flags(cfg)
+    #   +bias=backtest                          BiasIN: causal level-bias correction
+    #                                           of the center from the backtest
+    #                                           windows (official)
+    #   +bias=oracle                            constant per-instance shift from the
+    #                                           target (diagnostic, never official)
+    #   +bias_lambdas='0.25,0.5,1'              shrink candidates validated causally
+    bias_mode = str(cfg.get("bias", "off")).lower()
+    if bias_mode not in ("off", "backtest", "oracle"):
+        raise ValueError(f"unknown +bias={bias_mode!r} (backtest, oracle)")
+    bias_lambdas = ([float(x) for x in str(cfg.bias_lambdas).split(",")]
+                    if cfg.get("bias_lambdas") else None)
+    if bias_mode == "oracle":
+        logger.warning("BIAS-ORACLE: shifts the center by the target's mean residual - "
+                       "a diagnostic bound on the systematic level bias, never official")
     if refine_spec is not None and refine_spec.mode == "ceiling":
         logger.warning("REFINE-CEILING: descends the TRUE target - a diagnostic "
                        "bound on what refinement can give, never an official number")
@@ -972,6 +1091,11 @@ def main(cfg: DictConfig):
     if ratein_w:
         tag += "-w"
     tag += refine_tag
+    if bias_mode == "backtest":
+        tag += "_bias-bt" + ("" if bias_lambdas is None else
+                             "-l" + "-".join(f"{x:g}" for x in bias_lambdas))
+    elif bias_mode == "oracle":
+        tag += "_bias-oracle"
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     tag += gamma_tag
@@ -1024,7 +1148,9 @@ def main(cfg: DictConfig):
                                           quantile_gamma=quantile_gamma,
                                           forced_k=kk, ratein_w=ratein_w,
                                           refine_spec=refine_spec,
-                                          refine_judge=refine_judge)
+                                          refine_judge=refine_judge,
+                                          bias_mode=bias_mode,
+                                          bias_lambdas=bias_lambdas)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
@@ -1045,7 +1171,9 @@ def main(cfg: DictConfig):
                                       ratein_pool=ratein_pool,
                                       energy_judge=energy_judge,
                                       refine_spec=refine_spec,
-                                      refine_judge=refine_judge)
+                                      refine_judge=refine_judge,
+                                      bias_mode=bias_mode,
+                                      bias_lambdas=bias_lambdas)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return
@@ -1065,6 +1193,11 @@ def main(cfg: DictConfig):
         if "oracle" in res:
             extra = (f" best_k={res['oracle']['best_k']} "
                      f"(gain {res['oracle']['gain_vs_k1']:+.1%} vs k=1)")
+        if "bias" in res:
+            bs = res["bias"]
+            extra += (f" {'ORACLE ' if bs['mode'] == 'oracle' else ''}bias: "
+                      + (f"lambda {bs['lambda']:g}, n_val {bs['n_val']}, " if 'lambda' in bs else "")
+                      + f"|shift| {bs['mean_abs_shift_sigma']:.3f}s, shifted {bs['frac_shifted']:.0%}")
         if "refine" in res:
             rf = res["refine"]
             extra += (f" {'CEILING ' if rf['mode'] == 'ceiling' else ''}refine: "
@@ -1114,6 +1247,18 @@ def main(cfg: DictConfig):
         logger.info(f"  RateIN: {n_active}/{len(fr)} configs mostly "
                     f"decimated | share of k>1 instances (mean): "
                     f"{float(np.mean(fr)):.1%}")
+    bss = [r["bias"] for r in results.values() if "bias" in r]
+    if bss:
+        mode = bss[0]["mode"]
+        line = (f"  BIAS[{mode}]{' (diagnostic, never official)' if mode == 'oracle' else ''}: "
+                f"|shift| {np.mean([b['mean_abs_shift_sigma'] for b in bss]):.3f} sigma | "
+                f"shifted {np.mean([b['frac_shifted'] for b in bss]):.0%}")
+        if mode == "backtest":
+            lams = [b.get("lambda", 0.0) for b in bss]
+            line += (f" | configs active {sum(1 for l in lams if l > 0)}/{len(lams)} | "
+                     f"lambda hist " + " ".join(f"{k:g}:{v}" for k, v in sorted(Counter(lams).items()))
+                     + f" | mean |beta| {np.mean([b.get('mean_abs_beta', 0) for b in bss]):.3f}")
+        logger.info(line)
     rfs = [r["refine"] for r in results.values() if "refine" in r]
     if rfs:
         mode = rfs[0]["mode"]

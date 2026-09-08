@@ -1919,6 +1919,36 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (BiasIN CODE LIVRÉ, NON COURU sur le champion — correction causale du biais de
+  niveau depuis le backtest ; le plafond re-lu : biais systématique vs bruit réalisé)** —
+  Correction due à l'utilisateur et à moi-même : le plafond de raffinement (0.3657 à boîte 0.4)
+  translatait le centre vers la valeur RÉALISÉE, bruit compris ; un oracle gagne même sur du
+  bruit blanc. Les deux bras S6 / S6-b ont couru contre un chiffre gonflé dont la part
+  prédictible n'a jamais été mesurée. BiasIN mesure et exploite la seule part exploitable
+  causalement : celle qui persiste d'une fenêtre à la suivante. Module
+  `src/timejepa/evaluation/biasin.py` (numpy pur : `level_scale` MAD, `level_bias`,
+  `choose_shrink`, `shift_fan`, `oracle_shift`), hook `evaluate_gift.py` (`_backtest_bias` :
+  k = 1 sur les 2 fenêtres de backtest de RateIN, même TTA que le test ; β = résidu moyen du
+  centre / échelle du contexte ; λ ∈ {0.25, 0.5, 1} choisi par config en appliquant β de la
+  fenêtre ancienne au fan de la fenêtre récente, ratio poolé < 0.95 sinon no-op ; décalage de
+  test = λ·β̄·échelle(contexte), couche finale sur le fan natif, chemin dur et chemin mix),
+  flags `+bias=backtest|oracle`, `+bias_lambdas`, tags `_bias-bt` / `_bias-oracle`, témoins
+  `res["bias"]` et bloc `BIAS[...]`. Tests `tests/test_biasin.py` (5) : stub saisonnier naïf
+  biaisé de 0.6 σ → λ = 1, CRPS −20 % ; stub non biaisé → no-op bit-identique ; chemin mix ;
+  flags. **Premier signal, smoke tiny local (m_dense/D, loop_seattle/H)** : |β| moyen 0.36 /
+  0.20 σ par fenêtre, mais ratios de validation 1.11 / 1.03 à λ 0.25 et 1.91 / 1.28 à λ 1 :
+  le biais mesuré sur une fenêtre NE PERSISTE PAS sur la suivante, λ = 0 sur les deux — c'est
+  du bruit de fenêtre, pas un biais. Signal d'alerte, sur tiny et deux configs seulement.
+  Même smoke en STACK (flip + mix + pool) : oracle « niveau constant par instance »
+  loop_seattle 0.0648 → 0.0613 (−5.4 %), m_dense 0.0821 → 0.0785 (−4.4 %) — là où le
+  plafond par pas de temps gagnait 30-40 % : la part « niveau systématique » des 17 pt est
+  PETITE, l'essentiel était du bruit réalisé, chiffré. **Prédictions (champion head8,
+  stack 0.5340)** : **P-BI.1** `+bias=oracle` entre 0.50 et 0.52 (≈ 5 % relatif, 1.5-3 pt :
+  la borne honnête d'une correction de niveau, oracle compris) ; **P-BI.2** `+bias=backtest` :
+  gain 0-0.5 pt, configs actives < 30 % ; si < 0.2 pt avec < 10 % de configs actives, le
+  biais de niveau ne persiste pas de fenêtre en fenêtre et BiasIN se clôt. Utilisateur (2026-09-08) : « Je valide pour l'implémentation de raffinement par
+  backtest ».
+
 - **2026-09-08 (S6-b CLOS — checkpoint 5 % `epoch00_valloss0.8481` : la cuvette est creusée
   PRÈS de la vérité, pas SUR elle ; le juge ne lit pas le sens de l'erreur du fan ; le
   raffinement DÉGRADE ; le terme coûte 2 pt sur le fan nu)** — Sonde `--center truth`

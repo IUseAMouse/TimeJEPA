@@ -1435,6 +1435,13 @@ raffinement local par énergie est fermé dans cette architecture (deux tentativ
 Claim EBM du papier : le latent classe des candidats lointains (E18b) ; le plafond mesure ce
 qu'il aurait fallu savoir. Effet secondaire noté : couverture 0.794 (quasi nominale).
 
+### BiasIN — correction causale du biais de niveau depuis le backtest (implémenté 2026-09-08, à courir sur le champion)
+
+Le plafond mélangeait biais systématique et bruit réalisé ; BiasIN ne garde que la part qui
+persiste d'une fenêtre à l'autre (β sur les fenêtres de backtest de RateIN, λ validé par config,
+no-op sinon). `+bias=oracle` = borne du niveau systématique. Smoke tiny : l'oracle constant ne
+rend que 5 % relatif, le backtest 0 (β ne persiste pas). P-BI.1 / P-BI.2 au registre ; runbook §6.
+
 
 Creuser le puits directement : ỹ = y + ε (niveau, bruit, pente, médiane du fan), g = ∂E/∂ỹ
 normalisé L∞, loss = 1 − cos(−g, y − ỹ) (denoising score matching, Vincent 2011) ; route B ;

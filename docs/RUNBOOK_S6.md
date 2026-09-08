@@ -167,6 +167,27 @@ Puis, au 15 %, les évals (même schéma que §3, config `lotsa_mini_v3_head8_sc
 stack, stack + `+refine=energy +refine_alpha=0.05` (le chiffre de S6-b, P-S6b.3), stack +
 `+refine=ceiling +refine_alpha=0.05` (son plafond). Récupération = (stack − refine) / (stack − ceiling).
 
+## 6. BiasIN : correction causale du biais de niveau (2026-09-08, éval seule, aucun GPU d'entraînement)
+
+Le plafond de raffinement mélangeait biais systématique et bruit réalisé. BiasIN ne garde que la
+part qui PERSISTE : biais du centre mesuré sur les fenêtres de backtest de RateIN (k = 1, même
+TTA), en unités d'échelle du contexte ; rétrécissement λ ∈ {0.25, 0.5, 1} validé par config en
+appliquant le biais de la fenêtre ancienne à la récente (ratio de pinball poolé < 0.95, sinon
+no-op). Couche finale sur le fan natif, après mix. `+bias=oracle` = décalage constant par instance
+lu sur la cible : borne du biais de niveau systématique, diagnostic, jamais officiel.
+
+```bash
+CK=checkpoints/timejepa_lotsa_mini_v3_head8_zs/pretrain_False/epoch00_valloss0.6522.ckpt
+E="python scripts/evaluate_gift.py --config-name lotsa_mini_v3_head8_eval +checkpoint_path=$CK +tta_flip=true +ratein=mix +ratein_pool=true"
+PYTHONUNBUFFERED=1 $E +bias=oracle    2>&1 | tee logs/eval_head8_stack_bias_oracle.log   # borne (diagnostic)
+PYTHONUNBUFFERED=1 $E +bias=backtest  2>&1 | tee logs/eval_head8_stack_bias_bt.log       # officiel
+grep -h "vs_official\|BIAS\[\|coverage" logs/eval_head8_stack_bias_*.log
+```
+
+Référence : stack 0.7842 / 0.5340. Dossiers `gift_flip_ratein-mix-pool_bias-oracle` et `..._bias-bt`.
+Lecture : `configs active`, `lambda hist`, `mean |beta|` dans le bloc BIAS ; par config `lambda`,
+`n_val`, `|shift|`. P-BI.1 / P-BI.2 au registre.
+
 ## Digest à m'envoyer
 
 ```bash
