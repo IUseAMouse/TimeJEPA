@@ -1919,6 +1919,34 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (BiasIN : l'estimateur passe en MÉDIANE — l'oracle « moyenne » du champion
+  dégradait bitbrains (MASE 3.47 → 5.31, |shift| à 5000 σ), donc INVALIDE, et le verdict
+  backtest du matin est à re-mesurer ; ANNEAL-30 : code livré, prédictions gravées ; soupe
+  re-proposée par erreur puis retirée)** — (1) MASE et pinball sont des pertes L1 : le
+  décalage constant optimal est la médiane du résidu, pas la moyenne ; sur les queues
+  lourdes la moyenne est tirée par les pics. `level_bias` et `oracle_shift` passent en
+  médiane (test : un pic à 5000 ne bouge plus l'estimateur). L'oracle du matin est invalide ;
+  le verdict backtest (0.5428, 94/97 refus, 3 nocifs dont electricity/D à 1.37 σ) a été
+  rendu avec l'estimateur moyenne et se re-mesure en 2 × 45 min ; P-BI.1 / P-BI.2
+  inchangées, s'appliquent à la version médiane. (2) J'ai proposé le moyennage de poids
+  comme « jamais essayé » et écrasé `scripts/average_checkpoints.py` : faux, la soupe a été
+  mesurée le 2026-08-25 et CLOSE (elle sort du bassin) ; script restauré à l'identique, la
+  proposition est retirée. (3) **ANNEAL-30** : leçon n° 12 du registre (E13a, pretrain :
+  calibrer le scheduler sur le budget réel) appliquée au finetune, où le cosinus est étalé
+  sur l'époque entière alors que tous les bras sont coupés à 25-30 % avec le LR à ~85 % du
+  pic — la « dégradation post-25 % » est un finetune jamais recuit. Clé
+  `training.schedule_fraction` (modules finetune et pretrain : `total_steps` × fraction ;
+  `train.py` : `limit_train_batches` = fraction, un limit explicite gagne ; inerte à 1.0),
+  config `lotsa_mini_v3_head8_anneal30_zeroshot` (0.3, une variable contre head8), tests
+  (T_max raccourci, Trainer borné, composition). Ce n'est PAS la soupe : recuit, pas
+  moyenne. **P-ann.1** : le DERNIER checkpoint (30 %, LR ≈ min) bat le champion head8 en
+  stack : 0.5340 → 0.525-0.531 (−0.3 à −1.0 pt) ; **P-ann.2** : les checkpoints 15 % et 25 %
+  du bras sont dans le bruit du head8 apparié (±0.2 pt) — le recuit ne compte qu'à la
+  fin ; ÉCHEC si le 30 % ≥ 0.5340 : la chute post-25 % n'est pas un effet de LR et la
+  sélection par pic reste la doctrine. Même clé disponible pour le pretrain (mini v3 :
+  cosinus sur 40 époques hérité de mini.yaml, checkpoints toujours prématurés) : à
+  déclarer quand le budget du prochain pretrain sera fixé.
+
 - **2026-09-08 (BiasIN CLOS sur le champion : 0.7945 / 0.5428 contre 0.5340, 94/97 configs
   refusées, les 3 acceptées nuisent — le biais de niveau ne persiste pas d'une fenêtre à
   l'autre ; le résidu du champion est irréductible après coup depuis le contexte seul)** —

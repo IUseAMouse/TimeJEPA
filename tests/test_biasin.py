@@ -36,6 +36,10 @@ def test_scale_bias_shift():
     known = np.full(20, 5.0)
     med = np.full(20, 4.0)
     assert abs(B.level_bias(known, med, 2.0) - 0.5) < 1e-12
+    # heavy tail: one spike must not drag the bias (median, not mean)
+    spiky = known.copy(); spiky[3] = 5000.0
+    assert abs(B.level_bias(spiky, med, 2.0) - 0.5) < 1e-12
+    assert B.oracle_shift(spiky, med) == 1.0
     assert np.isnan(B.level_bias(np.full(3, np.nan), med[:3], 1.0))
     fan = rng.normal(size=(20, 9))
     fan_s, med_s = B.shift_fan(fan, med, 0.7)

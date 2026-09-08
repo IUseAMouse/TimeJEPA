@@ -50,13 +50,16 @@ def level_scale(context: np.ndarray, tail: int = SCALE_TAIL, floor: float = 1e-8
 
 
 def level_bias(known: np.ndarray, median: np.ndarray, scale: float) -> float:
-    """beta = mean(known - median) / scale over the finite steps; nan when
-    nothing is finite."""
+    """beta = MEDIAN(known - median) / scale over the finite steps; nan when
+    nothing is finite. Median, not mean: MASE and the pinball are L1 losses,
+    whose optimal constant shift is the median of the residual; on heavy
+    tails (bitbrains) the mean is dragged by spikes and the shift lands
+    anywhere (2026-09-08, the first oracle run degraded bitbrains by 50%)."""
     d = np.asarray(known, dtype=np.float64) - np.asarray(median, dtype=np.float64)
     d = d[np.isfinite(d)]
     if d.size == 0:
         return float("nan")
-    return float(d.mean() / max(scale, 1e-12))
+    return float(np.median(d) / max(scale, 1e-12))
 
 
 def shift_fan(fan: Optional[np.ndarray], median: np.ndarray, shift: float):
@@ -128,7 +131,8 @@ def test_shift(beta: float, lam: float, context: np.ndarray) -> float:
 def oracle_shift(target: np.ndarray, median: np.ndarray) -> float:
     """DIAGNOSTIC (never official): the constant per-instance level shift
     that a target-aware oracle would apply - bounds the SYSTEMATIC level
-    bias, unlike the per-step ceiling which also fits the realized noise."""
+    bias, unlike the per-step ceiling which also fits the realized noise.
+    The median of the residual (L1-optimal), never the mean."""
     d = np.asarray(target, dtype=np.float64) - np.asarray(median, dtype=np.float64)
     d = d[np.isfinite(d)]
-    return float(d.mean()) if d.size else 0.0
+    return float(np.median(d)) if d.size else 0.0      # L1-optimal constant

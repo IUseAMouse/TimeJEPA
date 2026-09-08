@@ -1,0 +1,28 @@
+# @package _global_
+# ANNEAL-30 arm (2026-09-08). Every finetune arm of the project improves until
+# about 25-30% of the epoch and degrades afterwards, and the champion is always
+# the peak checkpoint - taken with the cosine still at ~85% of its peak LR,
+# because the schedule is laid over the WHOLE epoch and the run never gets
+# there. Registry lesson 12 (E13a, pretrain): calibrate the scheduler on the
+# real budget. Applied to the finetune: the cosine anneals to min_lr at 30% of
+# the epoch and the run stops there. One variable vs the head8 champion
+# (0.7842 / 0.5340 stack, 25%): schedule_fraction. Checkpoint soup was tried
+# and closed (2026-08-25, leaves the basin); this is annealing, not averaging.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_anneal30_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # witness: lr-* on wandb reaches min_lr at the end of the run (~22 h at 8 it/s)
+#   # eval: lotsa_mini_v3_head8_eval on the LAST checkpoint and on the 15/25% ones,
+#   # flip+backtest then stack; P-ann.1..2 in the registry.
+defaults:
+  - lotsa_mini_v3_head8_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_anneal30_zs"
+
+training:
+  schedule_fraction: 0.3
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "anneal30", "robust-scale"]

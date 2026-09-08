@@ -188,6 +188,19 @@ Référence : stack 0.7842 / 0.5340. Dossiers `gift_flip_ratein-mix-pool_bias-or
 Lecture : `configs active`, `lambda hist`, `mean |beta|` dans le bloc BIAS ; par config `lambda`,
 `n_val`, `|shift|`. P-BI.1 / P-BI.2 au registre.
 
+## 7. ANNEAL-30 : finetune head8 recuit à 30 % de l'époque (2026-09-08)
+
+```bash
+PYTHONUNBUFFERED=1 python scripts/train.py --config-name lotsa_mini_v3_head8_anneal30_zeroshot \
+  "+training.pretrained_encoder_path=\"$PT\"" 2>&1 | tee logs/train_head8_anneal30.log
+grep -n "schedule_fraction" logs/train_head8_anneal30.log     # « annealed and run bounded at 30% »
+```
+
+Témoin wandb : `lr-AdamW` (ou `lr-*`) descend vers `min_lr` en fin de run (~22 h à 8 it/s).
+Éval du DERNIER checkpoint puis des 15 % et 25 % : `lotsa_mini_v3_head8_eval`, flip + backtest,
+puis stack (`+ratein=mix +ratein_pool=true`). P-ann.1 / P-ann.2 au registre ; référence
+apparié 15 % 0.5466, 25 % 0.5433, stack 0.5340.
+
 ## Digest à m'envoyer
 
 ```bash

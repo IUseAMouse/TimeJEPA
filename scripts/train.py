@@ -32,6 +32,21 @@ from timejepa.evaluation.loading import create_model_from_config
 
 logger = logging.getLogger(__name__)
 
+def apply_schedule_fraction(trainer_kwargs: dict, cfg) -> dict:
+    """training.schedule_fraction < 1: the run ends where the cosine ends.
+    Bounds the Trainer to that fraction of the epoch (limit_train_batches)
+    unless the config already limits it; the modules shorten the scheduler
+    with the same key. Inert at 1.0."""
+    frac = float(cfg.training.get('schedule_fraction', 1.0))
+    if not (0.0 < frac <= 1.0):
+        raise ValueError('training.schedule_fraction must be in (0, 1]')
+    if frac < 1.0 and trainer_kwargs.get('limit_train_batches') is None:
+        trainer_kwargs['limit_train_batches'] = frac
+        logger.info(f"schedule_fraction={frac}: cosine annealed and run bounded at "
+                    f"{frac:.0%} of the epoch")
+    return trainer_kwargs
+
+
 @hydra.main(version_base=None, config_path="../configs/model", config_name="tiny")
 def main(cfg: DictConfig):
     """Main training function."""
@@ -179,6 +194,7 @@ def main(cfg: DictConfig):
             # Scheduler
             warmup_epochs=cfg.training.lr_scheduler.warmup_epochs,
             max_epochs=cfg.training.max_epochs,
+            schedule_fraction=float(cfg.training.get('schedule_fraction', 1.0)),
             lr_scheduler=cfg.training.lr_scheduler.type,
             min_lr=cfg.training.lr_scheduler.min_lr,
             
@@ -273,6 +289,7 @@ def main(cfg: DictConfig):
             # Scheduler
             warmup_epochs=warmup_epochs,
             max_epochs=cfg.training.max_epochs,
+            schedule_fraction=float(cfg.training.get('schedule_fraction', 1.0)),
             lr_scheduler=cfg.training.lr_scheduler.type,
             min_lr=cfg.training.lr_scheduler.min_lr,
             
@@ -380,6 +397,7 @@ def main(cfg: DictConfig):
     for key in ('limit_train_batches', 'limit_val_batches'):
         if cfg.trainer.get(key) is not None:
             trainer_kwargs[key] = cfg.trainer.get(key)
+    apply_schedule_fraction(trainer_kwargs, cfg)
 
     trainer = pl.Trainer(**trainer_kwargs)
     

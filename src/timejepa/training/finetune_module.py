@@ -144,6 +144,12 @@ class FinetuneModule(pl.LightningModule):
         # LR Scheduler
         warmup_epochs: float = 0.1,
         max_epochs: int = 50,
+        # Fraction of the planned epochs the run will ACTUALLY get: the cosine
+        # anneals to min_lr at that point instead of at the end of max_epochs
+        # (registry lesson 12: calibrate the scheduler on the real budget; every
+        # finetune arm of this project is cut at 25-30% with the LR still at 85%
+        # of its peak). train.py bounds the run to the same fraction.
+        schedule_fraction: float = 1.0,
         lr_scheduler: Literal['cosine', 'linear', 'plateau', 'constant'] = 'cosine',
         min_lr: float = 1e-6,
         
@@ -320,6 +326,9 @@ class FinetuneModule(pl.LightningModule):
         # Scheduler params
         self.warmup_epochs = warmup_epochs
         self.max_epochs = max_epochs
+        self.schedule_fraction = float(schedule_fraction)
+        if not (0.0 < self.schedule_fraction <= 1.0):
+            raise ValueError('schedule_fraction must be in (0, 1]')
         self.lr_scheduler_type = lr_scheduler
         self.min_lr = min_lr
         
@@ -947,7 +956,7 @@ class FinetuneModule(pl.LightningModule):
             return optimizer
         
         steps_per_epoch = len(self.trainer.datamodule.train_dataloader())
-        total_steps = self.max_epochs * steps_per_epoch
+        total_steps = int(self.max_epochs * steps_per_epoch * self.schedule_fraction)
         warmup_steps = int(self.warmup_epochs * steps_per_epoch)
         
         if self.lr_scheduler_type == 'cosine':
