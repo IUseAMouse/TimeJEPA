@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (BiasIN CLOS sur le champion : 0.7945 / 0.5428 contre 0.5340, 94/97 configs
+  refusées, les 3 acceptées nuisent — le biais de niveau ne persiste pas d'une fenêtre à
+  l'autre ; le résidu du champion est irréductible après coup depuis le contexte seul)** —
+  Stack + `+bias=backtest` : λ = 0 sur 94 configs ; electricity/D λ 1, |shift| 1.37 σ, MASE
+  1.26 → 4.06 ; electricity/H/long λ 0.5, 0.30 σ, 1.27 → 1.76 ; m4_hourly λ 1, 0.10 σ, 1.26 →
+  1.83. P-BI.2 : clôture (< 0.2 pt, < 10 % actives, ici négatif). Deux défauts techniques
+  notés, non corrigés car le verdict ne tient pas à eux : le biais est mesuré sur le forecast
+  k = 1 puis appliqué sur un fan mélangé (m4_hourly k3 0.69, electricity/D k8 0.62), et
+  `mean |beta|` = 646 trahit un plancher d'échelle sur quelques séries (`level_scale` MAD
+  ≈ 0). Lecture : après S6 (critic), S6-b (score matching) et BiasIN, trois mécanismes
+  indépendants disent la même chose — l'erreur résiduelle du champion n'est ni lisible par
+  un juge, ni un biais persistant ; aucune couche d'inférence n'ira plus loin que RateIN
+  (qui, elle, tient, TTM compris). Leviers restants, jamais activés : moyennage de poids
+  contre la dégradation post-25 % (tous les bras), xres-ft (< 1 pt), capacité 9M (la seule
+  route vers 0.50). `+bias=oracle` sur le champion : à compléter si lancé (P-BI.1).
+
 - **2026-09-08 (BiasIN CODE LIVRÉ, NON COURU sur le champion — correction causale du biais de
   niveau depuis le backtest ; le plafond re-lu : biais systématique vs bruit réalisé)** —
   Correction due à l'utilisateur et à moi-même : le plafond de raffinement (0.3657 à boîte 0.4)

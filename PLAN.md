@@ -1435,7 +1435,7 @@ raffinement local par énergie est fermé dans cette architecture (deux tentativ
 Claim EBM du papier : le latent classe des candidats lointains (E18b) ; le plafond mesure ce
 qu'il aurait fallu savoir. Effet secondaire noté : couverture 0.794 (quasi nominale).
 
-### BiasIN — correction causale du biais de niveau depuis le backtest (implémenté 2026-09-08, à courir sur le champion)
+### BiasIN — correction causale du biais de niveau depuis le backtest — **CLOS 2026-09-08** (0.5428 contre 0.5340, 94/97 refus, les 3 acceptés nuisent : le biais de niveau ne persiste pas)
 
 Le plafond mélangeait biais systématique et bruit réalisé ; BiasIN ne garde que la part qui
 persiste d'une fenêtre à l'autre (β sur les fenêtres de backtest de RateIN, λ validé par config,
