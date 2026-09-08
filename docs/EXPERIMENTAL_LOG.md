@@ -1919,6 +1919,19 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (S6-b LANCÉ, 5.3 it/s ; à 3k steps le puits se creuse sur les directions
+  synthétiques, `cos_forecast` redescend ; P-S6b.5 gravée)** — `score/cos_level` 0.05 → 0.27
+  (l'axe du plafond, le plus rapide), `cos_noise` 0.15 → 0.30, `cos_slope` 0.05 → 0.18,
+  `train_loss/score` 0.93 → 0.79, monotones — ce que le critic n'a jamais montré. `cos_forecast`
+  0.15 à 700 steps puis 0.05-0.07 : lecture, la tête neuve produit d'abord un résidu grand et
+  structuré, puis le résidu se réduit à la part imprédictible, moins lisible depuis (ctx, ŷ₀).
+  Non fatal : le gain de pinball n'a besoin que de la composante niveau (17 pt au plafond),
+  `cos_forecast` mesure l'angle avec le résidu complet. **P-S6b.5** (première validation,
+  5 % ≈ 5 h) : `cos_level` > 0.5 et `val_score/valley_frac` > 0.8 ; si `cos_forecast` < 0.1 en
+  même temps, la sonde `--center fan` doit quand même donner un signe > 0.6, sinon branche
+  ÉCHEC-DIAGNOSTIC (second bras `forecast` 0.6). Boucle critic OFF dans ce bras (une variable),
+  confirmé à l'utilisateur ; le raffinement progressif n'existe qu'à l'inférence.
+
 - **2026-09-08 (S6-b CODE LIVRÉ, NON COURU — denoising score matching sur l'énergie :
   `critic.perturb_target` / `score_cos` / `valley_witness`, terme `lambda_score` au finetune,
   configs `lotsa_mini_v3_head8_score_{zeroshot,eval}`, 11 tests dont l'APPRENABILITÉ)** —
