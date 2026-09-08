@@ -1423,7 +1423,18 @@ la vérité le long de l'axe translation, sur AUCUN checkpoint (pretrain compris
 JEPA ne voit jamais de mauvais futur proche. Le puits ne peut pas émerger du second ordre d'un
 effet nul. Le plafond (0.3657 à boîte 0.4) reste la borne de ce que le mécanisme vaut.
 
-### S6-b — SCORE MATCHING SUR L'ÉNERGIE (voie active, implémenté 2026-09-08, non couru)
+### S6-b — SCORE MATCHING SUR L'ÉNERGIE — **CLOS 2026-09-08 (checkpoint 5 %)**
+
+**Verdict** : le terme apprend (cos_level 0.05 → 0.75, cuvette raide) mais la cuvette est creusée
+près de la vérité, pas sur elle ; le juge ne lit pas le sens de l'erreur du fan (signe 0.53-0.55,
+cos_forecast 0.07) ; le raffinement dégrade (+15 % sur bitbrains/5T/short) ; le fan nu paie 2 pt.
+Cause, mesurée : une vérité corrompue est anormale par rapport au contexte et se corrige ; un
+forecast est cohérent avec le contexte par construction, son erreur est ce que le contexte ne
+détermine pas, et un juge qui voit la même information ne la détermine pas davantage. Le
+raffinement local par énergie est fermé dans cette architecture (deux tentatives, même cause).
+Claim EBM du papier : le latent classe des candidats lointains (E18b) ; le plafond mesure ce
+qu'il aurait fallu savoir. Effet secondaire noté : couverture 0.794 (quasi nominale).
+
 
 Creuser le puits directement : ỹ = y + ε (niveau, bruit, pente, médiane du fan), g = ∂E/∂ỹ
 normalisé L∞, loss = 1 − cos(−g, y − ỹ) (denoising score matching, Vincent 2011) ; route B ;

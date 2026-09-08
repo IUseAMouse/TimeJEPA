@@ -1919,6 +1919,30 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-08 (S6-b CLOS — checkpoint 5 % `epoch00_valloss0.8481` : la cuvette est creusée
+  PRÈS de la vérité, pas SUR elle ; le juge ne lit pas le sens de l'erreur du fan ; le
+  raffinement DÉGRADE ; le terme coûte 2 pt sur le fan nu)** — Sonde `--center truth`
+  (standalone, la convention d'entraînement) : |ΔE| 0.2-1.5 à ±0.1-0.5 σ (avant : 0.001-0.03),
+  Spearman(E, |c|) 0.29 / 0.50 / 0.52 / 0.50 / 0.81 — une cuvette raide existe désormais ;
+  mais vallée locale en 0 : 0.05 / 0.03 / 0.08 / 0.11 / 0.08, profils asymétriques (m_dense/D :
+  −0.05 → 0.09, +0.05 → 0.04) : le fond est décalé de quelques centièmes de σ, sens propre à
+  l'instance. Sonde `--center fan` : signe de l'argmin = signe du résidu 0.55 / 0.54 / 0.53 /
+  0.53 / 0.86, identique au head8 (0.46 / 0.50 / 0.37 / 0.54 / 0.84) — P-S6b.2 ÉCHOUE, cos_forecast
+  0.07 confirmé hors entraînement. Stack flip + mix + pool SANS raffinement : **0.8258 / 0.5621,
+  couverture 0.794** (contre S4-c 5 % stack 0.5404) — P-S6b.4 ÉCHOUE (+2 pt sur le fan nu) ;
+  couverture la meilleure jamais mesurée (quasi nominale), effet secondaire du terme sur la
+  largeur du fan, payé en CRPS. Raffinement `+refine=energy` α 0.05, six premières configs :
+  0.787 → 0.780, 0.787 → 0.813, 0.432 → 0.497 (+15 %), 0.838 → 0.836, 0.617 → 0.623, 0.702 →
+  0.727 ; dE 0.08-0.14, |d| 0.09-0.13 : la descente trouve le fond de la cuvette et ce fond
+  n'est pas la vérité — P-S6b.3 ÉCHOUE avec dommage (chiffre final à compléter). **Verdict** :
+  un juge apprend à ramener une vérité corrompue (corruption anormale par rapport au
+  contexte, cos 0.75) mais pas à situer la vérité depuis un forecast cohérent avec le
+  contexte : l'information n'y est pas. Deux tentatives indépendantes (critic S6, score
+  matching S6-b) fermées par la même cause mesurée. Le plafond (0.3657 à boîte 0.4) reste le
+  diagnostic de ce qu'il aurait fallu savoir. Décisions : run score coupé (plateau depuis
+  40k), plafond de ce checkpoint non lancé (récupération négative quel que soit G), retour à
+  la feuille de route leaderboard, stack du champion 0.5340 officiel.
+
 - **2026-09-08 (S6-b PREMIÈRE VALIDATION à 108k steps / 5 % : le juge apprend les directions
   synthétiques (val `cos_level` 0.75, `cos_slope` 0.58, `cos_noise` 0.31) mais PAS le résidu
   réel (`cos_forecast` 0.07, plat depuis le début) ; `valley_frac` δ 0.1 = 0.36 ; tout en
