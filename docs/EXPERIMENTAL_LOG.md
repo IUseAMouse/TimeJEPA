@@ -1919,6 +1919,24 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-09 (TTT CLOS sur le champion : 0.7993 / 0.5417 / couv. 0.755 contre 0.5340 ;
+  porte acceptée 16/97, ratio moyen 1.204 — l'adaptation dégrade le backtest lui-même sur
+  81 configs et les acceptées perdent au test ; RÉSERVE : la loss latente sans
+  normalisation a une voie de collapse)** — `+ttt=norm` 16 pas lr 1e-3 : la loss JEPA chute
+  de 0.40 à 0.21 partout pendant que la pinball du backtest monte (ratio 1.0-2.8) ;
+  acceptées : bitbrains/H/short 0.721 → 0.955, solar/10T/short 0.569 → 0.606 (porte 0.279),
+  bizitobs_service/medium 0.024 → 0.044, kdd/H/long 0.457 → 0.465 ; P-TTT.1 ÉCHOUE. Mécanisme
+  probable : z_y vient du même encodeur en ligne sous stop-gradient et les paramètres
+  adaptés sont les affines — une MSE latente non normalisée se minimise en rétrécissant
+  l'échelle des deux latents (collapse, ce que SIGReg empêche au pretrain), pas en apprenant
+  le régime. Un test propre exigerait une loss normalisée (cosinus / variance) : ≈ 1 h, non
+  lancé — le gain plafonne à la valeur du pretrain sur GIFT (≈ 1 pt) et l'instrument de
+  validation ne résout pas sous 5 %. **Bilan des couches d'inférence 2026-09-08/09** :
+  BiasIN, SpreadIN, TTT clos, S6/S6-b clos — RateIN reste la seule couche qui tient, parce
+  que ses effets (20-50 % par config) dépassent la résolution du backtest à deux fenêtres.
+  Retour au levier d'entraînement : anneal-30 en cours, éval de tous ses checkpoints par
+  `scripts/eval_checkpoints.sh`.
+
 - **2026-09-09 (SpreadIN CLOS sur le champion : 0.7842 / 0.5349 / couv. 0.751 contre 0.5340 /
   0.756 ; 25/97 configs rescalées, 16 RESSERRÉES (s 0.8), 9 élargies — le backtest choisit
   le sens inverse de celui que le test récompense ; LEÇON D'INSTRUMENT : le backtest à deux

@@ -1446,7 +1446,7 @@ descend à min_lr là où tous les bras s'arrêtent. P-ann.1 (dernier checkpoint
 La volatilité persiste, le niveau non : un facteur d'échelle du fan par config, choisi sur le
 backtest. P-SP.1 au registre. Runbook §8.
 
-### TTT — adaptation JEPA au test sur les lookbacks (implémenté 2026-09-09, à courir après SpreadIN)
+### TTT — adaptation JEPA au test sur les lookbacks — **CLOS 2026-09-09** (0.5417 contre 0.5340, 16/97 acceptées qui perdent ; réserve : loss latente non normalisée, voie de collapse)
 
 La loss auto-supervisée du JEPA sur le passé de chaque config, quelques pas, copie du modèle,
 porte causale par backtest. La seule chose que seul un JEPA peut faire au test. P-TTT.1. Runbook §8.
