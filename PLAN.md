@@ -1435,11 +1435,13 @@ raffinement local par énergie est fermé dans cette architecture (deux tentativ
 Claim EBM du papier : le latent classe des candidats lointains (E18b) ; le plafond mesure ce
 qu'il aurait fallu savoir. Effet secondaire noté : couverture 0.794 (quasi nominale).
 
-### ANNEAL-30 — finetune recuit au budget réel (implémenté 2026-09-08, à lancer)
+### ANNEAL-30 — finetune recuit au budget réel — **CLOS 2026-09-10** (dernier checkpoint 0.5375 contre 0.5340 ; meilleur du run 0.5352 dans le bruit ; P-ann.1 échoue)
 
 Leçon 12 du registre appliquée au finetune : `training.schedule_fraction: 0.3`, le cosinus
-descend à min_lr là où tous les bras s'arrêtent. P-ann.1 (dernier checkpoint bat 0.5340 de
-0.3-1 pt), P-ann.2 (15/25 % dans le bruit). Même clé pour le prochain pretrain. Runbook §7.
+descend à min_lr là où tous les bras s'arrêtent. Résultat : plateau 0.535-0.541 sur les 8
+derniers checkpoints pendant que val_loss descend ; la fin du recuit n'apporte rien que la
+sélection par éval GIFT n'avait déjà. Le schedule n'est pas le levier. Champion inchangé.
+La clé reste disponible pour le pretrain xres (budget), sans attente de gain en soi.
 
 ### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé, code livré 2026-09-09)
 

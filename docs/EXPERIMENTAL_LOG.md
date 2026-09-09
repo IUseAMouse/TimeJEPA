@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-10 (ANNEAL-30 CLOS : dernier checkpoint 0.7875 / 0.5375 / couv. 0.746 contre
+  0.7842 / 0.5340 / 0.756 ; meilleur du run 0.5352, dans le bruit du champion ; P-ann.1
+  ÉCHOUE)** — 20 checkpoints tous les 1.5 % du run borné à 30 % (`eval_checkpoints.sh`,
+  stack flip + mix + pool). CRPS entre 0.5352 et 0.5577 : descente jusqu'à ~15 % (0.5577 →
+  0.5383), puis plateau 0.535-0.541 sur les 8 derniers checkpoints pendant que le cosinus
+  finit à min_lr et que val_loss descend de façon monotone (0.6707 → 0.6483). Les deux
+  meilleurs (0.5353, 0.5352) sont à mi-parcours, pas à la fin : la fin du recuit n'apporte
+  rien que la sélection par éval GIFT sur le run à haut LR n'avait déjà. P-ann.2 (15/25 %
+  dans le bruit) tient. Lecture : le schedule n'est pas le levier ; val_loss et GIFT
+  divergent une fois de plus (leçon G7.3c). Couverture : 0.784 au premier checkpoint, 0.70-
+  0.77 ensuite sans relation monotone avec le CRPS (0.751 pour le pire, 0.723-0.730 pour les
+  deux meilleurs) — la pinball échange de la calibration contre de la netteté, et le bruit
+  checkpoint à checkpoint vaut 0.03-0.05 de couverture. Le champion reste head8 0.5340. Ce
+  qui reste côté entraînement : xres pretrain + finetune (à lancer par l'utilisateur), et
+  TimeSSM (spike en cours, 5.3 it/s après correctif, checkpoint 5 % attendu à ~6 h).
+
 - **2026-09-09 (RateIN-Δ LIVRÉ dans le harnais, INERTE hors flag ; TimeSSM codé dans
   `../TimeMamba` branche `timessm`)** — `+ratein=delta` : le sélecteur backtest de RateIN
   inchangé (mêmes candidats, même marge, même pooling), mais k devient `w = 1/k` sur le
