@@ -221,6 +221,17 @@ Dossiers : `..._spread-bt`, `..._ttt-norm16-lr0.001`, `..._ttt-all16-lr1e-05`. L
 `SPREAD[backtest]` (configs rescalées, histogramme de s), `TTT[...]` (configs acceptées par la
 porte, ratio moyen), `vs_official`, `coverage`. P-SP.1 / P-TTT.1 au registre.
 
+## 9. Tous les checkpoints d'un run, en série, avec le stack (2026-09-09)
+
+```bash
+scripts/eval_checkpoints.sh checkpoints/timejepa_lotsa_mini_v3_head8_anneal30_zs/pretrain_False lotsa_mini_v3_head8_eval
+```
+
+Ordre de création, cache par checkpoint (relancer n'évalue que les nouveaux), digest dans
+`logs/eval_timejepa_lotsa_mini_v3_head8_anneal30_zs.log` avec un tableau final MASE / CRPS /
+couverture contre le champion (0.7842 / 0.5340 / 0.756). Une couche en plus se passe en flag :
+`scripts/eval_checkpoints.sh <dir> <cfg> +ttt=norm`. Sélection par l'éval GIFT, jamais par val_loss (G7.3c).
+
 ## Digest à m'envoyer
 
 ```bash
