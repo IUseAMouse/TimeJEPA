@@ -22,13 +22,27 @@ from ..models.decoders import ForecastingHead
 logger = logging.getLogger(__name__)
 
 
-def create_model_from_config(cfg: DictConfig) -> JEPATST:
+def create_model_from_config(cfg: DictConfig):
     """
     Create JEPA-TST model from Hydra config with native architecture.
 
     The model's prediction_length is fixed at creation time.
     Use model.forecast(context, n=horizon) for different horizons.
+
+    `model.builder` (2026-09-09): a dotted "package.module:function" that
+    builds a NON-JEPA model duck-typed on JEPATST (TimeSSM's SSMForecaster
+    lives in a sibling repo that depends on this one, never the reverse).
+    Absent => the JEPA-TST below, bit-identical.
     """
+    builder = cfg.model.get('builder')
+    if builder:
+        module_name, _, func_name = str(builder).partition(':')
+        if not func_name:
+            raise ValueError(f"model.builder must be 'module:function', got {builder!r}")
+        import importlib
+        build = getattr(importlib.import_module(module_name), func_name)
+        logger.info(f"model.builder={builder}: model built outside timejepa")
+        return build(cfg)
     model = JEPATST(
         input_length=cfg.model.seq_length,
         prediction_length=cfg.model.prediction_length,
@@ -188,7 +202,10 @@ def load_checkpoint(
     # checkpoint's. `dropped` covers shape mismatches, `critical_missing`
     # covers absent keys; both paths must be guarded or the table-growth case
     # slips through as a warn.
-    core = ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')
+    # A model built by model.builder declares its own core (SSMForecaster:
+    # blocks, patching, robust_scaler, future_token).
+    core = tuple(getattr(model, 'core_prefixes',
+                         ('online_encoder.', 'predictor.', 'patching.', 'robust_scaler.')))
     core_bad = ([k for k, _, _ in dropped if k.startswith(core)]
                 + [k for k in critical_missing if k.startswith(core)]
                 # symmetry: a checkpoint carrying core weights the model

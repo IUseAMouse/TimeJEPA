@@ -1441,6 +1441,21 @@ Leçon 12 du registre appliquée au finetune : `training.schedule_fraction: 0.3`
 descend à min_lr là où tous les bras s'arrêtent. P-ann.1 (dernier checkpoint bat 0.5340 de
 0.3-1 pt), P-ann.2 (15/25 % dans le bruit). Même clé pour le prochain pretrain. Runbook §7.
 
+### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé, code livré 2026-09-09)
+
+Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt
+d'oracle, 0.9 capturé) ; un SSM à temps continu possède cette invariance EXACTEMENT (décimer
+par k à Δ ≡ série pleine à Δ/k), sans décimation ni réinterpolation — le mécanisme de
+FlowState (0.4866, 9M). Spike dans `../TimeMamba`, branche `timessm`, qui dépend de TimeJEPA
+comme bibliothèque (FinetuneModule, datamodule, RevIN/RobustScale, tête quantile, harnais).
+LTI diagonal (S4D) avec `delta_scale`, PAS Mamba (la sélectivité casse le transfert exact) ;
+lecture sélective en ablation ; **RateIN-Δ** = `+ratein=delta` dans `evaluate_gift.py`
+(même sélecteur backtest, `w = 1/k` sur le bouton, contexte natif, fan natif). Côté
+TimeJEPA : `model.builder` (construction hors paquet), `core_prefixes` (chargeur),
+`check_model_flags` (refus : delta sans bouton, delta + `ratein_w`, refine/ttt sans
+encodeur JEPA). Prédictions P-SSM.0-3 et registre dans `../TimeMamba/docs/`. À lancer par
+l'utilisateur après le verdict anneal-30 et xres (1 jour GPU).
+
 ### SpreadIN — calibration de largeur du fan depuis le backtest — **CLOS 2026-09-09** (0.5349 contre 0.5340 ; le backtest à 2 fenêtres ne résout pas des effets de 1-3 %)
 
 La volatilité persiste, le niveau non : un facteur d'échelle du fan par config, choisi sur le

@@ -253,7 +253,8 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
 
 def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        stride: int, patch: int, device,
-                       batch_size: int, pooled: bool = False) -> tuple:
+                       batch_size: int, pooled: bool = False,
+                       use_delta: bool = False) -> tuple:
     """RateIN v2 (2026-09-01) - per-series k chosen by CAUSAL BACKTEST.
 
     Oracle verdict 2026-08-31: the mechanism is worth up to +57% per config
@@ -288,6 +289,13 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     than 2/3 of the base series is disqualified (biased subset - typically
     large k on short series). The per-instance guard (decimated history <
     patch -> k=1) stays as the safety net.
+
+    RateIN-Delta (2026-09-09, `use_delta`): same candidates, same selector,
+    but the knob is the model's sampling interval instead of the data's -
+    the context stays at its native length, the model is asked for the
+    native horizon with w = 1/k (an LTI SSM run at Delta/k on the full
+    series IS the SSM run at Delta on the series decimated by k, SSM_cours
+    prop. 2.4), and nothing is re-interpolated.
     """
     REL_MARGIN = 0.05
     N_BT_WINDOWS = 2
@@ -316,7 +324,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
         buckets = defaultdict(list)
         for idx, sub_hist, known in entries:
             hist = (ratein_mod.decimate(sub_hist[-(max_len * k):], k)
-                    if k > 1 else sub_hist)
+                    if k > 1 and not use_delta else sub_hist)
             if len(hist) < patch:
                 continue
             ctx = prepare_context(hist, max_len, stride, patch)
@@ -324,14 +332,17 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 continue
             # h_bt varies per series (short-history fallback) -> the bucket
             # also carries h_fc so each batch stays homogeneous.
-            buckets[(len(ctx), -(-len(known) // k))].append((idx, ctx, known))
+            h_fc_k = len(known) if use_delta else -(-len(known) // k)
+            buckets[(len(ctx), h_fc_k)].append((idx, ctx, known))
         for (length, h_fc), items in buckets.items():
             for i in range(0, len(items), batch_size):
                 chunk = items[i:i + batch_size]
                 batch = torch.from_numpy(np.stack([c[1] for c in chunk]))
                 batch = batch.unsqueeze(-1).to(device)
+                kw = ({"w": torch.full((batch.shape[0],), 1.0 / k, device=device)}
+                      if use_delta and k > 1 else {})
                 with torch.no_grad():
-                    out = model.forecast(batch, n=h_fc)
+                    out = model.forecast(batch, n=h_fc, **kw)
                 q = out.get("quantiles_denorm")
                 if q is None:
                     continue
@@ -341,7 +352,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 if q.ndim == 4:
                     q = q[..., 0]
                 for b, (idx, _, known) in enumerate(chunk):
-                    fan_nat = ratein_mod.reinterp_fan(q[b], len(known), k)
+                    fan_nat = (q[b] if use_delta
+                               else ratein_mod.reinterp_fan(q[b], len(known), k))
                     sc = _pinball_np(fan_nat, known, levels)
                     if np.isfinite(sc):
                         scores[idx][k].append(sc)
@@ -357,6 +369,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     # coverage disqualifications without re-running anything.
     diag = {"K": K, "margin": REL_MARGIN, "n_base": n_base,
             "pooling": "crps" if pooled else "geomean",
+            "knob": "delta" if use_delta else "decimation",
             "ratios": {str(k): round(r, 5) for k, r in sorted(ratios.items())}}
     return {idx: K for idx in range(len(series))}, diag
 
@@ -678,11 +691,16 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # RateIN v2 - per-series k chosen by causal backtest (see the helper);
     # computed once before the loop, batched.
     bt_ks, bt_diag, mix_weights = None, None, None
-    if ratein_mode in ("backtest", "mix") and not forced_k:
+    # RateIN-Delta: the per-config k of the backtest becomes w = 1/k on the
+    # model's rate knob; the context is never decimated, the fan never
+    # re-interpolated (guarded in main: the model must declare rate_knob).
+    use_delta = ratein_mode == "delta"
+    if ratein_mode in ("backtest", "mix", "delta") and not forced_k:
         bt_ks, bt_diag = _backtest_series_k(model, series, h, windows, max_len,
                                             stride, model.patching.patch_size,
                                             device, batch_size,
-                                            pooled=ratein_pool)
+                                            pooled=ratein_pool,
+                                            use_delta=use_delta)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"]), None
@@ -760,8 +778,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         else:
             k = 1
         hist = (ratein_mod.decimate(inst.context[-(max_len * k):], k)
-                if k > 1 else inst.context)
-        if k > 1 and len(hist) < model.patching.patch_size:
+                if k > 1 and not use_delta else inst.context)
+        if k > 1 and not use_delta and len(hist) < model.patching.patch_size:
             # Guard (oracle crash 2026-08-31, IndexError on 6 configs): a
             # short history decimated by a large k goes empty - fall back k=1.
             k, hist = 1, inst.context
@@ -782,7 +800,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # Extrapolation guard: the FiLM only saw log2(w) within the training
         # factor range ([1,2,4] -> [-2,2]); beyond ratein_w_max_k, fall back
         # to the standard decimate+reinterp path.
-        use_w = ratein_w and 1 < k <= ratein_w_max_k
+        use_w = (ratein_w and 1 < k <= ratein_w_max_k) or (use_delta and k > 1)
         # Decimated grid: h' = ceil(h/k) steps cover the native horizon
         # (measurable bonus: fewer rollouts on long-term 10S/5T).
         h_fc = h if use_w else -(-h // k)
@@ -1010,6 +1028,29 @@ KNOWN_FLAGS = frozenset((
 ))
 
 
+def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
+                      ttt_spec) -> None:
+    """Refuse the flag/model pairs that would run in silence: the Delta knob
+    on a model without one (the harness would pass w to a FiLM, or to a
+    stub that ignores it), the FiLM and the knob together, and the JEPA-only
+    inference layers (refinement, test-time training) on a model without an
+    online encoder."""
+    if ratein_mode == "delta":
+        if getattr(model, "rate_knob", None) != "delta":
+            raise ValueError("+ratein=delta needs a model whose rate knob is the "
+                             "sampling interval (model.rate_knob == 'delta', the "
+                             "LTI SSM); this model has "
+                             f"{getattr(model, 'rate_knob', None)!r}")
+        if ratein_w:
+            raise ValueError("+ratein_w (FiLM on w) and +ratein=delta (Delta knob) "
+                             "are exclusive")
+    jepa_only = ((refine_spec is not None and getattr(refine_spec, "active", False))
+                 or ttt_spec is not None)
+    if jepa_only and not hasattr(model, "online_encoder"):
+        raise ValueError("+refine / +ttt need a JEPA model (online encoder + "
+                         "predictor); this model has none")
+
+
 def check_unknown_flags(overrides, known=KNOWN_FLAGS):
     """Every `+key=value` override on the command line must be a flag this
     script reads. A typo, or a flag from a newer script version, would
@@ -1058,24 +1099,30 @@ def main(cfg: DictConfig):
     #                                           JEPA energy on the decimated
     #                                           past (no forecast); optional
     #                                           +energy_config=<eval config>
+    #   +ratein=delta                           RateIN-Delta: same backtest
+    #                                           selector, but k becomes w = 1/k
+    #                                           on the model's rate knob (LTI
+    #                                           SSM), no decimation, no
+    #                                           re-interpolation
     #   +ratein_pool=true                       ratio table pooled like the
     #                                           CRPS (sum over series) instead
     #                                           of a per-series geomean
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
                        "backtest": "backtest", "bt": "backtest",
-                       "mix": "mix", "energy": "energy"}.get(ratein_raw, "off")
+                       "mix": "mix", "energy": "energy",
+                       "delta": "delta"}.get(ratein_raw, "off")
     if ratein_raw and ratein_raw not in ("off", "false", "0", "oracle") \
             and ratein_mode_val == "off":
         # An unknown mode must not fall back to "off": it would land in the
         # plain cache directory and silently re-read another procedure's
         # numbers (seen 2026-09-06 with a stale checkout).
         raise ValueError(f"unknown +ratein={ratein_raw!r} (fft, backtest, mix, "
-                         "energy, oracle)")
+                         "energy, delta, oracle)")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
     ratein_pool = str(cfg.get("ratein_pool", "")).lower() in ("true", "1", "on")
-    if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy"):
-        raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy")
+    if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy", "delta"):
+        raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy/delta")
     if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
         raise ValueError("+ratein=energy needs +energy_ckpt=<pretrain checkpoint>")
     #   +refine=energy|ceiling                  S6 inference refinement of the
@@ -1174,6 +1221,7 @@ def main(cfg: DictConfig):
     if ratein_w and getattr(model.predictor, "w_film", None) is None:
         raise ValueError("+ratein_w requires a cross_resolution model "
                          "(no w FiLM in the predictor - xres config)")
+    check_model_flags(model, ratein_mode_val, ratein_w, refine_spec, ttt_spec)
     if ratein_mode_val == "fft":
         tag += "_ratein"
     elif ratein_mode_val == "backtest":
@@ -1182,6 +1230,8 @@ def main(cfg: DictConfig):
         tag += "_ratein-mix"
     elif ratein_mode_val == "energy":
         tag += "_ratein-energy"
+    elif ratein_mode_val == "delta":
+        tag += "_ratein-delta"
     elif ratein_oracle:
         tag += "_ratein-oracle"
     if ratein_pool:

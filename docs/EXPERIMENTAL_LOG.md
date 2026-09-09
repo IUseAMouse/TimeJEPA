@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-09 (RateIN-Δ LIVRÉ dans le harnais, INERTE hors flag ; TimeSSM codé dans
+  `../TimeMamba` branche `timessm`)** — `+ratein=delta` : le sélecteur backtest de RateIN
+  inchangé (mêmes candidats, même marge, même pooling), mais k devient `w = 1/k` sur le
+  bouton de rythme du modèle : contexte à longueur native, horizon natif, aucune
+  réinterpolation (`_backtest_series_k(use_delta)`, diag `knob`). Gardes
+  `check_model_flags` : delta exige `model.rate_knob == 'delta'`, exclusif de `+ratein_w`,
+  et `+refine` / `+ttt` refusés sur un modèle sans encodeur JEPA. `create_model_from_config`
+  lit `model.builder` (« module:fonction ») pour construire un modèle hors paquet ;
+  `load_checkpoint` lit `model.core_prefixes` pour le refus P3.2. Tests
+  (`tests/test_ratein_delta.py`, 4) : sur un stub sensible au rythme, delta choisit k > 1,
+  passe `w = 1/K` aux forecasts de test, contextes jamais décimés, CRPS ÷ 2 ; le chemin
+  `backtest` est intact (décimation, jamais de `w`) ; gardes ; dispatch du builder et
+  refus sur préfixes cœur. Le modèle, ses tests (29), sa config et ses prédictions
+  P-SSM.0-3 sont dans `../TimeMamba/docs/EXPERIMENTAL_LOG.md` ; P-SSM.0 (équivariance au
+  rythme à 1e-8) tenue le jour 1. Aucun run lancé.
+
 - **2026-09-09 (TTT CLOS sur le champion : 0.7993 / 0.5417 / couv. 0.755 contre 0.5340 ;
   porte acceptée 16/97, ratio moyen 1.204 — l'adaptation dégrade le backtest lui-même sur
   81 configs et les acceptées perdent au test ; RÉSERVE : la loss latente sans
