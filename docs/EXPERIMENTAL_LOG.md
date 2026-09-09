@@ -1919,6 +1919,18 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-09 (SpreadIN CLOS sur le champion : 0.7842 / 0.5349 / couv. 0.751 contre 0.5340 /
+  0.756 ; 25/97 configs rescalées, 16 RESSERRÉES (s 0.8), 9 élargies — le backtest choisit
+  le sens inverse de celui que le test récompense ; LEÇON D'INSTRUMENT : le backtest à deux
+  fenêtres résout ≈ 5 % relatif, pas 1-3 %)** — P-SP.1 (s > 1 majoritaires, couverture →
+  0.78-0.80, CRPS −0.2 à −0.6) démentie sur les trois points. MASE identique par
+  construction. Lecture : la marge de 5 % de RateIN n'était pas un réglage, c'était la
+  résolution de l'instrument (gains réels de k : 20-50 %). Un effet de largeur vaut 1-3 %,
+  sous le plancher de bruit ; six candidats et une marge à 1 % sélectionnent du bruit —
+  même mécanisme que les 3 faux positifs de BiasIN. Résoudre plus fin exige plus de
+  fenêtres (coût) pour un gain plafonné à la calibration : non poursuivi. Pas
+  d'empilement SpreadIN + TTT ; TTT évalué seul (en cours).
+
 - **2026-09-09 (SpreadIN et TTT CODE LIVRÉ, NON COURUS sur le champion — deux couches
   d'éval, un par un ; prédictions gravées)** — **SpreadIN** (`biasin.choose_spread`,
   `scale_fan`, flags `+spread=backtest`, `+spread_grid`, tag `_spread-bt`) : un facteur s ∈

@@ -1441,7 +1441,7 @@ Leçon 12 du registre appliquée au finetune : `training.schedule_fraction: 0.3`
 descend à min_lr là où tous les bras s'arrêtent. P-ann.1 (dernier checkpoint bat 0.5340 de
 0.3-1 pt), P-ann.2 (15/25 % dans le bruit). Même clé pour le prochain pretrain. Runbook §7.
 
-### SpreadIN — calibration de largeur du fan depuis le backtest (implémenté 2026-09-09, à courir)
+### SpreadIN — calibration de largeur du fan depuis le backtest — **CLOS 2026-09-09** (0.5349 contre 0.5340 ; le backtest à 2 fenêtres ne résout pas des effets de 1-3 %)
 
 La volatilité persiste, le niveau non : un facteur d'échelle du fan par config, choisi sur le
 backtest. P-SP.1 au registre. Runbook §8.
