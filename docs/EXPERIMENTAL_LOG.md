@@ -1919,6 +1919,19 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-10 (BUG DE SCHEDULE SOUS ACCUMULATION, corrigé : warmup et cosinus comptaient des
+  batchs, le scheduler avance par pas d'optimiseur)** — Découvert sur le run TimeSSM
+  (accumulation 3 pour la mémoire FFT) : `steps_per_epoch = len(train_dataloader)` sans
+  division par `accumulate_grad_batches`, donc warmup et cosinus étirés ×3 ; sur le run
+  borné à 30 %, TOUT le run était du warmup (LR 1.5e-5 au checkpoint 5 %, 3e-4 atteint à la
+  dernière itération), visible sur la courbe `lr-AdamW` contre le scratch head8. Portée sur
+  TimeJEPA : aucune sur les résultats LOTSA (tiny, mini, champion : accumulation 1 depuis
+  `lotsa_tiny`) ; les rounds pré-LOTSA `tiny`/`tiny_geo` (accumulation 3-6) ont couru avec
+  un schedule étiré d'autant, à garder en tête si l'on relit leurs courbes. Correctif dans
+  les deux modules (`// accumulate`), test `test_schedule_counts_optimizer_steps_under_
+  accumulation`. Le run TimeSSM est à relancer ; son checkpoint 5 % (val 1.33) n'est pas
+  une mesure de l'architecture.
+
 - **2026-09-10 (ANNEAL-30 CLOS : dernier checkpoint 0.7875 / 0.5375 / couv. 0.746 contre
   0.7842 / 0.5340 / 0.756 ; meilleur du run 0.5352, dans le bruit du champion ; P-ann.1
   ÉCHOUE)** — 20 checkpoints tous les 1.5 % du run borné à 30 % (`eval_checkpoints.sh`,

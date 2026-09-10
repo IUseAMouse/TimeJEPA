@@ -955,7 +955,15 @@ class FinetuneModule(pl.LightningModule):
         if self.lr_scheduler_type == 'constant':
             return optimizer
         
-        steps_per_epoch = len(self.trainer.datamodule.train_dataloader())
+        # Scheduler steps are OPTIMIZER steps (Lightning steps it once per
+        # optimizer.step), the dataloader counts BATCHES: with
+        # accumulate_grad_batches > 1 the warmup and the cosine were stretched
+        # by that factor (measured 2026-09-10 on TimeSSM at accumulation 3:
+        # the whole 30% run was warmup, LR 1.5e-5 at the 5% checkpoint; the
+        # pre-LOTSA tiny_geo rounds at accumulation 3-6 carried the same stretch;
+        # every LOTSA run, champion included, ran at accumulation 1). Inert at 1.
+        accumulate = max(1, int(getattr(self.trainer, 'accumulate_grad_batches', 1) or 1))
+        steps_per_epoch = len(self.trainer.datamodule.train_dataloader()) // accumulate
         total_steps = int(self.max_epochs * steps_per_epoch * self.schedule_fraction)
         warmup_steps = int(self.warmup_epochs * steps_per_epoch)
         

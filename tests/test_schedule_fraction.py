@@ -23,11 +23,25 @@ def _model():
                    predictor_d_ff=64, decoder_type="quantile")
 
 
-def _t_max(module, steps_per_epoch=1000):
+def _t_max(module, steps_per_epoch=1000, accumulate=1):
     module.trainer = SimpleNamespace(datamodule=SimpleNamespace(
-        train_dataloader=lambda: range(steps_per_epoch)))
+        train_dataloader=lambda: range(steps_per_epoch)),
+        accumulate_grad_batches=accumulate)
     sched = module.configure_optimizers()["lr_scheduler"]["scheduler"]
     return sched._schedulers[1].T_max
+
+
+def test_schedule_counts_optimizer_steps_under_accumulation():
+    """2026-09-10: with accumulate_grad_batches 3 the scheduler (stepped per
+    optimizer step) was sized in batches - warmup and cosine 3x too long, the
+    whole 30% TimeSSM run was warmup. Batches / accumulation now."""
+    m = FinetuneModule(model=_model(), finetune_mode="full_finetune", max_epochs=1,
+                       warmup_epochs=0.1, lr_scheduler="cosine", schedule_fraction=0.3)
+    assert _t_max(m, steps_per_epoch=3000, accumulate=3) == 300 - 100
+    m.trainer = SimpleNamespace(datamodule=SimpleNamespace(train_dataloader=lambda: range(3000)),
+                                accumulate_grad_batches=3)
+    sched = m.configure_optimizers()["lr_scheduler"]["scheduler"]
+    assert sched._milestones == [100]
 
 
 def test_cosine_shortened_to_the_fraction():
