@@ -171,3 +171,22 @@ def test_builder_dispatch_and_core_prefixes(tmp_path):
                                "model.blocks.bias": torch.ones(2)}}, ck)
     m2 = loading.load_checkpoint(_M(), str(ck), torch.device("cpu"))
     assert torch.equal(m2.blocks.weight, torch.ones(2, 2))
+
+
+def test_delta_max_k_hybrid_uses_the_knob_below_and_decimation_above(harness):
+    """+ratein_delta_max_k=N: k <= N through the knob (native context, w = 1/k),
+    k > N through decimation (shorter context, no w). The stub's knob is
+    exact for any w < 1, so with N = 2 the selector still finds k = 2."""
+    EG = harness
+    stub = _RateStub()
+    res = _run(EG, stub, ratein_mode="delta", ratein_pool=True, ratein_delta_max_k=2)
+    bt = res["ratein"]["backtest"]
+    assert bt["knob"] == "delta" and bt["delta_max_k"] == 2 and bt["K"] == 2
+    native = 256 - (256 % 8)
+    with_w = [c for c in stub.calls if c["w"] is not None]
+    without = [c for c in stub.calls if c["w"] is None]
+    assert with_w and all(c["len"] == native and c["w"] == 0.5 for c in with_w)
+    # candidates k > 2 went through decimation: shorter contexts, shorter horizons
+    assert any(c["len"] < native for c in without) and any(c["n"] < 48 for c in without)
+    from evaluate_gift import check_unknown_flags
+    check_unknown_flags(["+ratein=delta", "+ratein_delta_max_k=4"])

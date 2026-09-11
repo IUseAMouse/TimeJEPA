@@ -254,7 +254,7 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
 def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        stride: int, patch: int, device,
                        batch_size: int, pooled: bool = False,
-                       use_delta: bool = False) -> tuple:
+                       use_delta: bool = False, delta_max_k: int = 0) -> tuple:
     """RateIN v2 (2026-09-01) - per-series k chosen by CAUSAL BACKTEST.
 
     Oracle verdict 2026-08-31: the mechanism is worth up to +57% per config
@@ -295,7 +295,10 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     the context stays at its native length, the model is asked for the
     native horizon with w = 1/k (an LTI SSM run at Delta/k on the full
     series IS the SSM run at Delta on the series decimated by k, SSM_cours
-    prop. 2.4), and nothing is re-interpolated.
+    prop. 2.4), and nothing is re-interpolated. `delta_max_k` > 0 (2026-09-11,
+    verdict on the 1.3022 checkpoint: the knob wins at k <= 8 and loses at
+    k >= 16, outside its trained range [1/4, 4]): the knob up to that k, the
+    decimation path beyond - a per-k hybrid, same selector.
     """
     REL_MARGIN = 0.05
     N_BT_WINDOWS = 2
@@ -322,9 +325,10 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     scores = defaultdict(lambda: defaultdict(list))
     for k in ratein_mod.K_CANDIDATES:
         buckets = defaultdict(list)
+        knob_k = use_delta and (delta_max_k <= 0 or k <= delta_max_k)
         for idx, sub_hist, known in entries:
             hist = (ratein_mod.decimate(sub_hist[-(max_len * k):], k)
-                    if k > 1 and not use_delta else sub_hist)
+                    if k > 1 and not knob_k else sub_hist)
             if len(hist) < patch:
                 continue
             ctx = prepare_context(hist, max_len, stride, patch)
@@ -332,7 +336,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 continue
             # h_bt varies per series (short-history fallback) -> the bucket
             # also carries h_fc so each batch stays homogeneous.
-            h_fc_k = len(known) if use_delta else -(-len(known) // k)
+            h_fc_k = len(known) if knob_k else -(-len(known) // k)
             buckets[(len(ctx), h_fc_k)].append((idx, ctx, known))
         for (length, h_fc), items in buckets.items():
             for i in range(0, len(items), batch_size):
@@ -340,7 +344,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 batch = torch.from_numpy(np.stack([c[1] for c in chunk]))
                 batch = batch.unsqueeze(-1).to(device)
                 kw = ({"w": torch.full((batch.shape[0],), 1.0 / k, device=device)}
-                      if use_delta and k > 1 else {})
+                      if knob_k and k > 1 else {})
                 with torch.no_grad():
                     out = model.forecast(batch, n=h_fc, **kw)
                 q = out.get("quantiles_denorm")
@@ -352,7 +356,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 if q.ndim == 4:
                     q = q[..., 0]
                 for b, (idx, _, known) in enumerate(chunk):
-                    fan_nat = (q[b] if use_delta
+                    fan_nat = (q[b] if knob_k
                                else ratein_mod.reinterp_fan(q[b], len(known), k))
                     sc = _pinball_np(fan_nat, known, levels)
                     if np.isfinite(sc):
@@ -370,6 +374,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     diag = {"K": K, "margin": REL_MARGIN, "n_base": n_base,
             "pooling": "crps" if pooled else "geomean",
             "knob": "delta" if use_delta else "decimation",
+            "delta_max_k": delta_max_k if use_delta else None,
             "ratios": {str(k): round(r, 5) for k, r in sorted(ratios.items())}}
     return {idx: K for idx in range(len(series))}, diag
 
@@ -650,6 +655,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     quantile_gamma=None,
                     ratein_mode: str = "off", forced_k: int = 0,
                     ratein_w: bool = False, ratein_w_max_k: int = 4,
+                    ratein_delta_max_k: int = 0,
                     ratein_pool: bool = False, energy_judge=None,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
@@ -700,7 +706,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                             stride, model.patching.patch_size,
                                             device, batch_size,
                                             pooled=ratein_pool,
-                                            use_delta=use_delta)
+                                            use_delta=use_delta,
+                                            delta_max_k=ratein_delta_max_k)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"]), None
@@ -777,9 +784,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             k = ratein_mod.choose_k(ratein_mod.detect_period(inst.context))
         else:
             k = 1
+        knob_k = use_delta and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k)
         hist = (ratein_mod.decimate(inst.context[-(max_len * k):], k)
-                if k > 1 and not use_delta else inst.context)
-        if k > 1 and not use_delta and len(hist) < model.patching.patch_size:
+                if k > 1 and not knob_k else inst.context)
+        if k > 1 and not knob_k and len(hist) < model.patching.patch_size:
             # Guard (oracle crash 2026-08-31, IndexError on 6 configs): a
             # short history decimated by a large k goes empty - fall back k=1.
             k, hist = 1, inst.context
@@ -800,7 +808,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # Extrapolation guard: the FiLM only saw log2(w) within the training
         # factor range ([1,2,4] -> [-2,2]); beyond ratein_w_max_k, fall back
         # to the standard decimate+reinterp path.
-        use_w = (ratein_w and 1 < k <= ratein_w_max_k) or (use_delta and k > 1)
+        use_w = (ratein_w and 1 < k <= ratein_w_max_k) or (
+            use_delta and k > 1 and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k))
         # Decimated grid: h' = ceil(h/k) steps cover the native horizon
         # (measurable bonus: fewer rollouts on long-term 10S/5T).
         h_fc = h if use_w else -(-h // k)
@@ -1020,6 +1029,7 @@ KNOWN_FLAGS = frozenset((
     "checkpoint_path", "energy_ckpt", "energy_config", "gift_batch_size",
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
+    "ratein_delta_max_k",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
@@ -1104,6 +1114,9 @@ def main(cfg: DictConfig):
     #                                           on the model's rate knob (LTI
     #                                           SSM), no decimation, no
     #                                           re-interpolation
+    #   +ratein_delta_max_k=4                   hybrid: the knob up to that k,
+    #                                           decimation beyond (the knob's
+    #                                           trained range)
     #   +ratein_pool=true                       ratio table pooled like the
     #                                           CRPS (sum over series) instead
     #                                           of a per-series geomean
@@ -1121,6 +1134,9 @@ def main(cfg: DictConfig):
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
     ratein_pool = str(cfg.get("ratein_pool", "")).lower() in ("true", "1", "on")
+    ratein_delta_max_k = int(cfg.get("ratein_delta_max_k", 0) or 0)
+    if ratein_delta_max_k and ratein_mode_val != "delta":
+        raise ValueError("+ratein_delta_max_k needs +ratein=delta")
     if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy", "delta"):
         raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy/delta")
     if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
@@ -1231,7 +1247,7 @@ def main(cfg: DictConfig):
     elif ratein_mode_val == "energy":
         tag += "_ratein-energy"
     elif ratein_mode_val == "delta":
-        tag += "_ratein-delta"
+        tag += "_ratein-delta" + (f"-k{ratein_delta_max_k}" if ratein_delta_max_k else "")
     elif ratein_oracle:
         tag += "_ratein-oracle"
     if ratein_pool:
@@ -1334,6 +1350,7 @@ def main(cfg: DictConfig):
                                       quantile_gamma=quantile_gamma,
                                       ratein_mode=ratein_mode_val,
                                       ratein_w=ratein_w,
+                                      ratein_delta_max_k=ratein_delta_max_k,
                                       ratein_pool=ratein_pool,
                                       energy_judge=energy_judge,
                                       refine_spec=refine_spec,
