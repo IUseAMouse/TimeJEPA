@@ -1443,6 +1443,16 @@ derniers checkpoints pendant que val_loss descend ; la fin du recuit n'apporte r
 sélection par éval GIFT n'avait déjà. Le schedule n'est pas le levier. Champion inchangé.
 La clé reste disponible pour le pretrain xres (budget), sans attente de gain en soi.
 
+### RateIN — papier à part (décision 2026-09-13) : la couche mesurée sur des modèles publics
+
+RateIN n'invente rien (décimation, backtest, moyenne de quantiles) ; ce qui se publie est
+la MESURE : borne oracle par modèle, taux de capture du backtest, ablation des composantes,
+transfert à des modèles tiers sans les modifier. Le harnais accepte maintenant des modèles
+publics sans checkpoint (`model.external`, `src/timejepa/evaluation/external.py`, runbook
+S6 §10) : Chronos-Bolt tiny/small, Chronos-2, t0-alpha, TTM-R3. Ordre de sortie des trois
+papiers, du moins cher au plus cher : RateIN (éval seule) → TimeSSM (verdict wide) →
+TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
+
 ### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé) — **NOUVEAU CHAMPION 2026-09-13** : 0.7717 / 0.5282 / couv. 0.805 sur 97 (stack), scratch 2.5M à 25 % du budget, contre head8 0.7842 / 0.5340 / 0.756
 
 Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt

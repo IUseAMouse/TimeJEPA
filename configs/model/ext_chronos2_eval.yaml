@@ -1,0 +1,19 @@
+# @package _global_
+# Chronos-2 (120M) through the GIFT harness (2026-09-13, RateIN on third-party
+# models). No checkpoint: the model is built from the Hugging Face id and the
+# cache is keyed on it (evaluation/chronos2/<hf id>/gift<tag>/).
+#
+#   python scripts/evaluate_gift.py --config-name ext_chronos2_eval                       # bare
+#   python scripts/evaluate_gift.py --config-name ext_chronos2_eval +tta_flip=true       # flip
+#   python scripts/evaluate_gift.py --config-name ext_chronos2_eval \
+#       +tta_flip=true +ratein=mix +ratein_pool=true                                       # the stack
+#   +ratein=oracle for the per-config bound (diagnostic, never official)
+# Install: uv pip install -e ".[external]"
+model:
+  name: "chronos2"
+  builder: "timejepa.evaluation.external:build"
+  external:
+    kind: "chronos"
+    hf_id: "amazon/chronos-2"
+    context_length: 8192
+  seq_length: 8192

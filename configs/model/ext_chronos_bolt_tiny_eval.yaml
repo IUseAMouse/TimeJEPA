@@ -1,0 +1,19 @@
+# @package _global_
+# Chronos-Bolt tiny (9M) through the GIFT harness (2026-09-13, RateIN on third-party
+# models). No checkpoint: the model is built from the Hugging Face id and the
+# cache is keyed on it (evaluation/chronos_bolt_tiny/<hf id>/gift<tag>/).
+#
+#   python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval                       # bare
+#   python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval +tta_flip=true       # flip
+#   python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval \
+#       +tta_flip=true +ratein=mix +ratein_pool=true                                       # the stack
+#   +ratein=oracle for the per-config bound (diagnostic, never official)
+# Install: uv pip install -e ".[external]"
+model:
+  name: "chronos_bolt_tiny"
+  builder: "timejepa.evaluation.external:build"
+  external:
+    kind: "chronos"
+    hf_id: "amazon/chronos-bolt-tiny"
+    context_length: 2048
+  seq_length: 2048

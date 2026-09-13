@@ -1,0 +1,16 @@
+# @package _global_
+# TinyTimeMixer TTM-R3 (IBM Granite, revision 1024-96-r3, the one the
+# 2026-09-06 paired reading used) through the GIFT harness. Point
+# forecaster: its fan is the point repeated, so the CRPS is an MAE-like
+# number - compare on MASE first. The revision matters: the repo hosts its
+# variants by revision and `main` loads a REINITIALIZED head.
+#   python scripts/evaluate_gift.py --config-name ext_ttm_r3_eval +tta_flip=true +ratein=mix +ratein_pool=true
+# Install: uv pip install -e ".[ttm]"
+model:
+  name: "ttm_r3_1024_96"
+  builder: "timejepa.evaluation.external:build"
+  external:
+    kind: "ttm"
+    hf_id: "ibm-granite/granite-timeseries-ttm-r3"
+    revision: "1024-96-r3"
+  seq_length: 1024

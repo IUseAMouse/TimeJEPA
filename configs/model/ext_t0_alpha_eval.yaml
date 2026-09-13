@@ -1,0 +1,19 @@
+# @package _global_
+# t0-alpha (102M, The Forecasting Company) through the GIFT harness (2026-09-13, RateIN on third-party
+# models). No checkpoint: the model is built from the Hugging Face id and the
+# cache is keyed on it (evaluation/t0_alpha/<hf id>/gift<tag>/).
+#
+#   python scripts/evaluate_gift.py --config-name ext_t0_alpha_eval                       # bare
+#   python scripts/evaluate_gift.py --config-name ext_t0_alpha_eval +tta_flip=true       # flip
+#   python scripts/evaluate_gift.py --config-name ext_t0_alpha_eval \
+#       +tta_flip=true +ratein=mix +ratein_pool=true                                       # the stack
+#   +ratein=oracle for the per-config bound (diagnostic, never official)
+# Install: uv pip install -e ".[external]"
+model:
+  name: "t0_alpha"
+  builder: "timejepa.evaluation.external:build"
+  external:
+    kind: "t0"
+    hf_id: "theforecastingcompany/t0-alpha"
+    context_length: 2048
+  seq_length: 2048

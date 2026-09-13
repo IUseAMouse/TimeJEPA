@@ -58,6 +58,7 @@ from timejepa.evaluation import ratein as ratein_mod  # noqa: E402
 from timejepa.evaluation import refine as refine_mod  # noqa: E402
 from timejepa.evaluation import biasin as biasin_mod  # noqa: E402
 from timejepa.evaluation import ttt as ttt_mod  # noqa: E402
+from timejepa.evaluation import external as external_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("evaluate_gift")
@@ -1082,8 +1083,14 @@ def check_unknown_flags(overrides, known=KNOWN_FLAGS):
 def main(cfg: DictConfig):
     check_unknown_flags(HydraConfig.get().overrides.task)
     checkpoint_path = cfg.get("checkpoint_path")
-    if not checkpoint_path:
-        raise ValueError("pass +checkpoint_path=<...>")
+    # External models (2026-09-13, RateIN on third-party forecasters): built
+    # by model.builder from cfg.model.external, no checkpoint file; the cache
+    # is keyed on the Hugging Face id (see external.run_identity).
+    external = cfg.model.get("external") if cfg.get("model") else None
+    if not checkpoint_path and external is None:
+        raise ValueError("pass +checkpoint_path=<...> (or a config with model.external)")
+    if checkpoint_path and external is not None:
+        raise ValueError("model.external and +checkpoint_path are exclusive")
 
     gift_root = Path(cfg.get("gift_data_dir", "data/gift_eval"))
     terms = str(cfg.get("gift_terms", "")).split(",") if cfg.get("gift_terms") else []
@@ -1222,7 +1229,18 @@ def main(cfg: DictConfig):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = create_model_from_config(cfg)
-    model = load_checkpoint(model, checkpoint_path, device)
+    if external is None:
+        model = load_checkpoint(model, checkpoint_path, device)
+        run_stem = Path(checkpoint_path).stem
+        ckpt_stat = Path(checkpoint_path).stat()
+        fingerprint = f"{ckpt_stat.st_mtime_ns}:{ckpt_stat.st_size}"
+        run_label = str(checkpoint_path)
+    else:
+        run_stem, fingerprint = external_mod.run_identity(
+            str(external.hf_id), external.get("revision"))
+        run_label = fingerprint
+        logger.info(f"external model {model.name} ({fingerprint}), context cap "
+                    f"{model.input_length}")
 
     # Each inference variant gets its OWN directory: the per_config JSONs act
     # as resume markers, and mixing two procedures in one cache would re-read
@@ -1278,8 +1296,7 @@ def main(cfg: DictConfig):
     if tta_shifts:
         tag += "_sh" + "-".join(str(x) for x in tta_shifts)
     tag += gamma_tag
-    out_dir = (Path("evaluation") / cfg.model.name
-               / Path(checkpoint_path).stem / f"gift{tag}")
+    out_dir = (Path("evaluation") / cfg.model.name / run_stem / f"gift{tag}")
     per_config = out_dir / "per_config"
     per_config.mkdir(parents=True, exist_ok=True)
 
@@ -1289,13 +1306,11 @@ def main(cfg: DictConfig):
     # "already done" on 97 configs, i.e. an aggregate of the OLD model
     # presented as a measure of the new one. The fingerprint (mtime+size)
     # makes the case loud. Refuse rather than clean: nothing is ever deleted here.
-    ckpt_stat = Path(checkpoint_path).stat()
-    fingerprint = f"{ckpt_stat.st_mtime_ns}:{ckpt_stat.st_size}"
     fp_file = out_dir / "checkpoint_fingerprint.txt"
     if fp_file.exists() and fp_file.read_text().strip() != fingerprint:
         raise RuntimeError(
             f"{out_dir} holds results from a DIFFERENT version of "
-            f"{Path(checkpoint_path).name} (fingerprint mismatch - the file was "
+            f"{run_stem} (fingerprint mismatch - the file was "
             f"overwritten since, typically a last.ckpt from a running job). "
             f"Resuming would re-read the old JSONs as if they measured the new "
             f"checkpoint. Move or rename this directory, then relaunch."
@@ -1409,7 +1424,7 @@ def main(cfg: DictConfig):
     model_metrics = {c: results[c]["model"] for c in results}
     local_sn = {c: results[c]["seasonal_naive_local"] for c in results}
     summary = {
-        "checkpoint": str(checkpoint_path),
+        "checkpoint": run_label,
         "n_configs": len(results),
         "vs_official_seasonal_naive":
             gift.aggregate(model_metrics, gift.official_seasonal_naive()),

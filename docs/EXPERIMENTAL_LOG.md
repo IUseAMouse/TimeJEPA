@@ -1919,6 +1919,32 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-13 (MODÈLES TIERS DANS LE HARNAIS, pour le papier RateIN — code livré, smokes
+  passés, aucun chiffre officiel)** — Décision : RateIN devient un papier à part, dont la
+  substance est la MESURE (borne oracle, taux de capture, ablation, transfert) sur des modèles
+  publics, à travers le même harnais, les mêmes instances et le même cache que nos
+  checkpoints. `src/timejepa/evaluation/external.py` : adaptateurs `ExternalForecaster`
+  (contrat du harnais : `input_length`, `patching` 1/1, `predictor.w_film = None`,
+  `rate_knob = None`, `forecast(batch, n)` → fan trié [B, n, 9] + médiane ; w ≠ 1 refusé)
+  pour Chronos-Bolt / Chronos-2 (`chronos-forecasting` 2.3), t0-alpha (`tfc-t0` 0.3) et
+  TTM (`granite-tsfm`, point répété sur les 9 niveaux, rollout autorégressif) ; `build(cfg)`
+  via `model.builder`, sans checkpoint, cache indexé sur l'identifiant HF
+  (`external.run_identity`). `evaluate_gift.py` : `+checkpoint_path` optionnel avec
+  `model.external`, exclusifs entre eux ; gardes existantes (`check_model_flags`) refusent
+  delta / refine / ttt / ratein_w sur ces modèles. Configs `ext_chronos_bolt_tiny_eval`
+  (9M), `ext_chronos_bolt_small_eval` (48M), `ext_chronos2_eval` (120M, ctx 8192),
+  `ext_t0_alpha_eval` (102M), `ext_ttm_r3_eval` (révision `1024-96-r3`). Dépendances :
+  extra `external` (chronos + t0) résolu sur la pile actuelle (torch 2.10, transformers
+  5.x) ; **toto-ts exclu** (pin torch 2.7 / transformers 4.x) ; TiRex et Moirai non
+  tentés (noyaux CUDA maison, gluonts). Tests `tests/test_external.py` (4) : contrat,
+  harnais off / flip / mix / backtest, refus, builder, configs. **Smokes CPU sur
+  m_dense/D/short** : Chronos-Bolt tiny nu 0.5041 / 0.3620, stack flip + mix + pool
+  0.4924 / 0.3537 (k > 1 refusé sur cette config, le gain vient du flip) ; TTM-R3 nu
+  0.4429 / 0.3794 (point répété, 6 s) ; **t0-alpha : dépôt HF gated**, il faut accepter la licence et s'authentifier sur
+  le pod avant de l'évaluer (erreur rendue explicite). Protocole du papier, à graver avant
+  les runs : par modèle, nu / flip / flip + mix-pool / oracle-k sur 97 configs, batch 64 sur
+  un GPU pendant que l'autre entraîne ; lecture appariée par `compare_subset.py`.
+
 - **2026-09-13 (LE CHAMPION CHANGE DE DÉPÔT : TimeSSM `epoch00_valloss1.2942`, stack flip + mix
   + pool, 0.7717 / 0.5282 / couv. 0.805 sur 97, contre head8 0.7842 / 0.5340 / 0.756)** — Un
   SSM linéaire invariant (S4D) de 2.5M entraîné de zéro sur la pinball avec la recette du

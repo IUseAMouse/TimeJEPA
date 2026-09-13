@@ -237,3 +237,27 @@ couverture contre le champion (0.7842 / 0.5340 / 0.756). Une couche en plus se p
 ```bash
 grep -h "vs_official\|REFINE\[\|coverage" logs/eval_*.log
 ```
+
+## 10. Modèles tiers dans le harnais (2026-09-13, papier RateIN)
+
+Un modèle public s'évalue avec le MÊME script, les mêmes instances, les mêmes flags et
+le même cache que TimeJEPA / TimeSSM, sans checkpoint : `model.builder` construit
+l'adaptateur depuis `model.external` (`src/timejepa/evaluation/external.py`) et le
+cache est indexé sur l'identifiant Hugging Face (`evaluation/<name>/<org>__<model>/gift<tag>/`).
+
+```bash
+uv pip install -e ".[external]"      # chronos-forecasting, tfc-t0 (toto-ts exclu : rétrograde torch)
+uv pip install -e ".[ttm]"           # granite-tsfm pour TTM
+# nu, flip, stack, oracle - même grammaire que pour nos checkpoints
+python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval
+python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval +tta_flip=true
+python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval +tta_flip=true +ratein=mix +ratein_pool=true
+python scripts/evaluate_gift.py --config-name ext_chronos_bolt_tiny_eval +ratein=oracle
+```
+
+Configs livrées : `ext_chronos_bolt_tiny_eval` (9M), `ext_chronos_bolt_small_eval` (48M),
+`ext_chronos2_eval` (120M, contexte 8192), `ext_t0_alpha_eval` (102M), `ext_ttm_r3_eval`
+(révision `1024-96-r3`, point seul : le fan est le point répété, lire la MASE d'abord).
+Refus attendus : `+ratein=delta`, `+ratein_w`, `+refine`, `+ttt` (pas de bouton, pas
+d'encodeur JEPA). Lecture appariée entre modèles : `../TimeMamba/scripts/compare_subset.py`
+sur deux dossiers `gift<tag>/`.
