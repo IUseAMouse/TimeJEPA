@@ -49,6 +49,9 @@ for _noisy in ("httpx", "httpcore", "urllib3", "huggingface_hub", "datasets",
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 CHRONOS_REPO = "autogluon/chronos_datasets"
+# Revision the corpus v3 extras were built from (2026-09-13 main head).
+CHRONOS_REVISION_V3 = "eeecad0b82a8c237e212ce6f8d1abecb513e2cec"
+_REVISION = None
 
 # The allowlist: the only subsets both NEW relative to LOTSA and free of
 # overlap with the project's three evaluation suites (GIFT-Eval 97 configs,
@@ -83,7 +86,7 @@ def series_iter_chronos(subset: str):
     """Stream of 1-D float32 series from one Chronos subset."""
     from datasets import load_dataset
 
-    ds = load_dataset(CHRONOS_REPO, subset, split="train", streaming=True)
+    ds = load_dataset(CHRONOS_REPO, subset, split="train", streaming=True, revision=_REVISION)
     for row in ds:
         if subset == "ushcn_daily":
             for col in USHCN_VALUE_COLUMNS:
@@ -116,10 +119,14 @@ def main():
                     help="Required window (ctx 1024 + horizon 256).")
     ap.add_argument("--max-chunks-per-subset", type=int, default=200_000)
     ap.add_argument("--max-nan-fraction", type=float, default=0.05)
+    ap.add_argument("--revision", default=None, help="HF dataset revision (sha or tag).")
     ap.add_argument("--list", action="store_true", help="Inventory only.")
     ap.add_argument("--resume", action="store_true",
                     help="Skip already-converted subsets.")
     args = ap.parse_args()
+    global _REVISION
+    _REVISION = args.revision
+    print(f"HF revision: {args.revision or 'main (unpinned)'}")
 
     print()
     print("=" * 72)

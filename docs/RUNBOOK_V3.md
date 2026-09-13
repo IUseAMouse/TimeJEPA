@@ -1,4 +1,9 @@
 # Runbook S2.4 — Assemblage du corpus v3 (pod, ~une demi-journée)
+> **2026-09-13 — reconstruction sur une machine neuve** : `scripts/build_corpus_v3.sh`
+> enchaîne toutes les étapes ci-dessous (lotsa_full, chronos_extras, synthétique v1,
+> lotsa_xres, synthétique v3, courtes + solar, décimation, lotsa_v3) avec les révisions HF
+> épinglées (`prepare_lotsa.py --revision`, `prepare_chronos.py --revision`) et un audit final
+> contre la référence : 106 fichiers, 15.85 Md d'observations. `--check` n'exécute que l'audit.
 
 Exécution de la recette gravée en tête de `configs/model/lotsa_tiny_v3.yaml`.
 Bundle béni 2026-08-24 ; prédictions P-v3.1..4 au registre (E19). Doctrine :

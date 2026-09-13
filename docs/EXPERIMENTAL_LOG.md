@@ -1919,6 +1919,22 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-13 (CORPUS v3 REPRODUCTIBLE EN UNE COMMANDE : `scripts/build_corpus_v3.sh`,
+  révisions HF épinglées)** — Préparation du scaling TimeSSM sur une machine louée (pod 8×
+  5090). Le runbook v3 était complet mais éclaté sur trois documents (runbook, en-tête xres,
+  Makefile) et rien ne figeait la révision des dépôts HF : `Salesforce/lotsa_data` et
+  `autogluon/chronos_datasets` sont maintenant lus à une révision explicite
+  (`LOTSA_REVISION_V3` = 8191fd2, `CHRONOS_REVISION_V3` = eeecad0, têtes de `main` au 13/09 ;
+  sans `--revision` les scripts l'impriment « unpinned »). Le script enchaîne les neuf étapes
+  (lotsa_full plafonné à 1e6 chunks, chronos_extras, synthétique v1 à 20k/famille, symlinks
+  lotsa_xres, 23 shards synthétiques v3 seedés, courtes paddées + solar, décimation 2/3,
+  symlinks lotsa_v3 sans lowfreq_dec3 ni broadband_dec3) et termine par un audit contre la
+  référence mesurée sur le pod (106 fichiers, 15.85 Md d'observations, tolérance 0.05 Md) ;
+  `--check` seul pour auditer un corpus existant. Idempotent, jamais de suppression.
+  Non exécuté en entier ici (pas de GPU ni de disque local) : syntaxe et fonction d'audit
+  testées ; le premier vrai run se fait sur le pod, et son audit dit si la recette est
+  complète.
+
 - **2026-09-13 (TAILLE DU CORPUS v3, mesurée sur le pod : 15.85 milliards d'observations, 106
   fichiers, réel + synthétique)** — Chiffre de référence pour le papier et le CV (« pretrained
   on a 106-dataset, 15.85 B-observation corpus »). À ne pas confondre avec l'exposition :

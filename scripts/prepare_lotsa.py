@@ -59,12 +59,19 @@ for _noisy in ("httpx", "httpcore", "urllib3", "huggingface_hub", "datasets",
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 REPO_ID = "Salesforce/lotsa_data"
+# Revision of the HF dataset the corpus v3 was built from (2026-09-13: the
+# `main` head at that date). A rebuild on a new machine must pin it, or the
+# corpus silently follows whatever Salesforce pushes next; the
+# 15.85 B-observation / 106-file reference in build_corpus_v3.sh assumes it.
+LOTSA_REVISION_V3 = "8191fd29eb5cf906ec55effca44d8059888b615d"
+_REVISION = None
+
 
 def list_subsets():
     """LOTSA subset names, via the HuggingFace API."""
     from huggingface_hub import list_repo_files
 
-    files = list_repo_files(REPO_ID, repo_type="dataset")
+    files = list_repo_files(REPO_ID, repo_type="dataset", revision=_REVISION)
     names = sorted({f.split("/")[0] for f in files if "/" in f})
     return names
 
@@ -80,7 +87,7 @@ def series_iter(subset: str):
     """
     from datasets import load_dataset
 
-    ds = load_dataset(REPO_ID, subset, split="train", streaming=True)
+    ds = load_dataset(REPO_ID, subset, split="train", streaming=True, revision=_REVISION)
     for row in ds:
         target = row.get("target")
         if target is None:
@@ -123,6 +130,9 @@ def main():
                          "imbalance at smaller scale.")
     ap.add_argument("--subsets", nargs="*", default=None,
                     help="Restrict to these subsets (default: all).")
+    ap.add_argument("--revision", default=None,
+                    help="HF dataset revision (commit sha or tag). Default: main head, "
+                         "printed; the v3 rebuild passes LOTSA_REVISION_V3.")
     ap.add_argument("--list", action="store_true", help="Inventory only.")
     ap.add_argument("--resume", action="store_true",
                     help="Skip already-converted subsets.")
@@ -132,6 +142,9 @@ def main():
                          "given up rather than invented. Rejecting any chunk "
                          "with a NaN cost 100 %% of HZMETRO and SHMETRO.")
     args = ap.parse_args()
+    global _REVISION
+    _REVISION = args.revision
+    print(f"HF revision: {args.revision or 'main (unpinned)'}")
 
     logger.info(f"LOTSA subsets from {REPO_ID}...")
     names = args.subsets or list_subsets()
