@@ -1919,6 +1919,16 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-13 (LE CHAMPION CHANGE DE DÉPÔT : TimeSSM `epoch00_valloss1.2942`, stack flip + mix
+  + pool, 0.7717 / 0.5282 / couv. 0.805 sur 97, contre head8 0.7842 / 0.5340 / 0.756)** — Un
+  SSM linéaire invariant (S4D) de 2.5M entraîné de zéro sur la pinball avec la recette du
+  champion, évalué par ce harnais avec la même stack (décimation, sans son bouton Δ), à 25 %
+  de son budget. Trois checkpoints consécutifs (15-25 %) à ou sous 0.5340 ; MASE et couverture
+  sortent le verdict du bruit. Détails, prédictions et suites dans
+  `../TimeMamba/docs/EXPERIMENTAL_LOG.md`. Pour TimeJEPA : le pretrain latent (≈ 1 pt) n'était
+  pas le levier manquant ; le corps transformer à patchs l'était. Le harnais, RateIN, le
+  corpus v3 et la recette de finetune sont ce qui transfère.
+
 - **2026-09-10 (BUG DE SCHEDULE SOUS ACCUMULATION, corrigé : warmup et cosinus comptaient des
   batchs, le scheduler avance par pas d'optimiseur)** — Découvert sur le run TimeSSM
   (accumulation 3 pour la mémoire FFT) : `steps_per_epoch = len(train_dataloader)` sans

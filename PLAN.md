@@ -1443,7 +1443,7 @@ derniers checkpoints pendant que val_loss descend ; la fin du recuit n'apporte r
 sélection par éval GIFT n'avait déjà. Le schedule n'est pas le levier. Champion inchangé.
 La clé reste disponible pour le pretrain xres (budget), sans attente de gain en soi.
 
-### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé, code livré 2026-09-09)
+### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé) — **NOUVEAU CHAMPION 2026-09-13** : 0.7717 / 0.5282 / couv. 0.805 sur 97 (stack), scratch 2.5M à 25 % du budget, contre head8 0.7842 / 0.5340 / 0.756
 
 Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt
 d'oracle, 0.9 capturé) ; un SSM à temps continu possède cette invariance EXACTEMENT (décimer
