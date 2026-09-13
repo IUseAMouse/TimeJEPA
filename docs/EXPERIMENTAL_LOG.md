@@ -1919,6 +1919,13 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-13 (TAILLE DU CORPUS v3, mesurée sur le pod : 15.85 milliards d'observations, 106
+  fichiers, réel + synthétique)** — Chiffre de référence pour le papier et le CV (« pretrained
+  on a 106-dataset, 15.85 B-observation corpus »). À ne pas confondre avec l'exposition :
+  1.03 Md de fenêtres d'entraînement disponibles, 2.98 Md de fenêtres par époque du sampler
+  (rééchantillonnage équilibré), 746 M fenêtres vues par le champion head8 (25 % d'époque),
+  223 M par le champion TimeSSM (7.5 %).
+
 - **2026-09-13 (MODÈLES TIERS DANS LE HARNAIS, pour le papier RateIN — code livré, smokes
   passés, aucun chiffre officiel)** — Décision : RateIN devient un papier à part, dont la
   substance est la MESURE (borne oracle, taux de capture, ablation, transfert) sur des modèles
