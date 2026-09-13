@@ -130,7 +130,16 @@ class RobustScale(nn.Module):
         """context: [B, L, C] - stats over L, per instance and per channel."""
         med = context.median(dim=1, keepdim=True).values                # [B,1,C]
         mad = (context - med).abs().median(dim=1, keepdim=True).values  # [B,1,C]
-        std = context.std(dim=1, keepdim=True)                          # [B,1,C]
+        # A one-point context (possible since the per-step SSM tokenization,
+        # patch_size 1: a short m4 history decimated by a large k in the
+        # RateIN backtest, 2026-09-13) has no unbiased std: torch returns
+        # NaN with a warning, and the whole fan went NaN. Zero is the
+        # defined value; the eps floor below then takes over. Bit-identical
+        # for L > 1.
+        if context.shape[1] > 1:
+            std = context.std(dim=1, keepdim=True)                      # [B,1,C]
+        else:
+            std = torch.zeros_like(med)
         mad_sigma = mad * MAD_TO_SIGMA
         fallback = (self.STD_FALLBACK * std).clamp_min(self.eps)
         self.median = med.detach()

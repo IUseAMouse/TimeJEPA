@@ -217,3 +217,21 @@ def test_healthy_windows_unchanged_by_std_fallback():
     med = x.median(dim=1, keepdim=True).values
     mad = (x - med).abs().median(dim=1, keepdim=True).values * 1.4826
     torch.testing.assert_close(rs.scale, mad, rtol=1e-5, atol=1e-6)
+
+
+def test_one_point_context_is_defined():
+    """2026-09-13: a 1-step context (per-step tokenization + backtest
+    decimation) must not produce a NaN scale; longer contexts are untouched."""
+    import warnings
+    import torch
+    from timejepa.models.components.robust_scale import RobustScale
+    rs = RobustScale()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rs.fit(torch.tensor([[[5.0]], [[-3.0]]]))
+    assert torch.isfinite(rs.scale).all() and (rs.scale > 0).all()
+    y = rs.transform(torch.tensor([[[5.0], [6.0]], [[-3.0], [0.0]]]))
+    assert torch.isfinite(y).all()
+    ref = RobustScale(); x = torch.randn(3, 40, 1) * 4 + 2
+    ref.fit(x); rs.fit(x)
+    assert torch.equal(ref.scale, rs.scale) and torch.equal(ref.median, rs.median)
