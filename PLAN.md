@@ -1453,7 +1453,7 @@ S6 §10) : Chronos-Bolt tiny/small, Chronos-2, t0-alpha, TTM-R3. Ordre de sortie
 papiers, du moins cher au plus cher : RateIN (éval seule) → TimeSSM (verdict wide) →
 TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
-### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé) — **NOUVEAU CHAMPION 2026-09-13** : 0.7717 / 0.5282 / couv. 0.805 sur 97 (stack), scratch 2.5M à 25 % du budget, contre head8 0.7842 / 0.5340 / 0.756
+### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé) — **CHAMPION 2026-09-14 (bras wide)** : bande 0.767-0.769 / 0.524-0.526 / couv. 0.705-0.717 sur 5 checkpoints à 97 (stack), scratch 2.5M, égalité avec Toto-2.0-4m (0.5242) ; contre head8 0.7842 / 0.5340 / 0.756 ; run 10M lancé le 2026-09-14 (P-SSM.4)
 
 Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt
 d'oracle, 0.9 capturé) ; un SSM à temps continu possède cette invariance EXACTEMENT (décimer
