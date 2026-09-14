@@ -4,6 +4,11 @@
 > lotsa_xres, synthétique v3, courtes + solar, décimation, lotsa_v3) avec les révisions HF
 > épinglées (`prepare_lotsa.py --revision`, `prepare_chronos.py --revision`) et un audit final
 > contre la référence : 106 fichiers, 15.85 Md d'observations. `--check` n'exécute que l'audit.
+> **Le script exige `configs/corpus_v3_manifest.txt`** (nom → dossier source des 106 entrées) :
+> `lotsa_full` est une curation manuelle qu'aucune règle ne reproduit (tranches cmip6/era5
+> garées, sous-ensembles apparus sur HF depuis août). Le manifeste se génère sur le pod de
+> référence : `for f in data/processed/lotsa_v3/*.npy; do echo "$(basename "$f" .npy)
+> $(basename "$(dirname "$(readlink -f "$f")")")"; done | sort > configs/corpus_v3_manifest.txt`.
 
 Exécution de la recette gravée en tête de `configs/model/lotsa_tiny_v3.yaml`.
 Bundle béni 2026-08-24 ; prédictions P-v3.1..4 au registre (E19). Doctrine :

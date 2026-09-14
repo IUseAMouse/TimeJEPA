@@ -8,10 +8,16 @@
 #   scripts/build_corpus_v3.sh                 # full build (~half a day + download, ~80 GB)
 #   scripts/build_corpus_v3.sh --check         # only the final audit against the reference
 #
-# Reference (measured on the pod, 2026-09-13): 106 files, 15.85 B observations.
+# Reference (measured on the pod, 2026-09-13): 106 files, 15.85 B observations,
+# listed with their source directory in configs/corpus_v3_manifest.txt. That
+# manifest is the recipe's ground truth: lotsa_full is a CURATED set (parked
+# cmip6/era5 slices, subsets added to HF since August, metro datasets that
+# reject themselves) that no rule reproduces - so step 1 converts exactly the
+# manifest's lotsa_full entries, step 8 links exactly the manifest, and the
+# audit checks the SET, not only the count. A first run without the manifest
+# (2026-09-14) started converting subsets the real corpus never had.
 # The HF datasets are pinned to the revisions the v3 corpus was built from
-# (prepare_lotsa.py LOTSA_REVISION_V3, prepare_chronos.py CHRONOS_REVISION_V3);
-# a different revision is the first suspect if the audit disagrees.
+# (prepare_lotsa.py LOTSA_REVISION_V3, prepare_chronos.py CHRONOS_REVISION_V3).
 #
 # Steps (RUNBOOK_V3 numbering in brackets):
 #   1. lotsa_full        LOTSA converted, per-subset cap 1e6 chunks of 2048   (G7.1)
@@ -30,13 +36,19 @@ LOTSA_REV=$(python -c "import sys; sys.path.insert(0,'scripts'); import prepare_
 CHRONOS_REV=$(python -c "import sys; sys.path.insert(0,'scripts'); import prepare_chronos as p; print(p.CHRONOS_REVISION_V3)")
 REF_FILES=106
 REF_OBS=15.85
+MANIFEST=configs/corpus_v3_manifest.txt
+[ -s "$MANIFEST" ] || { echo "missing $MANIFEST (run the manifest command of docs/RUNBOOK_V3.md on the reference pod first)"; exit 2; }
 
 audit() {
-  python - "$D/lotsa_v3" "$REF_FILES" "$REF_OBS" <<'EOF'
-import glob, sys
+  python - "$D/lotsa_v3" "$REF_FILES" "$REF_OBS" "$MANIFEST" <<'EOF'
+import glob, os, sys
 import numpy as np
-d, ref_files, ref_obs = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
+d, ref_files, ref_obs, manifest = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4]
+want = {ln.split()[0] for ln in open(manifest) if ln.strip() and not ln.startswith("#")}
 files = sorted(glob.glob(f"{d}/*.npy"))
+have = {os.path.basename(f)[:-4] for f in files}
+if have != want:
+    print("MISSING:", sorted(want - have)); print("EXTRA:", sorted(have - want))
 tot, series = 0, 0
 for f in files:
     a = np.load(f, mmap_mode="r", allow_pickle=True)
@@ -47,7 +59,7 @@ for f in files:
 obs = tot / 1e9
 print(f"lotsa_v3: {len(files)} files, {series:,} series, {obs:.2f} B observations "
       f"(reference {ref_files} files, {ref_obs:.2f} B)")
-ok = len(files) == ref_files and abs(obs - ref_obs) < 0.05
+ok = have == want and len(files) == ref_files and abs(obs - ref_obs) < 0.05
 print("AUDIT", "OK" if ok else "MISMATCH - check the HF revisions and the step logs")
 sys.exit(0 if ok else 3)
 EOF
@@ -58,9 +70,11 @@ if [ "${1:-}" = "--check" ]; then audit; exit $?; fi
 echo "== corpus v3 rebuild, LOTSA @ $LOTSA_REV, Chronos @ $CHRONOS_REV"
 df -h "$D" 2>/dev/null || mkdir -p "$D"
 
-echo "== 1. lotsa_full (streaming from HF, resume on)"
+echo "== 1. lotsa_full (streaming from HF, resume on, EXACTLY the manifest's lotsa_full entries)"
+awk '$2 == "lotsa_full" {print $1}' "$MANIFEST" > logs/corpus_1_subsets.txt
 python scripts/prepare_lotsa.py --out "$D/lotsa_full" --chunk-length 2048 \
-  --max-chunks-per-subset 1000000 --resume --revision "$LOTSA_REV" 2>&1 | tee logs/corpus_1_lotsa_full.log
+  --max-chunks-per-subset 1000000 --resume --revision "$LOTSA_REV" \
+  --subsets-from logs/corpus_1_subsets.txt 2>&1 | tee logs/corpus_1_lotsa_full.log
 grep -q "EXCLUDED for evaluation overlap" logs/corpus_1_lotsa_full.log || { echo "exclusion list not printed: STOP"; exit 2; }
 
 echo "== 2. chronos_extras"
@@ -96,15 +110,14 @@ python scripts/prepare_lotsa.py --out "$D/lotsa_solar" --revision "$LOTSA_REV" -
 echo "== 7. decimated (5T -> 10T/15T)"
 python scripts/decimate_corpus.py --src "$D/lotsa_xres" --dst "$D/decimated" --factors 2,3 2>&1 | tee logs/corpus_7_decimated.log
 
-echo "== 8. lotsa_v3 (symlinks; runbook: lowfreq_dec3 and broadband_dec3 removed after audit 1)"
+echo "== 8. lotsa_v3 (symlinks: exactly the manifest, name -> source directory)"
 mkdir -p "$D/lotsa_v3"
-for src in lotsa_xres synthetic_v3 lotsa_short lotsa_solar decimated; do
-  for f in "$D/$src"/*.npy; do
-    b=$(basename "$f")
-    case "$b" in *lowfreq*_dec3*|*broadband*_dec3*) continue ;; esac
-    ln -sfn "$(realpath "$f")" "$D/lotsa_v3/$b"
-  done
-done
+while read -r name src; do
+  [ -z "$name" ] && continue; case "$name" in \#*) continue ;; esac
+  f="$D/$src/$name.npy"
+  [ -f "$f" ] || { echo "manifest entry missing on disk: $f"; exit 2; }
+  ln -sfn "$(realpath "$f")" "$D/lotsa_v3/$name.npy"
+done < "$MANIFEST"
 
 echo "== 9. audit"
 audit

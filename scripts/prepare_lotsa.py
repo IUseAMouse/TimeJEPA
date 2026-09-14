@@ -130,6 +130,9 @@ def main():
                          "imbalance at smaller scale.")
     ap.add_argument("--subsets", nargs="*", default=None,
                     help="Restrict to these subsets (default: all).")
+    ap.add_argument("--subsets-from", type=Path, default=None,
+                    help="File with one subset name per line (a manifest); "
+                         "converts exactly these, in this order.")
     ap.add_argument("--revision", default=None,
                     help="HF dataset revision (commit sha or tag). Default: main head, "
                          "printed; the v3 rebuild passes LOTSA_REVISION_V3.")
@@ -147,7 +150,12 @@ def main():
     print(f"HF revision: {args.revision or 'main (unpinned)'}")
 
     logger.info(f"LOTSA subsets from {REPO_ID}...")
-    names = args.subsets or list_subsets()
+    if args.subsets_from is not None:
+        names = [ln.split()[0] for ln in args.subsets_from.read_text().splitlines()
+                 if ln.strip() and not ln.startswith("#")]
+        print(f"subsets from manifest {args.subsets_from}: {len(names)}")
+    else:
+        names = args.subsets or list_subsets()
 
     kept, excluded = [], []
     for n in names:
