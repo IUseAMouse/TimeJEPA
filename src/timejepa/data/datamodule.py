@@ -63,6 +63,16 @@ class TemperatureSampler(Sampler):
         # constant composition and batch size. Strict opt-in: False =
         # iteration bit-identical to existing.
         ration_oversample: bool = False,
+        # Cap on the REALIZED batch (2026-09-18), rationed mode only. With more
+        # families than batch_size every family is clamped at 1 sample per
+        # batch, the nominal batch is the number of families and the realized
+        # one is set by the fractional quotas, which fire together at
+        # deterministic batch indices: three TimeSSM 10M processes died of OOM
+        # at their 111,111th batch whatever batch_size (48 and 64 gave the SAME
+        # sampler) and the seed. Beyond the cap, the families with the smallest
+        # backlog are DEFERRED to the next batch (their allowance is kept):
+        # same exposure, bounded memory. None = iteration bit-identical.
+        max_batch_size: Optional[int] = None,
     ):
         """
         Args:
@@ -91,6 +101,9 @@ class TemperatureSampler(Sampler):
         self.temperature = temperature
         self.max_oversample_ratio = max_oversample_ratio
         self.ration_oversample = bool(ration_oversample)
+        self.max_batch_size = int(max_batch_size) if max_batch_size else None
+        if self.max_batch_size is not None and not self.ration_oversample:
+            raise ValueError("max_batch_size needs ration_oversample=True")
         self.drop_last = drop_last
         self.shuffle = shuffle
         self.seed = seed
@@ -239,6 +252,23 @@ class TemperatureSampler(Sampler):
         for batch_idx in range(self._num_batches):
             batch = []
 
+            deferred = ()
+            if self.max_batch_size is not None:
+                # What each family would take in this batch, then keep the
+                # largest backlogs up to the cap and defer the others.
+                would = [min(self.samples_per_dataset[i], int(allowance[i] + per_batch_quota[i]),
+                             max(max_samples[i] - samples_drawn[i], 0))
+                         for i in range(self.num_datasets)]
+                if sum(would) > self.max_batch_size:
+                    order = sorted(range(self.num_datasets),
+                                   key=lambda i: -(allowance[i] + per_batch_quota[i]))
+                    room, grant = self.max_batch_size, {}
+                    for i in order:
+                        k = min(would[i], room)
+                        grant[i] = k
+                        room -= k
+                    deferred = grant
+
             for i in range(self.num_datasets):
                 n_samples = self.samples_per_dataset[i]
                 dataset_size = self.dataset_sizes[i]
@@ -253,6 +283,8 @@ class TemperatureSampler(Sampler):
                     allowance[i] += per_batch_quota[i]
                     quota_now = int(allowance[i])
                     actual_samples = min(n_samples, quota_now, remaining)
+                    if deferred:
+                        actual_samples = min(actual_samples, deferred[i])
                     allowance[i] -= actual_samples
                     if actual_samples <= 0:
                         continue
@@ -589,6 +621,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         # G10.2: spreads the cap uniformly over the epoch instead of
         # consuming it at the start (see TemperatureSampler.ration_oversample).
         ration_oversample: bool = False,
+        max_batch_size: Optional[int] = None,
         # Standard params
         batch_size: int = 64,
         stride: int = 1,
@@ -643,6 +676,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.sampling_temperature = sampling_temperature
         self.max_oversample_ratio = max_oversample_ratio
         self.ration_oversample = bool(ration_oversample)
+        self.max_batch_size = max_batch_size
         self.context_length = context_length
         self.prediction_length = prediction_length
         self.batch_size = batch_size
@@ -855,6 +889,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         # G10.2: opt-in, False by default - existing runs are
                         # bit-identical.
                         ration_oversample=self.ration_oversample,
+                        max_batch_size=self.max_batch_size,
                         drop_last=True,
                         shuffle=True,
                         seed=self.seed
