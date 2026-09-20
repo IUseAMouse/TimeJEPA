@@ -73,6 +73,20 @@ class TemperatureSampler(Sampler):
         # backlog are DEFERRED to the next batch (their allowance is kept):
         # same exposure, bounded memory. None = iteration bit-identical.
         max_batch_size: Optional[int] = None,
+        # Fractional allocation (2026-09-20). The integer allocation floors
+        # p_i x batch_size and clamps it at >= 1 per family, so with more
+        # families than batch_size EVERY family gets exactly 1 and the
+        # temperature is gone: the train mix becomes "1 per big family, the
+        # rest by budget" and the val mix (T=1) becomes UNIFORM over families
+        # instead of proportional (measured on the TimeSSM 10M at batch 48:
+        # val_loss 3.0 against 1.3 for the 2.5M at batch 128 - different
+        # validation sets, not a worse model). With fractional_batch=True the
+        # per-family share p_i x batch_size is kept as a float and realized by
+        # accumulation (a family at 0.3/batch contributes 3 windows every 10
+        # batches), the backlog bounded at one batch's share + 1. The
+        # composition then matches the temperature whatever batch_size, and
+        # the realized batch averages batch_size. False = bit-identical.
+        fractional_batch: bool = False,
     ):
         """
         Args:
@@ -156,6 +170,13 @@ class TemperatureSampler(Sampler):
         
         self.samples_per_dataset = self.samples_per_dataset.tolist()
         self.actual_batch_size = sum(self.samples_per_dataset)
+        self.fractional_batch = bool(fractional_batch)
+        # Float share per family; integer path keeps the legacy allocation.
+        self.expected_per_dataset = ((self.sampling_probs * batch_size).tolist()
+                                     if self.fractional_batch else
+                                     [float(v) for v in self.samples_per_dataset])
+        if self.fractional_batch:
+            self.actual_batch_size = float(batch_size)
         
         # Store offsets only - NOT all indices (memory efficient!)
         self.dataset_offsets = [0]
@@ -174,10 +195,10 @@ class TemperatureSampler(Sampler):
         """Compute number of batches and effective sampling ratios."""
         max_size = max(self.dataset_sizes)
         largest_idx = self.dataset_sizes.index(max_size)
-        samples_for_largest = self.samples_per_dataset[largest_idx]
+        samples_for_largest = self.expected_per_dataset[largest_idx]
         
         if samples_for_largest > 0:
-            batches_for_largest = max_size // samples_for_largest
+            batches_for_largest = int(max_size / samples_for_largest)
         else:
             batches_for_largest = max_size
         
@@ -189,7 +210,7 @@ class TemperatureSampler(Sampler):
         self.oversample_ratios = []
         
         for i, size in enumerate(self.dataset_sizes):
-            effective = self._num_batches * self.samples_per_dataset[i] * self.world_size
+            effective = self._num_batches * self.expected_per_dataset[i] * self.world_size
             ratio = effective / size if size > 0 else 1.0
             
             if ratio > self.max_oversample_ratio:
@@ -248,6 +269,15 @@ class TemperatureSampler(Sampler):
         if self.ration_oversample:
             per_batch_quota = [m / max(self._num_batches, 1) for m in max_samples]
             allowance = [0.0] * self.num_datasets
+        expected = self.expected_per_dataset
+        share = [0.0] * self.num_datasets          # fractional mode only
+
+        def wanted(i):
+            # Family i's share of THIS batch: the legacy integer, or the
+            # accumulated fractional share.
+            if self.fractional_batch:
+                return int(share[i] + expected[i])
+            return self.samples_per_dataset[i]
 
         for batch_idx in range(self._num_batches):
             batch = []
@@ -256,7 +286,7 @@ class TemperatureSampler(Sampler):
             if self.max_batch_size is not None:
                 # What each family would take in this batch, then keep the
                 # largest backlogs up to the cap and defer the others.
-                would = [min(self.samples_per_dataset[i], int(allowance[i] + per_batch_quota[i]),
+                would = [min(wanted(i), int(allowance[i] + per_batch_quota[i]),
                              max(max_samples[i] - samples_drawn[i], 0))
                          for i in range(self.num_datasets)]
                 if sum(would) > self.max_batch_size:
@@ -270,9 +300,13 @@ class TemperatureSampler(Sampler):
                     deferred = grant
 
             for i in range(self.num_datasets):
-                n_samples = self.samples_per_dataset[i]
                 dataset_size = self.dataset_sizes[i]
                 offset = self.dataset_offsets[i]
+                if self.fractional_batch:
+                    share[i] += expected[i]
+                    n_samples = int(share[i])
+                else:
+                    n_samples = self.samples_per_dataset[i]
 
                 # Enforce max_oversample_ratio
                 remaining = max_samples[i] - samples_drawn[i]
@@ -286,10 +320,15 @@ class TemperatureSampler(Sampler):
                     if deferred:
                         actual_samples = min(actual_samples, deferred[i])
                     allowance[i] -= actual_samples
-                    if actual_samples <= 0:
-                        continue
                 else:
                     actual_samples = min(n_samples, remaining)
+                if self.fractional_batch:
+                    # Consume the realized share; a budget-bound family keeps
+                    # at most one batch's share + 1 of backlog (no burst when
+                    # the budget frees up).
+                    share[i] = min(share[i] - actual_samples, expected[i] + 1.0)
+                if actual_samples <= 0:
+                    continue
                 
                 # Generate random indices on-the-fly (NOT stored!)
                 local_indices = rng.integers(0, dataset_size, size=actual_samples)
@@ -622,6 +661,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         # consuming it at the start (see TemperatureSampler.ration_oversample).
         ration_oversample: bool = False,
         max_batch_size: Optional[int] = None,
+        fractional_batch: bool = False,
         # Standard params
         batch_size: int = 64,
         stride: int = 1,
@@ -677,6 +717,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.max_oversample_ratio = max_oversample_ratio
         self.ration_oversample = bool(ration_oversample)
         self.max_batch_size = max_batch_size
+        self.fractional_batch = bool(fractional_batch)
         self.context_length = context_length
         self.prediction_length = prediction_length
         self.batch_size = batch_size
@@ -890,6 +931,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         # bit-identical.
                         ration_oversample=self.ration_oversample,
                         max_batch_size=self.max_batch_size,
+                        fractional_batch=self.fractional_batch,
                         drop_last=True,
                         shuffle=True,
                         seed=self.seed
@@ -901,6 +943,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         batch_size=self.batch_size,
                         temperature=1.0,  # Proportional for validation
                         max_oversample_ratio=1.0,  # No oversampling for val
+                        fractional_batch=self.fractional_batch,
                         drop_last=False,
                         shuffle=False,
                         seed=self.seed

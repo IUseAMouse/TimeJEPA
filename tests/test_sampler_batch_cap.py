@@ -64,3 +64,71 @@ def test_cap_bounds_every_batch_and_defers_instead_of_dropping():
 def test_cap_needs_the_rationed_mode():
     with pytest.raises(ValueError):
         _sampler(ration_oversample=False, max_batch_size=32)
+
+
+# ------------------------------------------------- fractional allocation (2026-09-20)
+def _family_counts(s, batches):
+    bounds = np.cumsum([0] + list(s.dataset_sizes))
+    idx = np.concatenate([np.asarray(b) for b in batches])
+    return np.histogram(idx, bins=bounds)[0]
+
+
+def test_fractional_off_is_bit_identical():
+    for ration in (False, True):
+        a = _sampler(ration_oversample=ration)
+        b = _sampler(ration_oversample=ration, fractional_batch=False)
+        assert _head(a, 1500) == _head(b, 1500)
+        assert len(a) == len(b)
+
+
+def test_fractional_train_mix_follows_the_temperature_whatever_batch_size():
+    """T=0.5, cap 3, rationed: the realized batch averages batch_size and the
+    families the budget does not bind get their p_i x B share, at batch 48
+    and at batch 128 alike (the integer allocation gives 1 per family at 48)."""
+    n = 6000
+    for bs in (48, 128):
+        s = _sampler(batch_size=bs, fractional_batch=True)
+        batches = _head(s, n)
+        sizes = np.array([len(b) for b in batches])
+        assert abs(sizes.mean() - bs) / bs < 0.15, (bs, sizes.mean())
+        counts = _family_counts(s, batches)
+        expected = np.array(s.expected_per_dataset) * n
+        quota = np.array([int(z * 3.0) for z in s.dataset_sizes]) / len(s) * n
+        target = np.minimum(expected, quota)
+        big = target > 50
+        rel = np.abs(counts[big] - target[big]) / target[big]
+        assert rel.max() < 0.08, rel.max()
+        # no family ever exceeds one batch's share + 1 in a single batch
+        per_batch_max = max(np.histogram(np.asarray(b), bins=np.cumsum([0] + list(s.dataset_sizes)))[0].max()
+                            for b in batches[:500])
+        assert per_batch_max <= int(max(s.expected_per_dataset)) + 2
+
+
+def test_fractional_val_mix_is_proportional_and_independent_of_batch_size():
+    """T=1, no oversampling, not rationed (the val sampler): the composition
+    of the first 300 batches is proportional to family size at batch 48 as at
+    batch 128 - the integer allocation made it uniform at 48."""
+    shares = {}
+    for bs in (48, 128):
+        s = _sampler(batch_size=bs, temperature=1.0, max_oversample_ratio=1.0,
+                     ration_oversample=False, fractional_batch=True)
+        counts = _family_counts(s, _head(s, 300))
+        shares[bs] = counts / counts.sum()
+    prop = np.array(_sizes()) / sum(_sizes())
+    big = prop > 0.01
+    assert np.abs(shares[48][big] - prop[big]).max() < 0.02
+    assert np.abs(shares[128][big] - prop[big]).max() < 0.02
+    # the legacy allocation at 48: one per family, uniform, far from proportional
+    legacy = _sampler(batch_size=48, temperature=1.0, max_oversample_ratio=1.0,
+                      ration_oversample=False)
+    lc = _family_counts(legacy, _head(legacy, 300))
+    assert np.abs(lc / lc.sum() - prop)[big].max() > 0.05
+
+
+def test_fractional_with_cap_at_batch_size():
+    n = 20000
+    s = _sampler(batch_size=48, fractional_batch=True, max_batch_size=48)
+    sizes = [len(b) for b in _head(s, n)]
+    assert max(sizes) <= 48
+    free = [len(b) for b in _head(_sampler(batch_size=48, fractional_batch=True), n)]
+    assert sum(free) - sum(sizes) <= 106
