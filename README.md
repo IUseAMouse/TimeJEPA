@@ -16,9 +16,7 @@ the way (empirical 80% coverage on this scene: 0.79).
 
 | Inference | MASE ratio | CRPS ratio |
 |---|---|---|
-| plain | 0.895 | 0.624 |
-| + sign-flip averaging | 0.863 | 0.598 |
-| + RateIN | **0.815** | **0.559** |
+| TimeJEPA-tiny | **0.815** | **0.559** |
 | seasonal naive | 1.000 | 1.000 |
 
 Geometric mean over the 97 configurations, against the official seasonal

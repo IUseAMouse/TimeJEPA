@@ -1457,6 +1457,48 @@ TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
 **Diagnostic 2026-09-26 (plan approuvé, détail dans TimeMamba `docs/EXPERIMENTAL_LOG.md`)** : le « gap » de h512 était une amputation de corpus, pas un écart d'évaluation ; l'écart à Toto est plat par terme et diffus sur le corps ; l'univarié n'est pas un handicap de protocole ; leviers restants non essayés : horizon aléatoire DANS la fenêtre fixe (B1, P-SSM.6), température de quantiles sur le SSM (B2), oracle-k du SSM (marge du sélecteur, 1.5 pt sur head8). `scripts/calibrate_quantiles.py` accepte `--config-dir`, `--horizon`, `--set` pour un checkpoint TimeSSM.
 
+#### Diagnostic de la sous-performance (2026-09-26) — ce que les registres établissent, et l'ordre des bras
+
+Question posée : les facteurs limitants restants sont-ils la géométrie 1024/256 et l'univarié ?
+Réponse des registres (TimeJEPA, TimeMamba, harnais), à ne pas redécouvrir :
+
+- **Le « gap de distribution » de h512 était une amputation de corpus**, pas un écart
+  d'évaluation (registre 2026-08-31) : la fenêtre 1536 sortait `lotsa_short` (1280) et le bloc
+  décimé (1024/682) du finetune. Configs saines 0.995, amputées 1.111. Couverture 0.800 EXACTE
+  avec la randomisation d'horizon [64..512]. Le bras recommandé alors, « horizon randomisé sans
+  étendre la fenêtre », n'a jamais été couru : c'est B1.
+- **42/97 configs ont un horizon > 256** (medium 480-600, long 720-900) ; le SSM n'a jamais vu
+  de cible au-delà de 256.
+- **Sur TimeJEPA, l'écart à Toto est plat par terme et diffus** (E17 ×1.28/1.32/1.29 ; corps de
+  81 configs ~0.54 contre ~0.47). Pertes systématiques contre FlowState sur W et M à horizon
+  court, et sur bizitobs/10S (domaine sans corpus public). **Aucune carte par config n'existe
+  pour le SSM** : c'est A1, à faire avant tout bras.
+- **L'univarié n'est pas un handicap de protocole** : le harnais explose les jeux multivariés
+  variable par variable comme l'officiel, FlowState est univarié. L'écart plus grand sur ces
+  jeux (E17 ×1.38 contre ×1.22) est confondu avec l'absence de leurs domaines des corpus.
+- **Fan trop étroit** (couverture 0.70) ; γ neutre sur TimeJEPA en distribution, jamais essayé
+  sur le SSM. **Plus grande marge connue** : oracle-k de RateIN (0.5190 contre 0.5340 sur
+  head8), jamais mesuré sur le SSM.
+- **Objectifs** : 0.52 pour le 2.5M plausible (B1 + B2) ; 0.50 pour le 10M demande 2.5 pt que
+  rien ne soutient, 0.51 est le meilleur scénario réaliste.
+
+Ordre d'exécution (détail, commandes et prédictions dans TimeMamba `docs/EXPERIMENTAL_LOG.md`
+et `docs/RUNBOOK.md` §2c-2d) :
+1. **A1** carte par config du SSM (`TimeMamba/scripts/gift_gap_ssm.py`, CPU, une soirée) :
+   ratios par terme, tranche d'horizon (≤ 64 / ≤ 256 / ≤ 480 / > 480), fréquence, variables,
+   cousin au corpus ; victoires contre Toto-2.0-4m, FlowState-9.1M, TTM-R3-PT ; couverture par
+   terme ; dix pires configs. Règles : medium/long ≥ 1.05 × short → B1 d'abord ; terme plat mais
+   couverture < 0.75 → B2 puis B1 ; écart concentré sur multivarié ET domaines au corpus → B4
+   remonte ; oracle − stack ≥ 1 pt → le sélecteur est le levier (papier RateIN).
+2. **A2** oracle-k sur le 2.5M wide (`STACK="+tta_flip=true +ratein=oracle"`, 4 h, diagnostic).
+3. **B2** température de quantiles (`TimeMamba/scripts/calibrate_ssm.sh`) : lire
+   `coverage_before` ; ≈ 0.80 = décalage, bras mort ; ≈ 0.70 = évaluer `+quantile_gamma`.
+4. **B1** horizon aléatoire DANS la fenêtre fixe (`ssm_mini_v3_hrand`, continuation du champion
+   wide 1.2841, 12 h). **P-SSM.6** : couverture ≥ 0.78 et stack ≤ 0.521 ; échec si ≥ 0.5245.
+5. Report du bras gagnant sur le 10M en continuation après P-SSM.5. B3 (domaine) se documente,
+   B4 (multivarié) est hors budget : suite possible du papier, pas un bras.
+
+
 Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt
 d'oracle, 0.9 capturé) ; un SSM à temps continu possède cette invariance EXACTEMENT (décimer
 par k à Δ ≡ série pleine à Δ/k), sans décimation ni réinterpolation — le mécanisme de
