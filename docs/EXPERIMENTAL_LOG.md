@@ -1919,6 +1919,25 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-26 (RateIN-up livré : candidats k < 1 par sur-échantillonnage et backtest sur
+  horizons courts — inerte par défaut)** — Constat sur TimeSSM (carte par config du 26/09) :
+  sur A, Q, W, m4_daily et les M à h = 12, `_backtest_series_k` force k = 1 (`h_bt < 16`) et
+  `K_CANDIDATES` n'a aucun k < 1 ; le sélecteur n'y a jamais agi (`n_base = 0`, `k_hist`
+  {1: n} dans les per_config), et 17 configs basse fréquence perdent 13 % contre FlowState.
+  Harnais : `+ratein_k_up=2,3,4` (k = 1/m : contexte sur-échantillonné par interpolation
+  linéaire entre centres de blocs, extrapolation linéaire aux bords — `ratein.upsample`,
+  inverse exact de `decimate` sur un signal linéaire ; horizon h·m ; fan ramené par moyenne
+  de blocs `pool_fan`, monotonie conservée), `+ratein_min_bt=4` (seuil du backtest, défaut
+  16), `+ratein_bt_windows=4` (fenêtres, défaut 2) ; trois flags exigent
+  `+ratein=backtest/mix/delta` ; tag `-up234-bt4-w4`. Généralisation par trois primitives
+  (`resample_context`, `fc_horizon`, `to_native_fan`) aux six points du harnais où k était
+  supposé entier ; `_pool_ratios` itère sur les k notés ; `_mix_weights` accepte les clés
+  fractionnaires. Bit-identité hors flags : les 27 tests RateIN existants passent inchangés ;
+  `tests/test_ratein_up.py` (stub qui n'exploite un cycle que si sa période ≥ 16 pas sur SA
+  grille : à h = 12, défauts → sélecteur éteint et CRPS identique à `off` ; `min_bt 4 +
+  k_up 2` → K = 0.5, appels à n = 24 sur ≤ 256 points, CRPS divisé par > 3 ; mode mix ;
+  primitives ; flags). Prédiction et coût dans le registre TimeMamba (P-SSM.7).
+
 - **2026-09-13 (CORPUS v3 REPRODUCTIBLE EN UNE COMMANDE : `scripts/build_corpus_v3.sh`,
   révisions HF épinglées)** — Préparation du scaling TimeSSM sur une machine louée (pod 8×
   5090). Le runbook v3 était complet mais éclaté sur trois documents (runbook, en-tête xres,

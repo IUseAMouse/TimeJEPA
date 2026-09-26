@@ -255,7 +255,9 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
 def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        stride: int, patch: int, device,
                        batch_size: int, pooled: bool = False,
-                       use_delta: bool = False, delta_max_k: int = 0) -> tuple:
+                       use_delta: bool = False, delta_max_k: int = 0,
+                       k_candidates=None, min_bt: int = 16,
+                       n_bt_windows: int = 2) -> tuple:
     """RateIN v2 (2026-09-01) - per-series k chosen by CAUSAL BACKTEST.
 
     Oracle verdict 2026-08-31: the mechanism is worth up to +57% per config
@@ -302,14 +304,18 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     decimation path beyond - a per-k hybrid, same selector.
     """
     REL_MARGIN = 0.05
-    N_BT_WINDOWS = 2
+    N_BT_WINDOWS = int(n_bt_windows)
+    # RateIN-up (2026-09-26): `min_bt` < 16 lets the backtest run on the short
+    # horizons (A 6, Q 8, W 8-13, M 12) where it was OFF by construction, and
+    # `k_candidates` may carry k = 1/m (upsampling) - see ratein.upsample.
+    candidates = tuple(k_candidates) if k_candidates else ratein_mod.K_CANDIDATES
     ks = {}
     entries = []                                    # (idx, sub_hist, known)
     for idx, y in enumerate(series):
         past = y[:len(y) - windows * h]             # before ANY test target
         avail = len(past) - 4 * patch
         h_bt = min(h, avail)
-        if h_bt < 16:
+        if h_bt < min_bt:
             ks[idx] = 1
             continue
         got = 0
@@ -324,12 +330,12 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
             ks[idx] = 1
 
     scores = defaultdict(lambda: defaultdict(list))
-    for k in ratein_mod.K_CANDIDATES:
+    for k in candidates:
         buckets = defaultdict(list)
         knob_k = use_delta and (delta_max_k <= 0 or k <= delta_max_k)
         for idx, sub_hist, known in entries:
-            hist = (ratein_mod.decimate(sub_hist[-(max_len * k):], k)
-                    if k > 1 and not knob_k else sub_hist)
+            hist = (ratein_mod.resample_context(sub_hist, k, max_len)
+                    if k != 1 and not knob_k else sub_hist)
             if len(hist) < patch:
                 continue
             ctx = prepare_context(hist, max_len, stride, patch)
@@ -337,7 +343,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 continue
             # h_bt varies per series (short-history fallback) -> the bucket
             # also carries h_fc so each batch stays homogeneous.
-            h_fc_k = len(known) if knob_k else -(-len(known) // k)
+            h_fc_k = len(known) if knob_k else ratein_mod.fc_horizon(len(known), k)
             buckets[(len(ctx), h_fc_k)].append((idx, ctx, known))
         for (length, h_fc), items in buckets.items():
             for i in range(0, len(items), batch_size):
@@ -345,7 +351,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 batch = torch.from_numpy(np.stack([c[1] for c in chunk]))
                 batch = batch.unsqueeze(-1).to(device)
                 kw = ({"w": torch.full((batch.shape[0],), 1.0 / k, device=device)}
-                      if knob_k and k > 1 else {})
+                      if knob_k and k != 1 else {})
                 with torch.no_grad():
                     out = model.forecast(batch, n=h_fc, **kw)
                 q = out.get("quantiles_denorm")
@@ -358,7 +364,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                     q = q[..., 0]
                 for b, (idx, _, known) in enumerate(chunk):
                     fan_nat = (q[b] if knob_k
-                               else ratein_mod.reinterp_fan(q[b], len(known), k))
+                               else ratein_mod.to_native_fan(q[b], len(known), k))
                     sc = _pinball_np(fan_nat, known, levels)
                     if np.isfinite(sc):
                         scores[idx][k].append(sc)
@@ -376,7 +382,9 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
             "pooling": "crps" if pooled else "geomean",
             "knob": "delta" if use_delta else "decimation",
             "delta_max_k": delta_max_k if use_delta else None,
-            "ratios": {str(k): round(r, 5) for k, r in sorted(ratios.items())}}
+            "min_bt": int(min_bt), "windows": N_BT_WINDOWS,
+            "candidates": [ratein_mod.norm_k(k) for k in candidates],
+            "ratios": {str(ratein_mod.norm_k(k)): round(r, 5) for k, r in sorted(ratios.items())}}
     return {idx: K for idx in range(len(series))}, diag
 
 
@@ -519,7 +527,8 @@ def _pool_ratios(scores: dict, pooled: bool) -> tuple:
     base_scored = [i for i in scores
                    if scores[i].get(1) and np.mean(scores[i][1]) > 0]
     ratios = {}
-    for k in ratein_mod.K_CANDIDATES:
+    ks_seen = sorted({k for i in base_scored for k in scores[i]}, key=float)
+    for k in ks_seen:
         if k == 1:
             continue
         idx = [i for i in base_scored if scores[i].get(k)]
@@ -638,7 +647,7 @@ def _mix_weights(ratios: dict, tau: float = MIX_TAU,
     the result renormalized (deterministic, sorted by k).
     """
     cand = {1: 1.0}
-    cand.update({int(k): float(r) for k, r in ratios.items()})
+    cand.update({ratein_mod.norm_k(float(k)): float(r) for k, r in ratios.items()})
     logits = {k: -math.log(max(r, 1e-6)) / tau for k, r in cand.items()}
     top = max(logits.values())
     w = {k: math.exp(v - top) for k, v in logits.items()}
@@ -658,6 +667,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     ratein_w: bool = False, ratein_w_max_k: int = 4,
                     ratein_delta_max_k: int = 0,
                     ratein_pool: bool = False, energy_judge=None,
+                    ratein_k_up=None, ratein_min_bt: int = 16,
+                    ratein_bt_windows: int = 2,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
@@ -703,12 +714,17 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # re-interpolated (guarded in main: the model must declare rate_knob).
     use_delta = ratein_mode == "delta"
     if ratein_mode in ("backtest", "mix", "delta") and not forced_k:
+        k_cands = tuple(ratein_mod.K_CANDIDATES) + tuple(
+            1.0 / int(m) for m in (ratein_k_up or []))
         bt_ks, bt_diag = _backtest_series_k(model, series, h, windows, max_len,
                                             stride, model.patching.patch_size,
                                             device, batch_size,
                                             pooled=ratein_pool,
                                             use_delta=use_delta,
-                                            delta_max_k=ratein_delta_max_k)
+                                            delta_max_k=ratein_delta_max_k,
+                                            k_candidates=k_cands,
+                                            min_bt=ratein_min_bt,
+                                            n_bt_windows=ratein_bt_windows)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"]), None
@@ -752,9 +768,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         if mix_weights is not None:
             comps = []
             for kk, wk in mix_weights.items():
-                hist = (ratein_mod.decimate(inst.context[-(max_len * kk):], kk)
-                        if kk > 1 else inst.context)
-                if kk > 1 and len(hist) < model.patching.patch_size:
+                hist = (ratein_mod.resample_context(inst.context, kk, max_len)
+                        if kk != 1 else inst.context)
+                if kk != 1 and len(hist) < model.patching.patch_size:
                     continue                    # same guard as the hard path
                 ctx = prepare_context(hist, max_len, stride,
                                       model.patching.patch_size)
@@ -786,9 +802,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         else:
             k = 1
         knob_k = use_delta and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k)
-        hist = (ratein_mod.decimate(inst.context[-(max_len * k):], k)
-                if k > 1 and not knob_k else inst.context)
-        if k > 1 and not knob_k and len(hist) < model.patching.patch_size:
+        hist = (ratein_mod.resample_context(inst.context, k, max_len)
+                if k != 1 and not knob_k else inst.context)
+        if k != 1 and not knob_k and len(hist) < model.patching.patch_size:
             # Guard (oracle crash 2026-08-31, IndexError on 6 configs): a
             # short history decimated by a large k goes empty - fall back k=1.
             k, hist = 1, inst.context
@@ -810,10 +826,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # factor range ([1,2,4] -> [-2,2]); beyond ratein_w_max_k, fall back
         # to the standard decimate+reinterp path.
         use_w = (ratein_w and 1 < k <= ratein_w_max_k) or (
-            use_delta and k > 1 and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k))
+            use_delta and k != 1 and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k))
         # Decimated grid: h' = ceil(h/k) steps cover the native horizon
         # (measurable bonus: fewer rollouts on long-term 10S/5T).
-        h_fc = h if use_w else -(-h // k)
+        h_fc = h if use_w else ratein_mod.fc_horizon(h, k)
         for i in range(0, len(items), batch_size):
             chunk = items[i:i + batch_size]
             batch = torch.from_numpy(np.stack([c[0] for c in chunk]))
@@ -857,13 +873,13 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 mix_mid = mid
             for b, item in enumerate(chunk):
                 ctx, target, past, scale = item[:4]
-                if k > 1 and not use_w:
+                if k != 1 and not use_w:
                     if quants is not None:
-                        fan_nat = ratein_mod.reinterp_fan(quants[b], h, k)
+                        fan_nat = ratein_mod.to_native_fan(quants[b], h, k)
                         med_nat = fan_nat[:, mid]
                     else:
                         fan_nat = None
-                        med_nat = ratein_mod.reinterp_fan(
+                        med_nat = ratein_mod.to_native_fan(
                             median[b][:, None], h, k)[:, 0]
                 else:
                     fan_nat = quants[b] if quants is not None else None
@@ -1030,7 +1046,7 @@ KNOWN_FLAGS = frozenset((
     "checkpoint_path", "energy_ckpt", "energy_config", "gift_batch_size",
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
-    "ratein_delta_max_k",
+    "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
@@ -1146,6 +1162,22 @@ def main(cfg: DictConfig):
         raise ValueError("+ratein_delta_max_k needs +ratein=delta")
     if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy", "delta"):
         raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy/delta")
+    #   +ratein_k_up=2,3,4      RateIN-up (B3', 2026-09-26): upsampling candidates
+    #                           k = 1/m for the short cycles (12 monthly, 52 weekly
+    #                           on ~150 points) the [16, 48] band never reached
+    #   +ratein_min_bt=4        backtest allowed down to h_bt >= 4 (default 16: OFF
+    #                           on A/Q/W and the M configs at h = 12)
+    #   +ratein_bt_windows=4    backtest windows (default 2; more on short h)
+    ratein_k_up = ([int(x) for x in str(cfg.ratein_k_up).split(",") if x]
+                   if cfg.get("ratein_k_up") else [])
+    ratein_min_bt = int(cfg.get("ratein_min_bt", 16) or 16)
+    ratein_bt_windows = int(cfg.get("ratein_bt_windows", 2) or 2)
+    if any(m < 2 for m in ratein_k_up):
+        raise ValueError("+ratein_k_up factors must be >= 2")
+    if (ratein_k_up or ratein_min_bt != 16 or ratein_bt_windows != 2) \
+            and ratein_mode_val not in ("backtest", "mix", "delta"):
+        raise ValueError("+ratein_k_up / +ratein_min_bt / +ratein_bt_windows need "
+                         "+ratein=backtest/mix/delta")
     if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
         raise ValueError("+ratein=energy needs +energy_ckpt=<pretrain checkpoint>")
     #   +refine=energy|ceiling                  S6 inference refinement of the
@@ -1270,6 +1302,12 @@ def main(cfg: DictConfig):
         tag += "_ratein-oracle"
     if ratein_pool:
         tag += "-pool"
+    if ratein_k_up:
+        tag += "-up" + "".join(str(m) for m in ratein_k_up)
+    if ratein_min_bt != 16:
+        tag += f"-bt{ratein_min_bt}"
+    if ratein_bt_windows != 2:
+        tag += f"-w{ratein_bt_windows}"
     energy_judge = None
     if ratein_mode_val == "energy" or refine_judge_kind == "ckpt":
         energy_judge = _build_energy_judge(cfg, device)
@@ -1368,6 +1406,9 @@ def main(cfg: DictConfig):
                                       ratein_delta_max_k=ratein_delta_max_k,
                                       ratein_pool=ratein_pool,
                                       energy_judge=energy_judge,
+                                      ratein_k_up=ratein_k_up,
+                                      ratein_min_bt=ratein_min_bt,
+                                      ratein_bt_windows=ratein_bt_windows,
                                       refine_spec=refine_spec,
                                       refine_judge=refine_judge,
                                       bias_mode=bias_mode,
