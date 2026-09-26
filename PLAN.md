@@ -1455,6 +1455,8 @@ TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
 ### TimeSSM — SSM linéaire invariant avec bouton de rythme (repo séparé) — **CHAMPION 2026-09-14 (bras wide)** : bande 0.767-0.769 / 0.524-0.526 / couv. 0.705-0.717 sur 5 checkpoints à 97 (stack), scratch 2.5M, égalité avec Toto-2.0-4m (0.5242) ; contre head8 0.7842 / 0.5340 / 0.756 ; run 10M lancé le 2026-09-14 (P-SSM.4)
 
+**Diagnostic 2026-09-26 (plan approuvé, détail dans TimeMamba `docs/EXPERIMENTAL_LOG.md`)** : le « gap » de h512 était une amputation de corpus, pas un écart d'évaluation ; l'écart à Toto est plat par terme et diffus sur le corps ; l'univarié n'est pas un handicap de protocole ; leviers restants non essayés : horizon aléatoire DANS la fenêtre fixe (B1, P-SSM.6), température de quantiles sur le SSM (B2), oracle-k du SSM (marge du sélecteur, 1.5 pt sur head8). `scripts/calibrate_quantiles.py` accepte `--config-dir`, `--horizon`, `--set` pour un checkpoint TimeSSM.
+
 Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt
 d'oracle, 0.9 capturé) ; un SSM à temps continu possède cette invariance EXACTEMENT (décimer
 par k à Δ ≡ série pleine à Δ/k), sans décimation ni réinterpolation — le mécanisme de

@@ -127,11 +127,20 @@ def main():
                     help="val windows sampled per dataset")
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--out-dir", default="evaluation/calibration")
+    ap.add_argument("--config-dir", default=None,
+                    help="config directory (default: this repo's configs/model; TimeSSM passes its own)")
+    ap.add_argument("--horizon", type=int, default=None,
+                    help="calibration horizon (default: the config's prediction_length; a horizon-free "
+                         "model can be calibrated at any h)")
+    ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
+                    help="hydra overrides (e.g. data.data_dir=/abs/path)")
     args = ap.parse_args()
 
-    config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
-    with initialize_config_dir(version_base=None, config_dir=config_dir):
-        cfg = compose(config_name=args.config_name)
+    config_dir = args.config_dir or str(Path(__file__).resolve().parents[1] / "configs" / "model")
+    with initialize_config_dir(version_base=None, config_dir=str(Path(config_dir).resolve())):
+        cfg = compose(config_name=args.config_name, overrides=list(args.set))
+    if args.horizon is not None:
+        cfg.model.prediction_length = int(args.horizon)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = create_model_from_config(cfg)
