@@ -1162,13 +1162,17 @@ def main(cfg: DictConfig):
         raise ValueError("+ratein_delta_max_k needs +ratein=delta")
     if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy", "delta"):
         raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy/delta")
-    #   +ratein_k_up=2,3,4      RateIN-up (B3', 2026-09-26): upsampling candidates
+    #   +ratein_k_up=2x3x4      RateIN-up (B3', 2026-09-26): upsampling candidates
     #                           k = 1/m for the short cycles (12 monthly, 52 weekly
     #                           on ~150 points) the [16, 48] band never reached
     #   +ratein_min_bt=4        backtest allowed down to h_bt >= 4 (default 16: OFF
     #                           on A/Q/W and the M configs at h = 12)
     #   +ratein_bt_windows=4    backtest windows (default 2; more on short h)
-    ratein_k_up = ([int(x) for x in str(cfg.ratein_k_up).split(",") if x]
+    # Separator: "x" or "-" as well as "," - an unquoted `+ratein_k_up=2,3,4` is
+    # a SWEEP for Hydra and the run dies before main (measured on the pod,
+    # 2026-09-29). Write +ratein_k_up=2x3x4 (or quote: '+ratein_k_up="2,3,4"').
+    import re as _re
+    ratein_k_up = ([int(x) for x in _re.split(r"[,x\-]", str(cfg.ratein_k_up)) if x]
                    if cfg.get("ratein_k_up") else [])
     ratein_min_bt = int(cfg.get("ratein_min_bt", 16) or 16)
     ratein_bt_windows = int(cfg.get("ratein_bt_windows", 2) or 2)
