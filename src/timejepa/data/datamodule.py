@@ -242,9 +242,14 @@ class TemperatureSampler(Sampler):
             else:
                 status = "balanced"
             
+            # Fractional mode: the realized share is p_i x batch_size (a float),
+            # not the legacy integer allocation - printing "1/batch" for every
+            # family there was misleading (pod log, 2026-09-29).
+            per_batch = (f"{self.expected_per_dataset[i]:>5.2f}" if self.fractional_batch
+                         else f"{samples_batch:>3}")
             logger.info(
                 f"  [{i}] {size:>12,} samples | "
-                f"{samples_batch:>3}/batch ({prob:>5.1%}) | "
+                f"{per_batch}/batch ({prob:>5.1%}) | "
                 f"was {original_frac:>5.1%} | {status}"
             )
     
