@@ -1480,7 +1480,9 @@ Réponse des registres (TimeJEPA, TimeMamba, harnais), à ne pas redécouvrir :
   sur le SSM. **Plus grande marge connue** : oracle-k de RateIN (0.5190 contre 0.5340 sur
   head8), jamais mesuré sur le SSM.
 - **Objectifs** : 0.52 pour le 2.5M plausible (B1 + B2) ; 0.50 pour le 10M demande 2.5 pt que
-  rien ne soutient, 0.51 est le meilleur scénario réaliste.
+  rien ne soutient, 0.51 est le meilleur scénario réaliste. **Correction 2026-09-30** : la barre
+  zero-shot de la classe ≤ 10M est FlowState-9.1M à 0.5019, pas 0.4866 (r1.1 fait ~18.5M) ;
+  l'écart du 10M frac (0.5213) à la barre est 1.9 pt, et 0.51 la ramènerait à 0.8 pt.
 
 Ordre d'exécution (détail, commandes et prédictions dans TimeMamba `docs/EXPERIMENTAL_LOG.md`
 et `docs/RUNBOOK.md` §2c-2d) :
@@ -1502,7 +1504,7 @@ et `docs/RUNBOOK.md` §2c-2d) :
 Décision utilisateur 2026-09-09 : la seule couche d'inférence qui tient est RateIN (2.4 pt
 d'oracle, 0.9 capturé) ; un SSM à temps continu possède cette invariance EXACTEMENT (décimer
 par k à Δ ≡ série pleine à Δ/k), sans décimation ni réinterpolation — le mécanisme de
-FlowState (0.4866, 9M). Spike dans `../TimeMamba`, branche `timessm`, qui dépend de TimeJEPA
+FlowState (FlowState-9.1M : 0.5019 ; le 0.4866 longtemps cité ici est FlowState-r1.1, ~18.5M — correction 2026-09-30). Spike dans `../TimeMamba`, branche `timessm`, qui dépend de TimeJEPA
 comme bibliothèque (FinetuneModule, datamodule, RevIN/RobustScale, tête quantile, harnais).
 LTI diagonal (S4D) avec `delta_scale`, PAS Mamba (la sélectivité casse le transfert exact) ;
 lecture sélective en ablation ; **RateIN-Δ** = `+ratein=delta` dans `evaluate_gift.py`

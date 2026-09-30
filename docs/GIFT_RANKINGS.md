@@ -60,10 +60,12 @@ Sur 127 entrées, 63 sont des fondations au sens ci-dessus. Exclus en plus par l
 
 | # | modèle | params (M) | CRPS | MASE | type |
 |---|---|---|---|---|---|
-| 1 | FlowState-r1.1 | 9.1 | 0.4866 | 0.7015 | zero-shot |
-| 2 | Granite-FlowState-r1.1 | 9.1 | 0.4901 | 0.7014 | zero-shot |
-| 3 | FlowState-9.1M | 9.1 | 0.5019 | 0.7262 | zero-shot |
-| 4 | TTM-R3-PT | 1.4 | 0.5195 | 0.7240 | pretrained |
+| — | ~~FlowState-r1.1~~ | **18.5** (métadonnée 9.1 fausse) | 0.4866 | 0.7015 | hors table |
+| — | ~~Granite-FlowState-r1.1~~ | **18.5** (idem) | 0.4901 | 0.7014 | hors table |
+| 1 | FlowState-9.1M | 9.1 | 0.5019 | 0.7262 | zero-shot |
+| 2 | **TimeSSM-2.5M wide (flip+mix+pool+RateIN-up)** | 3.0 | 0.5194 | 0.7621 | zero-shot |
+| 3 | TTM-R3-PT | 1.4 | 0.5195 | 0.7240 | pretrained |
+| 4 | **TimeSSM-2.5M wide (flip+mix+pool)** | 3.0 | 0.5242 | 0.7679 | zero-shot |
 | 5 | Toto-2.0-4m | 4.1 | 0.5242 | 0.7565 | pretrained |
 | 6 | **TimeJEPA-mini-head8 (flip+mix+pool)** | 4 | 0.5340 | 0.7842 | zero-shot |
 | 7 | TinyCast | 0.1 | 0.5454 | 0.7738 | zero-shot |
@@ -72,5 +74,7 @@ Sur 127 entrées, 63 sont des fondations au sens ci-dessus. Exclus en plus par l
 | 10 | Metamorph1.0-4.5M | 4.5 | 0.5549 | 0.7761 | pretrained |
 | 11 | **TimeJEPA-tiny (flip+RateIN v3)** | 1.14 | 0.5588 | 0.8152 | zero-shot |
 | 12 | YingLong_6m | 7.3 | 0.6090 | 0.8802 | zero-shot |
+
+**CORRECTION 2026-09-30** : FlowState-r1.1 et Granite-FlowState-r1.1 font ~18.5M de paramètres (fiche du modèle : porte de sortie sur l'encodeur S5, contexte de préentraînement 4096, MLP élargi), pas 9.1M comme l'indiquent les métadonnées du leaderboard, qui reprennent le compte de la r1. Le seul FlowState sous 10M est FlowState-9.1M à **0.5019**. La barre zero-shot de la classe est donc 0.502, pas 0.487 : une erreur portée dans le PLAN et les registres depuis août, corrigée ici. TimeSSM-10M frac (10.1M, 0.5213 / 0.7674, bande 0.519-0.521) est juste au-dessus de 10M et n'entre pas dans cette table au sens strict.
 
 Notes : TempoPFN n'a pas de compte de paramètres dans les métadonnées ; son article (arXiv 2510.25502) indique 34.69M, il n'est donc pas dans la table sub-10M. FlowState apparaît trois fois (FlowState-9.1M, FlowState-r1.1 et Granite-FlowState-r1.1 : une lignée, deux versions) — un seul modèle au sens du classement. TTM-R3-FT est exclu (type fine-tuned), TTM-R3-PT est la référence pretrained. Le type est auto-déclaré par les auteurs : le filtre est le meilleur possible depuis les métadonnées, pas une vérité absolue.

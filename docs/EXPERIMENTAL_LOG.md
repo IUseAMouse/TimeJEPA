@@ -1919,6 +1919,23 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-09-30 (CORRECTION DE CIBLE : le FlowState sous 10M est à 0.5019, pas 0.4866)** —
+  Relevé par l'utilisateur. Le leaderboard porte trois entrées FlowState : FlowState-9.1M
+  (0.5019 / 0.7262), FlowState-r1.1 (0.4866 / 0.7015) et Granite-FlowState-r1.1 (0.4901 /
+  0.7014). Les métadonnées vendues (`models_meta.csv`, 2026-09-06) donnent 9.1M aux trois ;
+  la fiche du modèle dit que r1.1 fait ~18.5M (porte de sortie ajoutée à l'encodeur S5,
+  contexte de préentraînement 2048 → 4096, MLP élargi). L'entrée du 2026-09-06 (« r1.1,
+  Granite-r1.1 et 9.1M sont une lignée », comptée une fois à 0.4866) était donc fausse,
+  ainsi que « FlowState (0.4866, 9M) » dans PLAN et les mentions « FlowState 0.487 » des
+  registres et de mes messages depuis août. Ce qui était juste : toutes les cartes par
+  config (`gift_gap`, `gift_gap_ssm.py`) comparent à `FlowState-9.1M.csv`, le bon modèle
+  (nous/eux ×1.039 sur le 10M frac ↔ 0.5213 / 0.5019). Conséquences : la barre zero-shot
+  de la classe ≤ 10M est 0.502 ; TimeSSM-10M frac en est à 1.9 pt (pas 3.5), le 2.5M wide
+  avec RateIN-up (0.5194) à 1.75 pt. `gift_foundation_rank.py` : `PARAMS_OVERRIDE` pour
+  les deux r1.1 ; `docs/GIFT_RANKINGS.md` : table sub-10M corrigée (r1.1 hors table,
+  lignes TimeSSM ajoutées). À noter pour l'architecture : r1.1 ajoute une porte de sortie
+  à son SSM, ce que nos blocs gated ont déjà.
+
 - **2026-09-26 (RateIN-up livré : candidats k < 1 par sur-échantillonnage et backtest sur
   horizons courts — inerte par défaut)** — Constat sur TimeSSM (carte par config du 26/09) :
   sur A, Q, W, m4_daily et les M à h = 12, `_backtest_series_k` force k = 1 (`h_bt < 16`) et

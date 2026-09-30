@@ -45,7 +45,17 @@ def load(snapshot: str):
     return rows
 
 
+# Parameter counts the leaderboard metadata gets wrong (checked against the
+# model cards, 2026-09-30): FlowState-r1.1 inherits the 9.1M of the r1 card
+# but is ~18.5M (output gating on the S5 encoder, 4096 pretraining context,
+# larger MLP) - it is NOT a sub-10M model. The sub-10M FlowState is
+# FlowState-9.1M (CRPS 0.5019), not the 0.4866 of r1.1.
+PARAMS_OVERRIDE = {"FlowState-r1.1": 18.5, "Granite-FlowState-r1.1": 18.5}
+
+
 def _params(name: str, raw: str):
+    if name in PARAMS_OVERRIDE:
+        return PARAMS_OVERRIDE[name]
     if raw not in ("", None):
         try:
             return float(raw)
