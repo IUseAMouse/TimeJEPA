@@ -31,7 +31,7 @@ same formula (parameter counts from the leaderboard metadata):
 
 | Model | Parameters | CRPS ratio |
 |---|---|---|
-| FlowState-r1.1 | 9.1M | 0.487 |
+| FlowState-r1.1 | 9.1M | 0.502 |
 | TTM-R3 | 1.4M | 0.520 |
 | Toto-2.0-4m | 4.1M | 0.524 |
 | TempoPFN | n/a | 0.533 |

@@ -1457,6 +1457,21 @@ TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
 **Diagnostic 2026-09-26 (plan approuvé, détail dans TimeMamba `docs/EXPERIMENTAL_LOG.md`)** : le « gap » de h512 était une amputation de corpus, pas un écart d'évaluation ; l'écart à Toto est plat par terme et diffus sur le corps ; l'univarié n'est pas un handicap de protocole ; leviers restants non essayés : horizon aléatoire DANS la fenêtre fixe (B1, P-SSM.6), température de quantiles sur le SSM (B2), oracle-k du SSM (marge du sélecteur, 1.5 pt sur head8). `scripts/calibrate_quantiles.py` accepte `--config-dir`, `--horizon`, `--set` pour un checkpoint TimeSSM.
 
+#### Plan « médiane » (2026-10-02) — verdicts des bras du 26/09 et suite
+
+Verdicts : B1 (horizon aléatoire dans la fenêtre) sans effet, clos ; B2 (γ) tenu, +4.8 pt de
+couverture, −0.1 pt CRPS ; B3′ (RateIN-up) −0.48 pt mais l'ablation montre que les 4 fenêtres de
+backtest font 90 % du gain, les candidats k < 1 rien, le backtest court nuit seul ; oracle-k à
+1.25 pt au-dessus du stack. Champion : 10M (dernier checkpoint B1) + stack + RateIN-up + γ =
+0.7582 / 0.5160. Carte nu / flip / stack en MASE : le modèle nu est un modèle de COURT terme
+(MASE nu 0.78 / 0.95 / 0.97 par terme, > 1 au-delà de 480 pas) ; le stack ramène medium/long à
+0.79 par la décimation ; l'horaire (k 1-3) est le groupe où la médiane perd encore. Suite, dans
+l'ordre : **B5** fenêtre décimée par un k tiré par batch à l'entraînement (TimeMamba,
+`ssm_mid_v3_dec`, P-SSM.9) ; **S** sélecteur (gap backtest/oracle, 8 fenêtres, MIX_TAU) ;
+**W** pinball pondérée sur la médiane (plus tard). Détail dans TimeMamba
+`docs/EXPERIMENTAL_LOG.md` du 2026-10-02 et `~/.claude/plans/playful-pondering-dragonfly.md`.
+Barre de la classe ≤ 10M : FlowState-9.1M 0.5019 / 0.7262 (voir correction du 30/09).
+
 #### Diagnostic de la sous-performance (2026-09-26) — ce que les registres établissent, et l'ordre des bras
 
 Question posée : les facteurs limitants restants sont-ils la géométrie 1024/256 et l'univarié ?
