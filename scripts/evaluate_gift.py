@@ -669,6 +669,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     ratein_pool: bool = False, energy_judge=None,
                     ratein_k_up=None, ratein_min_bt: int = 16,
                     ratein_bt_windows: int = 2,
+                    ratein_mix_tau: float = MIX_TAU,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
@@ -727,7 +728,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                             n_bt_windows=ratein_bt_windows)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
-            mix_weights, bt_ks = _mix_weights(bt_diag["ratios"]), None
+            mix_weights, bt_ks = _mix_weights(bt_diag["ratios"], tau=ratein_mix_tau), None
     if ratein_mode == "energy" and not forced_k:
         bt_ks, bt_diag = _energy_series_k(energy_judge, series, h, windows,
                                           max_len, stride,
@@ -933,7 +934,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             res["ratein"]["energy" if ratein_mode == "energy" else "backtest"] = bt_diag
         if mix_weights is not None:
             res["ratein"]["mix"] = {
-                "tau": MIX_TAU,
+                "tau": ratein_mix_tau,
                 "weights": {str(k): round(w, 4) for k, w in mix_weights.items()}}
     if ttt_diag is not None:
         res["ttt"] = {"official": True, **ttt_diag}
@@ -1046,7 +1047,7 @@ KNOWN_FLAGS = frozenset((
     "checkpoint_path", "energy_ckpt", "energy_config", "gift_batch_size",
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
-    "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows",
+    "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows", "ratein_mix_tau",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
@@ -1176,6 +1177,11 @@ def main(cfg: DictConfig):
                    if cfg.get("ratein_k_up") else [])
     ratein_min_bt = int(cfg.get("ratein_min_bt", 16) or 16)
     ratein_bt_windows = int(cfg.get("ratein_bt_windows", 2) or 2)
+    #   +ratein_mix_tau=0.03    temperature of the mix weights (default MIX_TAU = 0.05):
+    #                           lower = closer to a hard choice, higher = flatter mix
+    ratein_mix_tau = float(cfg.get("ratein_mix_tau", MIX_TAU) or MIX_TAU)
+    if ratein_mix_tau != MIX_TAU and ratein_mode_val != "mix":
+        raise ValueError("+ratein_mix_tau needs +ratein=mix")
     if any(m < 2 for m in ratein_k_up):
         raise ValueError("+ratein_k_up factors must be >= 2")
     if (ratein_k_up or ratein_min_bt != 16 or ratein_bt_windows != 2) \
@@ -1312,6 +1318,8 @@ def main(cfg: DictConfig):
         tag += f"-bt{ratein_min_bt}"
     if ratein_bt_windows != 2:
         tag += f"-w{ratein_bt_windows}"
+    if ratein_mix_tau != MIX_TAU:
+        tag += f"-tau{ratein_mix_tau:g}"
     energy_judge = None
     if ratein_mode_val == "energy" or refine_judge_kind == "ckpt":
         energy_judge = _build_energy_judge(cfg, device)
@@ -1413,6 +1421,7 @@ def main(cfg: DictConfig):
                                       ratein_k_up=ratein_k_up,
                                       ratein_min_bt=ratein_min_bt,
                                       ratein_bt_windows=ratein_bt_windows,
+                                      ratein_mix_tau=ratein_mix_tau,
                                       refine_spec=refine_spec,
                                       refine_judge=refine_judge,
                                       bias_mode=bias_mode,

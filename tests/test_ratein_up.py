@@ -159,5 +159,16 @@ def test_primitives():
 
 def test_flags_known():
     import evaluate_gift as EG
-    for f in ("ratein_k_up", "ratein_min_bt", "ratein_bt_windows"):
+    for f in ("ratein_k_up", "ratein_min_bt", "ratein_bt_windows", "ratein_mix_tau"):
         assert f in EG.KNOWN_FLAGS
+
+
+def test_mix_tau_is_relayed_and_default_is_unchanged(harness):
+    base = _run(harness, _BandStub(), ratein_mode="mix", ratein_pool=True, ratein_k_up=[2, 3], ratein_min_bt=4)
+    same = _run(harness, _BandStub(), ratein_mode="mix", ratein_pool=True, ratein_k_up=[2, 3], ratein_min_bt=4,
+                ratein_mix_tau=harness.MIX_TAU)
+    assert base["ratein"]["mix"] == same["ratein"]["mix"] and base["model"]["CRPS"] == same["model"]["CRPS"]
+    flat = _run(harness, _BandStub(), ratein_mode="mix", ratein_pool=True, ratein_k_up=[2, 3], ratein_min_bt=4,
+                ratein_mix_tau=1.0)
+    assert flat["ratein"]["mix"]["tau"] == 1.0
+    assert max(flat["ratein"]["mix"]["weights"].values()) < max(base["ratein"]["mix"]["weights"].values())
