@@ -1457,6 +1457,39 @@ TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
 **Diagnostic 2026-09-26 (plan approuvé, détail dans TimeMamba `docs/EXPERIMENTAL_LOG.md`)** : le « gap » de h512 était une amputation de corpus, pas un écart d'évaluation ; l'écart à Toto est plat par terme et diffus sur le corps ; l'univarié n'est pas un handicap de protocole ; leviers restants non essayés : horizon aléatoire DANS la fenêtre fixe (B1, P-SSM.6), température de quantiles sur le SSM (B2), oracle-k du SSM (marge du sélecteur, 1.5 pt sur head8). `scripts/calibrate_quantiles.py` accepte `--config-dir`, `--horizon`, `--set` pour un checkpoint TimeSSM.
 
+#### Plan « MASE du 2.5M » (2026-10-04) — défauts d'architecture, diagnostics d'abord
+
+Verdict de B5 (fenêtre décimée à l'entraînement) : ÉCHEC. MASE nue medium 0.937 → 0.923, long
+0.966 → 0.959 (bon signe, 1 pt au lieu de 5), stack 0.5219 → 0.5248. Bilan des bras de
+continuation sur le 10M au stack : frac +0.3 pt, B1 0, B5 −0.3 ; la capacité (×4) vaut 0.3 pt
+au nu comme au stack. Le 2.5M wide `1.2841` devient le modèle principal (0.7621 / 0.5183),
+le 10M une ligne de passage à l'échelle. Calendrier jusqu'au 16/10 inchangé (bras S,
+fréquence en entrée, tables, cartes, soumission).
+
+Principe tiré de B5 : corriger ce que RateIN compense déjà ne bouge pas le stack. Cibles hors
+de portée du stack, contre FlowState-9.1M : H ×1.077 (5/31), W ×1.098, A ×1.143, Q ×1.065,
+M ×1.053 (k = 1), m4_hourly ×1.90 (pire que la saisonnalité naïve à h = 48).
+
+| # | Défaut lu dans le code | Le stack compense ? |
+|---|---|---|
+| E | pinball dans le repère arcsinh : erreur à z pondérée par 1/√(1+z²), MASE en brut | non |
+| D | contextes d'entraînement ≥ 128 points, séries de ~30 points à l'éval | non |
+| B | futur = token constant, une attention croisée par contenu : pas de copie saisonnière | non |
+| A | rollout non piloté, représentations futures vers un point fixe | oui (décimation) |
+| C | ni convolution ni sélectivité, pour une équivalence Δ ≡ décimation inutilisée | partiel |
+
+- **Phase 0** (sans entraînement) : `TimeMamba/scripts/diagnose_median.py` — `sn` (configs
+  au niveau de la saisonnalité naïve, borne oracle), `data` (longueurs de contexte, queues
+  des cibles dans le repère RobustScale, croisées avec la carte), `flat` (amplitude de la
+  médiane et variation des représentations le long de l'horizon). Seuils gravés au registre
+  TimeMamba du 2026-10-04.
+- **Phase 1** : UN bras de 12 h en continuation du 2.5M, initialisé à l'identité, celui que
+  la phase 0 désigne : E (poids `min(√(1+z²), 10)` dans la pinball), D (`context_lengths`
+  dès 16 points), ou B (a priori saisonnier par autocorrélation ajouté au token futur,
+  `W` à zéro). Un résultat nul en continuation prouve moins qu'un entraînement de zéro.
+- **Après la release** : le gagnant de zéro (5 jours), décodeur continu pour A, `d_conv` et
+  `selective_readout` pour C, R2 / R3.
+
 #### Plan « médiane » (2026-10-02) — verdicts des bras du 26/09 et suite
 
 Verdicts : B1 (horizon aléatoire dans la fenêtre) sans effet, clos ; B2 (γ) tenu, +4.8 pt de
