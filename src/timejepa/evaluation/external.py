@@ -21,9 +21,10 @@ harness keys their cache on the Hugging Face id instead.
 Kinds:
   chronos   Chronos-Bolt (tiny 9M, small 48M, base 205M) and Chronos-2 (120M),
             `chronos-forecasting` >= 2.3. Native 9-quantile fan.
-  t0        t0-alpha (The Forecasting Company, 102M), `tfc-t0`. Native
-            quantiles 0.1/0.25/0.5/0.75/0.9, the others interpolated by the
-            package.
+  t0        t0-alpha (102M, gated) and t0-beta (256M, open), The Forecasting
+            Company, `tfc-t0` >= 0.5: older releases run t0-beta under
+            t0-alpha's normalization and silently degrade it. Levels the
+            model was not trained on are interpolated by the package.
   ttm       TinyTimeMixer (IBM Granite, 1-5M), `granite-tsfm`. Point-only:
             the fan is the point repeated (CRPS = MAE-like, as in the
             2026-09-06 paired reading). Autoregressive beyond its horizon.
@@ -118,15 +119,20 @@ class ChronosForecaster(ExternalForecaster):
         return quantiles
 
 
-# --------------------------------------------------------------- t0-alpha
+# --------------------------------------------------------------- t0
 class T0Forecaster(ExternalForecaster):
-    """t0-alpha (The Forecasting Company) through `t0.T0Forecaster.predict`;
-    quantiles the model was not trained on are interpolated by the package."""
+    """t0-alpha / t0-beta (The Forecasting Company) through
+    `t0.T0Forecaster.predict`; quantiles the model was not trained on are
+    interpolated by the package."""
     kind = "t0"
 
     def __init__(self, hf_id: str, device, context_length: int = 2048,
                  name: Optional[str] = None):
+        import inspect
         from t0 import T0Forecaster as _T0
+        if "quantile_levels" not in inspect.signature(_T0.predict).parameters:
+            raise RuntimeError("tfc-t0 >= 0.5 is required (predict(quantile_levels=...)); older "
+                               "releases also load t0-beta under t0-alpha's normalization")
         super().__init__(name or hf_id.split("/")[-1], hf_id, context_length, device)
         try:
             self.model = _T0.from_pretrained(hf_id).eval().to(device)
@@ -142,7 +148,7 @@ class T0Forecaster(ExternalForecaster):
 
     def _predict(self, ctx: torch.Tensor, n: int) -> torch.Tensor:
         out = self.model.predict(ctx.to(self.device), horizon=n,
-                                 quantiles=list(self.quantile_levels))
+                                 quantile_levels=list(self.quantile_levels))
         return out.quantiles
 
 

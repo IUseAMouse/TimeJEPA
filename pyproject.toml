@@ -59,7 +59,7 @@ cluster = [
 # transformers 4.x. Install: uv pip install -e ".[external]"
 external = [
     "chronos-forecasting>=2.3",
-    "tfc-t0>=0.3",
+    "tfc-t0>=0.5",
 ]
 
 [build-system]

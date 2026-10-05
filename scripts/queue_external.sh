@@ -10,12 +10,12 @@
 #   LANES="chronos_bolt_tiny|ttm_r3|chronos_bolt_small" ...   one lane per GPU, models separated by spaces
 #
 # Needs the `external` extra (chronos-forecasting, tfc-t0) and, for ttm_r3,
-# the `ttm` extra (granite-tsfm); t0_alpha needs an accepted licence and a
-# Hugging Face login. Results: evaluation/<model.name>/<hf id>/gift<tag>/.
+# the `ttm` extra (granite-tsfm). t0_beta is open; t0_alpha (add it to a lane)
+# needs an accepted licence and a Hugging Face login. Results: evaluation/<model.name>/<hf id>/gift<tag>/.
 set -u
 cd "$(dirname "$0")/.."
 PY=${PY:-python}
-LANES=${LANES:-"chronos_bolt_tiny t0_alpha|ttm_r3 chronos2|chronos_bolt_small"}
+LANES=${LANES:-"chronos_bolt_tiny t0_beta|ttm_r3 chronos2|chronos_bolt_small"}
 BATCH=${BATCH:-32}
 UP="+tta_flip=true +ratein=mix +ratein_pool=true +ratein_k_up=2x3x4 +ratein_min_bt=4 +ratein_bt_windows=4"
 mkdir -p logs
