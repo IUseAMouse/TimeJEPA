@@ -1919,6 +1919,46 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-10-05 (FIDÉLITÉ DU HARNAIS : il reproduit les lignes officielles à 6 chiffres une fois
+  trois écarts corrigés ; UN de ces écarts touche NOS chiffres — la MASE des 15 configs à
+  cibles partiellement manquantes)** — Déclencheur (utilisateur) : notre t0-beta nu sort à
+  0.7052 / 0.4881 contre 0.6865 / 0.4738 officiels, Chronos-Bolt small à 0.8290 / 0.5660
+  contre 0.8221 / 0.5767. Méthode : mêmes modèles en local (CPU, float32), comparés config
+  par config aux `all_results.csv` officiels (`scripts/harness_fidelity.py`, nouveau ;
+  t0-beta vendorisé sous `docs/assets/gift_leaderboard/2026-10-05/raw/`), plus le naïf
+  saisonnier local contre l'officiel en MASE (contrôle sans modèle). **Constats.** Sans
+  valeur manquante le harnais est EXACT : Chronos-Bolt small sur m_dense/D, saugeen/D,
+  us_births/D, t0-beta sur m_dense/D, naïf local partout : 0.000 % d'écart, MASE et CRPS.
+  Trois écarts, tous localisés : **(1) agrégation de la MASE.** gluonts agrège avec
+  `axis=None` : moyenne sur toutes les OBSERVATIONS valides ; `MetricAccumulator` faisait la
+  moyenne des moyennes par instance. Identique à cibles complètes, différent quand une
+  cible est en partie NaN : kdd_cup_2018/D, Chronos-Bolt small +0.41 %, naïf local +1.06 %.
+  Corrigé (`gift.py`, somme / nombre d'observations) : 0.0000 % sur les trois. Configs
+  concernées, 15 : bitbrains_fast_storage ×4, bitbrains_rnd ×4, kdd_cup_2018 ×4,
+  hierarchical_sales/D, restaurant/D, temperature_rain/D. **Tous les chiffres de MASE du
+  projet (TimeJEPA, TimeSSM) sont à recalculer sur ces 15 configs ; le CRPS n'est pas
+  touché.** Sens et taille de l'effet sur nos modèles : inconnus avant recalcul.
+  `scripts/requeue_nan_configs.sh` écarte les 15 JSON en cache (sans rien supprimer).
+  **(2) valeurs manquantes en entrée des modèles tiers.** `prepare_context` les interpole ;
+  les soumissions officielles de Chronos et t0 passent la série brute. kdd_cup_2018/D,
+  Chronos-Bolt small : +3.0 % MASE, +3.2 % CRPS avec interpolation, CRPS exact sans.
+  Nouvel attribut `handles_nan` (Chronos, t0 : vrai ; TTM : faux) et `keep_nan` sur le
+  contexte natif (k = 1) ; les contextes rééchantillonnés par RateIN restent interpolés.
+  30 configs ont des NaN dans l'historique. Nos modèles n'ont pas de notion de valeur
+  manquante : l'interpolation reste leur protocole. **(3) protocole par modèle.** t0-beta :
+  contexte 8192 dans son notebook officiel, 2048 dans notre config → corrigé, us_births/D
+  exact. Chronos sur GPU : bfloat16 par défaut dans l'adaptateur → float32 partout (les
+  officiels sont en float32). Chronos-2 : l'adaptateur passait [B, L] au lieu de
+  [B, 1, L] (toutes les configs en échec sur le pod) → corrigé ; us_births/D exact, mais
+  m_dense/D +10 % / +13 % : la soumission officielle prévoit les variables d'une série
+  multivariée CONJOINTEMENT, notre harnais les éclate. Chronos-2 est donc mesuré ici en
+  mode univarié, sous sa ligne officielle sur le multivarié : à écrire dans le papier.
+  **Conséquences.** L'hypothèse « le harnais sous-évalue TimeSSM » est réfutée pour le
+  CRPS (exact) et bornée pour la MASE (15 configs à recalculer). Toutes les évals tierces
+  du matin (interpolation, bf16, ancien contexte t0, ancienne MASE) sont à refaire dans des
+  dossiers neufs ; P-RateIN-ext tient toujours, à juger sur les nouvelles lignes. Tests :
+  MASE poolée, `keep_nan` (39 dans `test_gift_eval.py`).
+
 - **2026-10-05 (RateIN SUR MODÈLES TIERS : file prête, PRÉDICTION P-RateIN-ext gravée avant
   les chiffres)** — `scripts/queue_external.sh` : une voie par carte, par modèle un smoke
   (`m_dense/D/short`, le modèle est sauté s'il échoue) puis trois évals à 97 configs par le

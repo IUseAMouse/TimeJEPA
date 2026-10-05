@@ -209,3 +209,30 @@ def test_prepare_context_contract():
 
     # all-NaN: refused, not invented
     assert prepare_context(np.full(50, np.nan, dtype=np.float32), 1024, 8, 16) is None
+
+
+def test_mase_is_pooled_over_valid_observations_like_gluonts():
+    """gluonts aggregates MASE with axis=None: a partly-NaN target weighs by
+    its number of valid steps. Mean of per-instance means read 0.4% high on
+    kdd_cup_2018/D against the official Chronos-Bolt line (2026-10-05)."""
+    acc = gift.MetricAccumulator()
+    full = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+    holes = np.array([np.nan, np.nan, np.nan, 10.0], dtype=np.float32)
+    acc.add(full, full + 1.0, None, scale=1.0)            # four errors of 1
+    acc.add(holes, np.zeros(4, dtype=np.float32), None, scale=2.0)   # one error of 10 / 2
+    assert acc.result()["MASE"] == pytest.approx((4 * 1.0 + 5.0) / 5)      # not (1 + 5) / 2
+    whole = gift.MetricAccumulator()
+    whole.add(full, full + 1.0, None, scale=1.0)
+    whole.add(full, full + 3.0, None, scale=1.0)
+    assert whole.result()["MASE"] == pytest.approx(2.0)   # complete targets: the mean of the two means
+
+
+def test_prepare_context_keeps_nans_on_request():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from evaluate_gift import prepare_context
+
+    y = np.array([1.0, np.nan, 3.0, 4.0], dtype=np.float32)
+    assert np.array_equal(prepare_context(y, 1024, 1, 1), np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    kept = prepare_context(y, 1024, 1, 1, keep_nan=True)
+    assert np.isnan(kept[1]) and np.array_equal(kept[[0, 2, 3]], y[[0, 2, 3]])
+    assert prepare_context(np.full(8, np.nan, dtype=np.float32), 1024, 1, 1, keep_nan=True) is None

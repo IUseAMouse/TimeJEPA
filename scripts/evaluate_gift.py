@@ -73,13 +73,15 @@ for _noisy in ("datasets", "huggingface_hub", "fsspec", "filelock", "urllib3"):
 # ---------------------------------------------------------------------------
 
 def prepare_context(past: np.ndarray, max_len: int, stride: int,
-                    min_len: int) -> np.ndarray:
+                    min_len: int, keep_nan: bool = False) -> np.ndarray:
     """
     Turn a raw past into a model-ready context.
 
     * keep the most recent `max_len` points (the model's trained maximum);
     * NaNs are linearly interpolated (edge-filled at the ends) - model INPUT
-      only, targets are never imputed;
+      only, targets are never imputed; `keep_nan` leaves them in place for a
+      model that reads NaN as a missing observation (`handles_nan`, the
+      third-party forecasters: their official GIFT runs pass the raw series);
     * truncate FROM THE LEFT to a multiple of `stride`: Patching would
       otherwise right-pad by repeating the final value, i.e. fabricate
       observations after the true last point, exactly where they hurt most;
@@ -92,7 +94,8 @@ def prepare_context(past: np.ndarray, max_len: int, stride: int,
         finite = ~np.isnan(ctx)
         if not finite.any():
             return None
-        ctx = np.interp(idx, idx[finite], ctx[finite]).astype(np.float32)
+        if not keep_nan:
+            ctx = np.interp(idx, idx[finite], ctx[finite]).astype(np.float32)
 
     if len(ctx) > min_len:
         ctx = ctx[len(ctx) % stride:]
@@ -338,7 +341,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                     if k != 1 and not knob_k else sub_hist)
             if len(hist) < patch:
                 continue
-            ctx = prepare_context(hist, max_len, stride, patch)
+            ctx = prepare_context(hist, max_len, stride, patch,
+                                  keep_nan=k == 1 and getattr(model, "handles_nan", False))
             if ctx is None:
                 continue
             # h_bt varies per series (short-history fallback) -> the bucket
@@ -773,8 +777,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                         if kk != 1 else inst.context)
                 if kk != 1 and len(hist) < model.patching.patch_size:
                     continue                    # same guard as the hard path
-                ctx = prepare_context(hist, max_len, stride,
-                                      model.patching.patch_size)
+                ctx = prepare_context(hist, max_len, stride, model.patching.patch_size,
+                                      keep_nan=kk == 1 and getattr(model, "handles_nan", False))
                 if ctx is None:
                     continue
                 comps.append((kk, wk, ctx))
@@ -809,7 +813,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             # Guard (oracle crash 2026-08-31, IndexError on 6 configs): a
             # short history decimated by a large k goes empty - fall back k=1.
             k, hist = 1, inst.context
-        ctx = prepare_context(hist, max_len, stride, model.patching.patch_size)
+        ctx = prepare_context(hist, max_len, stride, model.patching.patch_size,
+                              keep_nan=k == 1 and getattr(model, "handles_nan", False))
         if ctx is None:
             continue
         # MASE scale uses the FULL past, not the capped context - gluonts

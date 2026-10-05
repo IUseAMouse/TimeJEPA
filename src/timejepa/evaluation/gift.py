@@ -258,11 +258,18 @@ class MetricAccumulator:
     """
     Streams per-instance results into the two leaderboard metrics.
 
-    MASE  - mean over instances of mean_t|err| / seasonal_error(past).
+    MASE  - mean over every valid OBSERVATION of |err| / seasonal_error(past)
+            (gluonts aggregates with axis=None: pooled over instances and
+            steps). With complete targets this is the mean over instances of
+            the per-instance mean; with NaN targets an instance weighs by its
+            number of valid steps. The per-instance mean was used until
+            2026-10-05 and read 0.4% high on kdd_cup_2018/D against the
+            official Chronos-Bolt line; the pooled form matches it.
     CRPS  - mean over quantiles of  sum(2*QL_q) / sum(|y|), pooled over the
             whole config (gluonts mean_weighted_sum_quantile_loss).
     """
-    mase_terms: List[float] = field(default_factory=list)
+    mase_sum: float = 0.0
+    mase_obs: int = 0
     ql_sums: np.ndarray = field(
         default_factory=lambda: np.zeros(len(QUANTILE_LEVELS), dtype=np.float64))
     abs_sum: float = 0.0
@@ -295,7 +302,8 @@ class MetricAccumulator:
         y, yhat = target[mask], median[mask]
         err = np.abs(y - yhat)
         if np.isfinite(scale) and scale > 0:
-            self.mase_terms.append(float(err.mean()) / scale)
+            self.mase_sum += float(err.sum()) / scale
+            self.mase_obs += int(mask.sum())
         else:
             self.n_skipped_scale += 1
 
@@ -327,7 +335,7 @@ class MetricAccumulator:
                     2.0 * np.abs(e * ((y <= median[mask]) - qv)).sum())
 
     def result(self) -> Dict[str, float]:
-        mase = float(np.mean(self.mase_terms)) if self.mase_terms else np.nan
+        mase = self.mase_sum / self.mase_obs if self.mase_obs else np.nan
         crps = (float((self.ql_sums / self.abs_sum).mean())
                 if self.abs_sum > 0 else np.nan)
         n = max(self.n_obs, 1)

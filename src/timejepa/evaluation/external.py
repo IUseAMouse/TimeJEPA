@@ -10,6 +10,10 @@ exposes what `scripts/evaluate_gift.py` reads from a model:
     patching.{patch_size, stride}   1 / 1: the harness never truncates or pads
     predictor.w_film = None         +ratein_w refused
     rate_knob = None                +ratein=delta refused
+    handles_nan                     True: the native context keeps its NaNs
+                                    (the model reads them as missing, as in
+                                    its official GIFT run); False: the harness
+                                    interpolates them
     forecast(batch [B, L, 1], n, w=None) -> {forecast_denorm [B, n, 1],
                                              quantiles_denorm [B, n, Q],
                                              quantile_levels}
@@ -47,6 +51,7 @@ LEVELS = tuple(round(0.1 * j, 1) for j in range(1, 10))
 class ExternalForecaster:
     """Harness contract for a model that is not a JEPATST."""
     rate_knob = None
+    handles_nan = False
     kind = "external"
 
     def __init__(self, name: str, hf_id: str, context_length: int, device):
@@ -96,22 +101,28 @@ class ExternalForecaster:
 class ChronosForecaster(ExternalForecaster):
     """Chronos-Bolt and Chronos-2 through `chronos.BaseChronosPipeline`.
     The pipeline truncates to its own context length and rolls out beyond
-    its native horizon (Bolt: 64 steps) by feeding its quantiles back."""
+    its native horizon (Bolt: 64 steps) by feeding its quantiles back.
+    float32 by default, on GPU too: the official GIFT runs are float32 and
+    bfloat16 moves the fourth decimal."""
     kind = "chronos"
+    handles_nan = True
 
     def __init__(self, hf_id: str, device, context_length: int = 2048,
                  name: Optional[str] = None, torch_dtype: Optional[str] = None):
         from chronos import BaseChronosPipeline
         super().__init__(name or hf_id.split("/")[-1], hf_id, context_length, device)
-        dtype = (getattr(torch, torch_dtype) if torch_dtype
-                 else (torch.bfloat16 if torch.device(device).type == "cuda" else torch.float32))
+        dtype = getattr(torch, torch_dtype) if torch_dtype else torch.float32
         self.pipeline = BaseChronosPipeline.from_pretrained(
             hf_id, device_map=str(device), torch_dtype=dtype)
         native = getattr(self.pipeline, "model_context_length", None)
         if native is not None:
             self.input_length = min(self.input_length, int(native))
+        # Chronos-2 takes [n_series, n_variates, history]; Bolt takes [n_series, history].
+        self._multivariate_input = type(self.pipeline).__name__.startswith("Chronos2")
 
     def _predict(self, ctx: torch.Tensor, n: int) -> torch.Tensor:
+        if self._multivariate_input:
+            ctx = ctx.unsqueeze(1)
         quantiles, _ = self.pipeline.predict_quantiles(
             ctx, prediction_length=n, quantile_levels=list(self.quantile_levels))
         if isinstance(quantiles, (list, tuple)):          # Chronos-2: one per series
@@ -125,6 +136,7 @@ class T0Forecaster(ExternalForecaster):
     `t0.T0Forecaster.predict`; quantiles the model was not trained on are
     interpolated by the package."""
     kind = "t0"
+    handles_nan = True
 
     def __init__(self, hf_id: str, device, context_length: int = 2048,
                  name: Optional[str] = None):

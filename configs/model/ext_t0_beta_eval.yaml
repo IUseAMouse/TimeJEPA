@@ -2,11 +2,12 @@
 # t0-beta (The Forecasting Company, 256M, open weights) through the GIFT harness
 # (2026-10-05, RateIN on third-party models). Needs tfc-t0 >= 0.5: older releases
 # run it under t0-alpha's normalization. Same commands as ext_chronos_bolt_tiny_eval.
+# Context 8192: the value of the official GIFT notebook (tfc-t0/notebooks/t0-beta.ipynb).
 model:
   name: "t0_beta"
   builder: "timejepa.evaluation.external:build"
   external:
     kind: "t0"
     hf_id: "theforecastingcompany/t0-beta"
-    context_length: 2048
-  seq_length: 2048
+    context_length: 8192
+  seq_length: 8192
