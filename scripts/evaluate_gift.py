@@ -59,6 +59,7 @@ from timejepa.evaluation import refine as refine_mod  # noqa: E402
 from timejepa.evaluation import biasin as biasin_mod  # noqa: E402
 from timejepa.evaluation import ttt as ttt_mod  # noqa: E402
 from timejepa.evaluation import external as external_mod  # noqa: E402
+from timejepa.data import frequency as frequency_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("evaluate_gift")
@@ -255,12 +256,23 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
     return float(np.mean(np.maximum(q * d, (q - 1.0) * d)))
 
 
+DELTA_RANGE = (1.0 / 48.0, 4.0)     # default trained range of the Delta knob (TimeSSM wide arm)
+
+
+def freq_delta_w(model, season, k) -> float:
+    """Frequency-tied Delta scale (+freq_delta) for a context resampled by k:
+    w = 24 / (season / k), a context decimated by k having a cycle k times
+    shorter, clamped to the range the model declares (`delta_range`)."""
+    lo, hi = getattr(model, "delta_range", DELTA_RANGE)
+    return frequency_mod.delta_scale(season / k, lo, hi)
+
+
 def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        stride: int, patch: int, device,
                        batch_size: int, pooled: bool = False,
                        use_delta: bool = False, delta_max_k: int = 0,
                        k_candidates=None, min_bt: int = 16,
-                       n_bt_windows: int = 2) -> tuple:
+                       n_bt_windows: int = 2, freq_season=None) -> tuple:
     """RateIN v2 (2026-09-01) - per-series k chosen by CAUSAL BACKTEST.
 
     Oracle verdict 2026-08-31: the mechanism is worth up to +57% per config
@@ -356,6 +368,10 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 batch = batch.unsqueeze(-1).to(device)
                 kw = ({"w": torch.full((batch.shape[0],), 1.0 / k, device=device)}
                       if knob_k and k != 1 else {})
+                if freq_season is not None:
+                    # each candidate is judged with the scale it would be served at
+                    kw = {"w": torch.full((batch.shape[0],), freq_delta_w(model, freq_season, k),
+                                          device=device)}
                 with torch.no_grad():
                     out = model.forecast(batch, n=h_fc, **kw)
                 q = out.get("quantiles_denorm")
@@ -674,6 +690,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     ratein_k_up=None, ratein_min_bt: int = 16,
                     ratein_bt_windows: int = 2,
                     ratein_mix_tau: float = MIX_TAU,
+                    freq_season=None,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
@@ -729,7 +746,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                             delta_max_k=ratein_delta_max_k,
                                             k_candidates=k_cands,
                                             min_bt=ratein_min_bt,
-                                            n_bt_windows=ratein_bt_windows)
+                                            n_bt_windows=ratein_bt_windows,
+                                            freq_season=freq_season)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"], tau=ratein_mix_tau), None
@@ -843,6 +861,11 @@ def evaluate_config(model, config: str, gift_root: Path, device,
 
             w_vec = (torch.full((batch.shape[0],), 1.0 / k, device=device)
                      if use_w else None)
+            if freq_season is not None:
+                # +freq_delta: the declared frequency sets Delta, RateIN's
+                # decimation (if any) still shortens the context and the horizon.
+                w_vec = torch.full((batch.shape[0],), freq_delta_w(model, freq_season, k),
+                                   device=device)
             with torch.no_grad():
                 out = tta_forecast(model, batch, h_fc,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
@@ -1053,6 +1076,7 @@ KNOWN_FLAGS = frozenset((
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
     "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows", "ratein_mix_tau",
+    "freq_delta",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
@@ -1062,7 +1086,7 @@ KNOWN_FLAGS = frozenset((
 
 
 def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
-                      ttt_spec) -> None:
+                      ttt_spec, freq_delta: bool = False) -> None:
     """Refuse the flag/model pairs that would run in silence: the Delta knob
     on a model without one (the harness would pass w to a FiLM, or to a
     stub that ignores it), the FiLM and the knob together, and the JEPA-only
@@ -1077,6 +1101,15 @@ def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
         if ratein_w:
             raise ValueError("+ratein_w (FiLM on w) and +ratein=delta (Delta knob) "
                              "are exclusive")
+    if freq_delta:
+        if getattr(model, "rate_knob", None) != "delta":
+            raise ValueError("+freq_delta needs a model whose rate knob is the sampling "
+                             "interval (model.rate_knob == 'delta'); this model has "
+                             f"{getattr(model, 'rate_knob', None)!r}")
+        if ratein_mode == "delta" or ratein_w:
+            raise ValueError("+freq_delta sets Delta from the declared frequency: it is "
+                             "exclusive with +ratein=delta and +ratein_w (RateIN by "
+                             "decimation composes with it: backtest, mix)")
     jepa_only = ((refine_spec is not None and getattr(refine_spec, "active", False))
                  or ttt_spec is not None)
     if jepa_only and not hasattr(model, "online_encoder"):
@@ -1302,7 +1335,15 @@ def main(cfg: DictConfig):
     if ratein_w and getattr(model.predictor, "w_film", None) is None:
         raise ValueError("+ratein_w requires a cross_resolution model "
                          "(no w FiLM in the predictor - xres config)")
-    check_model_flags(model, ratein_mode_val, ratein_w, refine_spec, ttt_spec)
+    #   +freq_delta=true        Delta tied to the declared frequency of each config
+    #                           (w = 24 / season, data/frequency.py, FlowState's rule);
+    #                           composes with RateIN by decimation. Tag _fdelta.
+    freq_delta = bool(cfg.get("freq_delta", False))
+    check_model_flags(model, ratein_mode_val, ratein_w, refine_spec, ttt_spec, freq_delta)
+    if getattr(model, "expects_frequency", False) and not freq_delta:
+        logger.warning("this model was trained with Delta tied to the frequency "
+                       "(model.ssm.delta_from_frequency) and is evaluated WITHOUT "
+                       "+freq_delta=true: every config runs at Delta scale 1")
     if ratein_mode_val == "fft":
         tag += "_ratein"
     elif ratein_mode_val == "backtest":
@@ -1336,6 +1377,8 @@ def main(cfg: DictConfig):
                          "the evaluated model's - the fan grid would not align")
     if ratein_w:
         tag += "-w"
+    if freq_delta:
+        tag += "_fdelta"
     tag += refine_tag
     if bias_mode == "backtest":
         tag += "_bias-bt" + ("" if bias_lambdas is None else
@@ -1380,6 +1423,7 @@ def main(cfg: DictConfig):
             logger.info(f"[{i}/{len(configs)}] {config}: already done, skipped")
             continue
         t0 = time.time()
+        freq_season = frequency_mod.gift_season(config) if freq_delta else None
         try:
             if ratein_oracle:
                 # Per-config k sweep - the upper bound on the gain reachable
@@ -1396,6 +1440,7 @@ def main(cfg: DictConfig):
                                           tta_shifts=tta_shifts,
                                           quantile_gamma=quantile_gamma,
                                           forced_k=kk, ratein_w=ratein_w,
+                                          freq_season=freq_season,
                                           refine_spec=refine_spec,
                                           refine_judge=refine_judge,
                                           bias_mode=bias_mode,
@@ -1427,6 +1472,7 @@ def main(cfg: DictConfig):
                                       ratein_min_bt=ratein_min_bt,
                                       ratein_bt_windows=ratein_bt_windows,
                                       ratein_mix_tau=ratein_mix_tau,
+                                      freq_season=freq_season,
                                       refine_spec=refine_spec,
                                       refine_judge=refine_judge,
                                       bias_mode=bias_mode,

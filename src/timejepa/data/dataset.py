@@ -136,6 +136,10 @@ class TimeSeriesDataset(Dataset):
         short_series_windows: bool = False,
         short_min_context: int = 16,
         short_min_target: int = 4,
+        # Steps of the file's reference cycle (data/frequency.py), one value
+        # per file; 0.0 = declared without a frequency. None (default) = the
+        # item dict carries no 'season' key, as before.
+        season_length: Optional[float] = None,
     ):
         """
         Args:
@@ -168,6 +172,7 @@ class TimeSeriesDataset(Dataset):
         self.short_series_windows = bool(short_series_windows)
         self.short_min_context = int(short_min_context)
         self.short_min_target = int(short_min_target)
+        self.season_length = None if season_length is None else float(season_length)
         self.real_lens = None            # per-row real trailing length (sidecar)
         self._short_rows = None          # bool per row: real_len < ctx + pred
 
@@ -716,6 +721,10 @@ class TimeSeriesDataset(Dataset):
             # is on (all-True on full windows), absent otherwise.
             item['target_mask'] = (torch.from_numpy(target_mask)
                                    if self.return_tensor else target_mask)
+        if self.season_length is not None:
+            # All or nothing again. A window read with a stride of `factor`
+            # sees a cycle `factor` times shorter.
+            item['season'] = np.float32(self.season_length / factor)
         return item
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:

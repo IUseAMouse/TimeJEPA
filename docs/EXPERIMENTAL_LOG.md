@@ -1919,6 +1919,24 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-10-05 (FRÉQUENCE DÉCLARÉE → Δ : convention, table du corpus, clé de batch, flag du
+  harnais — tout est opt-in, rien ne bouge sans)** — Pour le bras P-SSM.12 de TimeSSM
+  (registre TimeMamba du même jour). Nouveau : `src/timejepa/data/frequency.py`
+  (`season_length`, `delta_scale`, `gift_season`, `load_frequency_table`), convention reprise
+  de l'implémentation de référence de FlowState (`get_fixed_factor`, granite-tsfm) ;
+  `scripts/build_frequency_table.py` (stem → fréquence depuis le champ `freq` des sources
+  Hugging Face à la révision épinglée ; décimés = source × K ; synthétique = `null` ;
+  journaliers écrits `weekly: REVIEW`, refusés par le chargeur tant qu'ils ne sont pas
+  tranchés) ; `TimeSeriesDataset(season_length=)` → clé d'item `season` ;
+  `MultiDatasetMonashDataModule(frequency_table=)` (un fichier absent de la table est une
+  erreur) ; harnais `+freq_delta=true` (tag `_fdelta`, `freq_delta_w`, passé au backtest et à
+  la prévision, exclusif avec `+ratein=delta` / `+ratein_w`, exige `rate_knob == 'delta'`) ;
+  `calibrate_quantiles.py --frequency-table`. `gift.DEFAULT_SEASONALITIES` (dénominateur de
+  la MASE, convention gluonts) n'est pas touché. Sans table : jeu de clés d'item inchangé
+  (test existant `test_default_item_dict_unchanged`), mêmes fenêtres ; sans flag : `w is
+  None` à chaque appel, résultats `==`. Tests : `tests/test_frequency.py` (35).
+  `scripts/evaluate.py` (Nixtla / Monash) n'est ni modifié ni étendu.
+
 - **2026-10-05 (FIDÉLITÉ DU HARNAIS : il reproduit les lignes officielles à 6 chiffres une fois
   trois écarts corrigés ; UN de ces écarts touche NOS chiffres — la MASE des 15 configs à
   cibles partiellement manquantes)** — Déclencheur (utilisateur) : notre t0-beta nu sort à

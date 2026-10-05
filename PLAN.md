@@ -1457,6 +1457,26 @@ TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
 **Diagnostic 2026-09-26 (plan approuvé, détail dans TimeMamba `docs/EXPERIMENTAL_LOG.md`)** : le « gap » de h512 était une amputation de corpus, pas un écart d'évaluation ; l'écart à Toto est plat par terme et diffus sur le corps ; l'univarié n'est pas un handicap de protocole ; leviers restants non essayés : horizon aléatoire DANS la fenêtre fixe (B1, P-SSM.6), température de quantiles sur le SSM (B2), oracle-k du SSM (marge du sélecteur, 1.5 pt sur head8). `scripts/calibrate_quantiles.py` accepte `--config-dir`, `--horizon`, `--set` pour un checkpoint TimeSSM.
 
+#### Plan « Δ lié à la fréquence déclarée » (2026-10-05) — dernier bras d'entraînement avant les cartes
+
+Bilan des 04-05/10 : phase 0 du plan MASE (contextes courts et repère arcsinh écartés,
+aplatissement confirmé mais dépendant de la période en pas, erreurs de NIVEAU sur m4_hourly
+et m4_weekly), bras S, R1 et lookbacks clos sans gain, harnais vérifié contre les lignes
+officielles (MASE poolée corrigée, chiffres définitifs du checkpoint publié `1.2841` :
+0.7613 / 0.5194, 0.5183 avec γ). Le 2.5M est le modèle publié.
+
+Bras P-SSM.12 (méthode A, fréquence DÉCLARÉE, comme FlowState) : `w = 24 / saison` par
+série au lieu d'un Δ aléatoire. Zéro paramètre ajouté.
+- Fréquence rangée dans une table versionnée (`configs/corpus_v3_frequencies.yaml`), pas dans
+  les `.npy` ; `scripts/build_frequency_table.py` sur le pod, relecture humaine des
+  journaliers.
+- TimeJEPA : `data/frequency.py`, clé d'item `season`, flag `+freq_delta=true`.
+  TimeMamba : `SSMFinetuneModule(delta_from_frequency)`, config `ssm_mini_v3_freq`.
+- Ordre sur le pod : table → `check_regression_ssm.sh` (poids réels, modes éteints) → ligne
+  de base « inférence seule » → pré-vol et vitesse → continuation de 12 h → éval.
+- Prédictions et seuils : registre TimeMamba du 2026-10-05. Calendrier : verdict vers le
+  08/10, cartes de modèle avant le 16/10.
+
 #### Plan « MASE du 2.5M » (2026-10-04) — défauts d'architecture, diagnostics d'abord
 
 Verdict de B5 (fenêtre décimée à l'entraînement) : ÉCHEC. MASE nue medium 0.937 → 0.923, long

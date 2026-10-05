@@ -386,6 +386,7 @@ class MonashDataModule(pl.LightningDataModule):
         short_series_windows: bool = False,
         short_min_context: int = 16,
         short_min_target: int = 4,
+        season_length: Optional[float] = None,
         seed: int = 42
     ):
         """
@@ -433,6 +434,7 @@ class MonashDataModule(pl.LightningDataModule):
         self.short_series_windows = bool(short_series_windows)
         self.short_min_context = int(short_min_context)
         self.short_min_target = int(short_min_target)
+        self.season_length = season_length
         self.seed = seed
         
         self.normalizer: Optional[Normalizer] = None
@@ -482,6 +484,7 @@ class MonashDataModule(pl.LightningDataModule):
                 short_series_windows=self.short_series_windows,
                 short_min_context=self.short_min_context,
                 short_min_target=self.short_min_target,
+                season_length=self.season_length,
             )
             
             self.normalizer = self._full_dataset.get_normalizer()
@@ -689,6 +692,10 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         short_min_context: int = 16,
         short_min_target: int = 4,
         dataset_overrides: Optional[Dict[str, Any]] = None,
+        # Corpus frequency table (data/frequency.py, YAML: file stem -> freq).
+        # Set: every item carries 'season', and a file missing from the table
+        # is an error. None (default): no key, batches as before.
+        frequency_table: Optional[str] = None,
         seed: int = 42
     ):
         """
@@ -747,6 +754,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.short_series_windows = bool(short_series_windows)
         self.short_min_context = int(short_min_context)
         self.short_min_target = int(short_min_target)
+        self.frequency_table = frequency_table
         self.dataset_overrides = dataset_overrides or {}
         self.seed = seed
         
@@ -810,11 +818,26 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         if self.exclude_datasets:
             logger.info(f"Excluded: {self.exclude_datasets}")
     
+    def _seasons(self) -> Optional[Dict[str, float]]:
+        """stem -> season for the discovered files, or None without a table."""
+        if self.frequency_table is None:
+            return None
+        from .frequency import load_frequency_table
+        table = load_frequency_table(self.frequency_table)
+        missing = sorted(set(self.dataset_files) - set(table))
+        if missing:
+            raise ValueError(
+                f"{self.frequency_table}: {len(missing)} corpus file(s) have no entry "
+                f"({', '.join(missing[:8])}{'...' if len(missing) > 8 else ''}). Add them, "
+                "with `null` for a file without a frequency.")
+        return table
+
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
             train_datasets = []
             val_datasets = []
             test_datasets = []
+            seasons = self._seasons()
             
             # Reset tracking
             self.train_dataset_sizes = []
@@ -852,6 +875,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     short_series_windows=self.short_series_windows,
                     short_min_context=self.short_min_context,
                     short_min_target=self.short_min_target,
+                    season_length=None if seasons is None else seasons[dataset_name],
                     seed=self.seed
                 )
                 

@@ -74,7 +74,7 @@ def gamma_for_level(r: np.ndarray, k: float) -> float:
 
 
 def calibrate_dataset(model, get_item, idx, h: int, batch_size: int,
-                      flip: bool, device):
+                      flip: bool, device, w: float = None):
     """Collect ONE dataset's ratios and coverages and return
     (levels, {gamma, coverage_before, n_windows}) - accumulators local to the
     function: state can no longer leak from one dataset to the next
@@ -88,8 +88,9 @@ def calibrate_dataset(model, get_item, idx, h: int, batch_size: int,
                            for it in items]).unsqueeze(-1).to(device)  # [B, L, 1]
         y = torch.stack([torch.as_tensor(it['target'], dtype=torch.float32).reshape(-1)
                          for it in items]).cpu().numpy()               # [B, h]
+        w_vec = None if w is None else torch.full((ctx.shape[0],), float(w), device=device)
         with torch.no_grad():
-            out = tta_forecast(model, ctx, h, flip=flip)
+            out = tta_forecast(model, ctx, h, flip=flip, w=w_vec)
         med = out["forecast_denorm"].squeeze(-1).cpu().numpy()         # [B, h]
         q = out["quantiles_denorm"].cpu().numpy()
         if q.ndim == 4:
@@ -134,6 +135,9 @@ def main():
                          "model can be calibrated at any h)")
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
                     help="hydra overrides (e.g. data.data_dir=/abs/path)")
+    ap.add_argument("--frequency-table", default=None,
+                    help="corpus frequency table (timejepa.data.frequency): calibrate with Delta tied "
+                         "to each dataset's frequency, for a model evaluated with +freq_delta=true")
     args = ap.parse_args()
 
     config_dir = args.config_dir or str(Path(__file__).resolve().parents[1] / "configs" / "model")
@@ -183,6 +187,12 @@ def main():
     levels = None
     per_ds = {}
 
+    seasons = None
+    if args.frequency_table:
+        from timejepa.data.frequency import delta_scale, load_frequency_table
+        seasons = load_frequency_table(args.frequency_table)
+        if getattr(model, "rate_knob", None) != "delta":
+            raise ValueError("--frequency-table needs a model with a Delta rate knob")
     for d, name in enumerate(names):
         lo, hi = int(bounds[d]), int(bounds[d + 1])
         if hi - lo < 8:
@@ -191,7 +201,9 @@ def main():
         idx = np.linspace(lo, hi - 1, min(args.per_dataset, hi - lo)).astype(int)
         levels, stats = calibrate_dataset(
             model, lambda j: dm.val_dataset[int(j)], idx, h,
-            args.batch_size, args.flip, device)
+            args.batch_size, args.flip, device,
+            w=(delta_scale(seasons[name], *model.delta_range)
+               if seasons is not None and seasons[name] > 0 else None))
         per_ds[name] = stats
         g, cb = stats["gamma"], stats["coverage_before"]
         logger.info(f"  {name:32s} n={len(idx):4d} "
@@ -212,7 +224,8 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = Path(args.checkpoint).stem + ("_flip" if args.flip else "")
+    tag = (Path(args.checkpoint).stem + ("_flip" if args.flip else "")
+           + ("_fdelta" if args.frequency_table else ""))
     payload = {
         "levels": levels, "gamma": gamma,
         "checkpoint": args.checkpoint, "config_name": args.config_name,
