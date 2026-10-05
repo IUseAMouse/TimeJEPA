@@ -1919,6 +1919,29 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-10-05 (RateIN SUR MODÈLES TIERS : file prête, PRÉDICTION P-RateIN-ext gravée avant
+  les chiffres)** — `scripts/queue_external.sh` : une voie par carte, par modèle un smoke
+  (`m_dense/D/short`, le modèle est sauté s'il échoue) puis trois évals à 97 configs par le
+  même harnais et les mêmes instances que nos checkpoints : nu, flip, et l'empilement
+  champion de TimeSSM (`+tta_flip=true +ratein=mix +ratein_pool=true +ratein_k_up=2x3x4
+  +ratein_min_bt=4 +ratein_bt_windows=4`). Voies par défaut : carte 0 Chronos-Bolt tiny
+  puis t0-alpha, carte 1 TTM-R3 (`1024-96-r3`, point répété) puis Chronos-2, carte 2
+  Chronos-Bolt small. Commande du stack vérifiée en local sur CPU (Chronos-Bolt tiny,
+  `m_dense/D/short` : 0.4924 / 0.3537, identique au smoke du 13/09). **P-RateIN-ext** :
+  (fidélité) le nu de Chronos-2 retombe à 1 % de sa ligne officielle (0.6978 / 0.4854) ;
+  (transfert) stack contre nu, CRPS : Chronos-Bolt tiny et small −1 à −3 %, dont flip
+  ≤ 0.5 %, gain concentré sur le sub-horaire medium/long ; TTM-R3 −2 à −5 % de MASE sur
+  medium/long (rollout autorégressif au-delà de 96 pas) ; Chronos-2 ≤ 1 % (contexte 8192,
+  entraîné multi-fréquence). Sur TimeSSM le même empilement vaut −11 % (0.5836 → 0.5194) :
+  l'écart attendu entre −11 % et −1 à −3 % est lui-même le résultat, RateIN paie d'autant
+  plus que le modèle tient mal les saisons longues en pas (mesure `flat` du 04/10).
+  ÉCHEC de la thèse « agnostique au modèle » si AUCUN modèle tiers ne gagne ≥ 1 % de CRPS
+  du stack par rapport au flip seul. Décisions de l'utilisateur le même jour : le 2.5M
+  publié est le checkpoint `1.2841` (0.7621 / 0.5194 au stack, 0.5183 avec γ), parce que
+  ce sont les performances de CE fichier que les lecteurs vérifieront ; la bande des cinq
+  checkpoints (0.761-0.765 / 0.519-0.522) figure à côté. Le bras « fréquence en entrée »
+  vient après ces évals, avec des tests de rétrocompatibilité sans encodage.
+
 - **2026-09-30 (CORRECTION DE CIBLE : le FlowState sous 10M est à 0.5019, pas 0.4866)** —
   Relevé par l'utilisateur. Le leaderboard porte trois entrées FlowState : FlowState-9.1M
   (0.5019 / 0.7262), FlowState-r1.1 (0.4866 / 0.7015) et Granite-FlowState-r1.1 (0.4901 /
