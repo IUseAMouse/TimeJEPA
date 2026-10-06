@@ -1117,6 +1117,24 @@ def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
                          "predictor); this model has none")
 
 
+def _resolve_data_file(path: str) -> Path:
+    """A file named by a flag or by a config key: as given if it exists (or is
+    absolute), otherwise relative to the repository of the config in use (the
+    parent of its config directory), so a release config can name a
+    calibration file shipped next to it whatever the working directory."""
+    p = Path(path)
+    if p.is_absolute() or p.exists():
+        return p
+    try:
+        sources = HydraConfig.get().runtime.config_sources
+    except Exception:
+        return p
+    for src in sources:
+        if src.schema == "file" and (Path(src.path).parent / p).exists():
+            return Path(src.path).parent / p
+    return p
+
+
 def check_unknown_flags(overrides, known=KNOWN_FLAGS):
     """Every `+key=value` override on the command line must be a flag this
     script reads. A typo, or a flag from a newer script version, would
@@ -1296,7 +1314,7 @@ def main(cfg: DictConfig):
     #    decision 2026-08-25, not necessarily the official number)
     quantile_gamma, gamma_tag = None, ""
     if cfg.get("quantile_gamma"):
-        gpath = Path(str(cfg.quantile_gamma))
+        gpath = _resolve_data_file(str(cfg.quantile_gamma))
         gdata = json.loads(gpath.read_text())
         quantile_gamma = torch.tensor(gdata["gamma"], dtype=torch.float32)
         gamma_tag = "_gamma-" + gpath.stem
