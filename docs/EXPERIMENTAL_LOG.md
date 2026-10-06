@@ -1919,6 +1919,40 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-10-06 (RateIN SUR CINQ MODÈLES TIERS, harnais corrigé : le signe est le même partout,
+  l'amplitude va de −11 % à −0.5 % et décroît avec la force du modèle ; verdict
+  P-RateIN-ext)** — `queue_external.sh`, 97 configs, float32, valeurs manquantes natives,
+  MASE poolée, t0-beta à contexte 8192 ; empilement « up » = flip + mix + pool + `k_up=2x3x4`
+  + `min_bt=4` + `bt_windows=4`. MASE / CRPS, nu → flip → up :
+  Chronos-Bolt tiny (9M) 0.8651 / 0.6010 → 0.8585 / 0.5972 → **0.7680 / 0.5315** (CRPS −11.6 %
+  au total, −11.0 % au-delà du flip) · Chronos-Bolt small (48M) 0.8259 / 0.5636 → 0.8230 /
+  0.5642 → **0.7467 / 0.5148** (−8.7 %, flip nul) · TTM-R3 `1024-96` (point) MASE 0.7635 →
+  0.7551 → **0.7475** (−2.1 % au total, −1.0 % au-delà du flip ; CRPS non interprétable) ·
+  t0-beta (256M) 0.6865 / 0.4737 → 0.6893 / 0.4729 → **0.6814 / 0.4651** (CRPS −1.8 %, −1.65 %
+  au-delà du flip ; MASE −0.7 %) · Chronos-2 (120M, mode univarié) 0.7036 / 0.4822 → 0.7000 /
+  0.4786 → **0.6980 / 0.4763** (CRPS −1.2 %, dont −0.5 % seulement au-delà du flip). Rappel
+  TimeSSM 2.5M : 0.8534 / 0.5836 → 0.7613 / 0.5194 (−11.0 %). **Fidélité** : t0-beta nu =
+  0.6865 / 0.4737 contre 0.6865 / 0.4738 officiels, exact. Chronos-2 nu : MASE +0.8 %, CRPS
+  −0.7 % contre l'officiel (mode univarié, attendu). Chronos-Bolt small nu : MASE +0.5 %,
+  CRPS −2.3 % contre l'officiel (0.8221 / 0.5767) alors que quatre configs étaient exactes
+  en local : écart NON expliqué, `harness_fidelity.py` sur les 97 configs à lire avant de
+  citer ses chiffres. **Verdict P-RateIN-ext** : fidélité Chronos-2 à 1 % : tenue ;
+  Chronos-Bolt prédit −1 à −3 %, mesuré −9 à −12 % : FAUX d'un facteur 4, dans le sens
+  favorable ; TTM −2 à −5 % de MASE sur medium/long : −2.1 % au global, détail par terme à
+  lire ; Chronos-2 ≤ 1 % : tenue (0.5 % au-delà du flip, donc quasi nul). Le critère d'échec
+  de la thèse « agnostique » (aucun modèle à ≥ 1 % au-delà du flip) n'est pas atteint :
+  trois modèles sur cinq le passent (Bolt tiny, Bolt small, t0-beta), TTM est à la limite,
+  Chronos-2 ne le passe pas. **Lecture** : le gain suit un gradient, −11 % (Bolt tiny,
+  TimeSSM), −9 % (Bolt small), −1.7 % (t0-beta), −0.5 % (Chronos-2) : plus le modèle est fort
+  et entraîné multi-fréquence, moins il reste à prendre. C'est le résultat à écrire, pas
+  « RateIN marche partout ». **Coût** : l'empilement prend 3 h 25 sur Bolt tiny, 8 h 40 sur
+  Bolt small, ~12 h sur t0-beta et Chronos-2 (contre 15 à 35 min pour le nu) : 20 à 40 fois
+  le coût d'une éval nue, à donner dans le papier. **Correction d'une comparaison du 05/10** :
+  « TimeSSM 2.5M à jeu égal avec Chronos-Bolt small » comparait notre stack à leur nu. À
+  traitement égal : nus 0.8534 / 0.5836 contre 0.8259 / 0.5636 (Bolt small devant), avec
+  RateIN 0.7613 / 0.5194 contre 0.7467 / 0.5148 (Bolt small devant) ; l'égalité en CRPS
+  (0.5155 contre 0.5148) ne vaut qu'avec notre Δ lié à la fréquence, que Bolt n'a pas.
+
 - **2026-10-05 (FRÉQUENCE DÉCLARÉE → Δ : convention, table du corpus, clé de batch, flag du
   harnais — tout est opt-in, rien ne bouge sans)** — Pour le bras P-SSM.12 de TimeSSM
   (registre TimeMamba du même jour). Nouveau : `src/timejepa/data/frequency.py`
