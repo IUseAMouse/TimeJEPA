@@ -1919,6 +1919,27 @@ constitue le test le plus direct de la thèse du §7.
 
 ## 11. Journal des mises à jour
 
+- **2026-10-06 (FIDÉLITÉ SUR 97 CONFIGS : t0-beta reproduit sa ligne officielle config par
+  config ; l'écart de Chronos-Bolt small est localisé aux horizons medium/long)** —
+  `harness_fidelity.py` sur les évals nues du pod. **t0-beta** : MASE 97/97 configs à 0.05 %,
+  CRPS 95/97, agrégats 0.6865 / 0.4737 contre 0.6865 / 0.4738 : le harnais (instances,
+  fenêtres, erreur saisonnière, MASE poolée, CRPS, valeurs manquantes natives) est validé
+  de bout en bout sur un modèle tiers. Naïf saisonnier local contre officiel en MASE :
+  93/97, pire écart 0.48 % (kdd_cup_2018, bitbrains) : ce sont des configs à valeurs
+  manquantes où la PRÉVISION naïve diffère (remplissage des NaN), pas la métrique, puisque
+  t0-beta y est exact. **Chronos-Bolt small** : 51/97 configs au-delà de 0.05 % ; les 20 plus
+  gros écarts sont TOUS en medium ou long (CRPS −6 à −15 % chez nous sur sz_taxi, bitbrains,
+  jena, ett, loop_seattle/5T ; MASE +7 à +16 % sur solar/H, loop_seattle/H, m_dense/H), les
+  configs short sont exactes (vérifié en local sur quatre). Au-delà de 64 pas Bolt déroule
+  en autorégressif : l'écart vient de ce mécanisme, donc très probablement de la version de
+  `chronos-forecasting` (2.3.2 ici, celle de la soumission officielle inconnue) ; NON
+  vérifié. Conséquence : nos chiffres Bolt sont ceux de la bibliothèque actuelle, à citer
+  avec sa version ; le gain de RateIN, mesuré nu contre empilé dans le même harnais et la
+  même version, n'en dépend pas. **Chronos-2** : 7/97 configs exactes, écarts dans les deux
+  sens jusqu'à −36 % et +21 % de CRPS : notre mode univarié sans apprentissage croisé est un
+  autre usage du modèle que sa soumission ; l'agrégat proche (MASE +0.8 %, CRPS −0.7 %) est
+  une compensation, pas une reproduction. À écrire « Chronos-2 en mode univarié ».
+
 - **2026-10-06 (RateIN SUR CINQ MODÈLES TIERS, harnais corrigé : le signe est le même partout,
   l'amplitude va de −11 % à −0.5 % et décroît avec la force du modèle ; verdict
   P-RateIN-ext)** — `queue_external.sh`, 97 configs, float32, valeurs manquantes natives,
