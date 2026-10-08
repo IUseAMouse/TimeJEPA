@@ -10,6 +10,14 @@ when the frequency table says `{season: per_row}`. The .npy files are not
 touched.
 
     python scripts/build_season_sidecars.py --corpus-dir data/processed/lotsa_v3 [--jobs 4] [--only stem ...]
+    python scripts/build_season_sidecars.py --corpus-dir data/processed/lotsa_v3 --quantize 2
+
+`--quantize N` rounds the seasons already written so that the rate scale
+w = 24 / season falls on a grid of N levels per octave (no replay). Reason
+(2026-10-08): continuous seasons give every synthetic series its own scale,
+a batch then carries ~40 distinct scales and the S4D layer, which computes
+one kernel per scale, runs three times slower than with ~15. Two levels per
+octave bound the rounding of a cycle to 19% and the batch to ~20 scales.
 
 File -> (family, seed), from scripts/generate_synthetic.py and build_corpus_v3.sh:
     synthetic_<family>            v1 run: seed = index of the family in DEFAULT_FAMILIES
@@ -71,14 +79,38 @@ def build_one(path: Path, out_dir: Path) -> str:
             f"season median {np.median(seasons[has]) if has.any() else 0:7.1f}")
 
 
+def quantize_seasons(seasons: np.ndarray, levels_per_octave: int, base: float = 24.0) -> np.ndarray:
+    """Round each season so that base / season sits on a 2^(k / levels) grid;
+    0 (no cycle) stays 0."""
+    out = seasons.astype(np.float32).copy()
+    has = out > 0
+    k = np.round(levels_per_octave * np.log2(base / out[has]))
+    out[has] = (base / np.power(2.0, k / levels_per_octave)).astype(np.float32)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--corpus-dir", required=True)
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--quantize", type=int, default=0, metavar="N",
+                    help="round the seasons already in _season/ to N rate levels per octave (no replay)")
     args = ap.parse_args()
     corpus = Path(args.corpus_dir)
     out_dir = corpus / "_season"
+    if args.quantize:
+        raw_dir = corpus / "_season_raw"
+        raw_dir.mkdir(exist_ok=True)
+        for p in sorted(out_dir.glob("synthetic_*.npy")):
+            raw = raw_dir / p.name
+            if not raw.exists():
+                raw.write_bytes(p.read_bytes())          # the exact seasons are kept aside, never deleted
+            seasons = quantize_seasons(np.load(raw), args.quantize)
+            np.save(p, seasons)
+            logger.info(f"{p.stem:34s} {int(np.unique(seasons[seasons > 0]).size):3d} distinct seasons after rounding")
+        logger.info(f"rounded {args.quantize} levels per octave; exact values in {raw_dir}")
+        return
     files = sorted(p for p in corpus.glob("synthetic_*.npy") if args.only is None or p.stem in args.only)
     generated = [p for p in files if "_dec" not in p.stem]
     decimated = [p for p in files if "_dec" in p.stem]

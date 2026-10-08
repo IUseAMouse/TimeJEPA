@@ -354,3 +354,22 @@ def test_table_per_row_entry(tmp_path):
     p = tmp_path / "freq.yaml"
     p.write_text("a: {freq: H}\nb: {season: per_row}\nc: null\n")
     assert F.load_frequency_table(p) == {"a": 24.0, "b": F.PER_ROW, "c": 0.0}
+
+
+def test_season_quantization_rounds_the_rate_on_a_grid(tmp_path, monkeypatch):
+    import build_season_sidecars as B
+    seasons = np.array([0.0, 24.0, 25.0, 96.0, 7.0, 3.0, 1000.0], dtype=np.float32)
+    q = B.quantize_seasons(seasons, 2)
+    assert q[0] == 0.0 and q[1] == 24.0 and q[3] == 96.0                      # on the grid already
+    assert abs(q[2] - 24.0) < 1e-4                                            # 25 rounds to 24
+    for a, b in zip(seasons[1:], q[1:]):
+        k = 2 * np.log2(24.0 / b)
+        assert abs(k - round(k)) < 1e-4 and abs(np.log2(a / b)) <= 0.25 + 1e-6   # half an octave at most
+    (tmp_path / "_season").mkdir()
+    np.save(tmp_path / "_season" / "synthetic_x.npy", seasons)
+    monkeypatch.setattr(sys, "argv", ["x", "--corpus-dir", str(tmp_path), "--quantize", "2"])
+    B.main()
+    assert np.array_equal(np.load(tmp_path / "_season_raw" / "synthetic_x.npy"), seasons)
+    assert np.allclose(np.load(tmp_path / "_season" / "synthetic_x.npy"), q)
+    B.main()                                                                  # idempotent: rounds the raw copy again
+    assert np.allclose(np.load(tmp_path / "_season" / "synthetic_x.npy"), q)
