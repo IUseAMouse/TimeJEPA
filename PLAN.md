@@ -1457,6 +1457,18 @@ TimeJEPA juge. Toto exclu de l'environnement (pin torch 2.7).
 
 **Diagnostic 2026-09-26 (plan approuvé, détail dans TimeMamba `docs/EXPERIMENTAL_LOG.md`)** : le « gap » de h512 était une amputation de corpus, pas un écart d'évaluation ; l'écart à Toto est plat par terme et diffus sur le corps ; l'univarié n'est pas un handicap de protocole ; leviers restants non essayés : horizon aléatoire DANS la fenêtre fixe (B1, P-SSM.6), température de quantiles sur le SSM (B2), oracle-k du SSM (marge du sélecteur, 1.5 pt sur head8). `scripts/calibrate_quantiles.py` accepte `--config-dir`, `--horizon`, `--set` pour un checkpoint TimeSSM.
 
+#### Après la release (décidé 2026-10-08) — Δ lié : étiqueter le synthétique, puis de zéro
+
+Verdict de P-SSM.12 : nu −1.0 pt de CRPS (0.5547 → 0.5451), stack −0.16 pt (0.5155 → 0.5139),
+avec la MOITIÉ du batch (synthétique) restée en Δ aléatoire. Checkpoint publié : `1.2814`.
+1. **Synthétique étiqueté** : la saison d'une série synthétique est connue du générateur
+   et varie par série ; il faut un fichier annexe « une saison par ligne » (modèle :
+   `_reallen/`), la régénération des 30 fichiers synthétiques, et le passage de la saison
+   par ligne jusqu'à la clé `season`. Attendu : encore ~1 pt au nu, 0.1-0.2 au stack.
+2. **De zéro à Δ lié** dès le premier pas, synthétique étiqueté (5 jours sur 3 cartes) :
+   la mesure de ce que vaut vraiment la canonisation, hors continuation.
+Ni l'un ni l'autre avant le 16/10 : la carte repose sur `1.2814`.
+
 #### Plan « Δ lié à la fréquence déclarée » (2026-10-05) — dernier bras d'entraînement avant les cartes
 
 Bilan des 04-05/10 : phase 0 du plan MASE (contextes courts et repère arcsinh écartés,
