@@ -1,0 +1,115 @@
+# Corpus frequency table: file stem -> sampling frequency (timejepa.data.frequency).
+# Variant of 2026-10-08: the synthetic files carry the season of EACH ROW, read back from their
+# generator by replaying the seed (the .npy files are unchanged). Needs the _season/ sidecar.
+# Built on the pod by scripts/build_frequency_table.py from data/processed/lotsa_v3 (106 files),
+# LOTSA revision 8191fd29eb5cf906ec55effca44d8059888b615d, 2026-10-05. `null` = no physical
+# frequency (the synthetic families: they keep the random Delta draw).
+# Daily files reviewed by hand on 2026-10-06 (`weekly`: does the series follow a human weekly
+# rhythm? FlowState's rule: transport, healthcare, sales). One call departs from a pure domain
+# rule: nn5_daily (ATM withdrawals) is weekly by the data, whatever its Econ/Fin label.
+LOS_LOOP: {freq: "5T"}
+PEMS03: {freq: "5T"}
+PEMS04: {freq: "5T"}
+PEMS07: {freq: "5T"}
+PEMS08: {freq: "5T"}
+PEMS_BAY: {freq: "5T"}
+Q-TRAFFIC: {freq: "15T"}
+alibaba_cluster_trace_2018: {freq: "5T"}
+australian_electricity_demand: {freq: "30T"}
+azure_vm_traces_2017: {freq: "5T"}
+bdg-2_bear: {freq: "H"}
+bdg-2_fox: {freq: "H"}
+bdg-2_panther: {freq: "H"}
+bdg-2_rat: {freq: "H"}
+beijing_air_quality: {freq: "H"}
+bitcoin_with_missing: {freq: "D", weekly: false}     # finance, no weekly cycle
+borealis: {freq: "H"}
+borg_cluster_data_2011: {freq: "5T"}
+buildings_900k: {freq: "H"}
+bull: {freq: "H"}
+china_air_quality: {freq: "H"}
+chronos_ercot: {freq: "H"}
+chronos_ercot_dec2: {freq: "2H"}
+chronos_ercot_dec3: {freq: "3H"}
+chronos_mexico_city_bikes: {freq: "H"}
+chronos_mexico_city_bikes_dec2: {freq: "2H"}
+chronos_mexico_city_bikes_dec3: {freq: "3H"}
+chronos_ushcn_daily: {freq: "D", weekly: false}     # climate stations
+chronos_ushcn_daily_dec2: {freq: "2D", weekly: false}     # climate stations, decimated
+chronos_ushcn_daily_dec3: {freq: "3D", weekly: false}     # climate stations, decimated
+cmip6_1850: {freq: "6H"}
+cmip6_1880: {freq: "6H"}
+cmip6_1910: {freq: "6H"}
+cmip6_1940: {freq: "6H"}
+cmip6_1970: {freq: "6H"}
+cmip6_2010: {freq: "6H"}
+cockatoo: {freq: "H"}
+covid19_energy: {freq: "H"}
+elecdemand: {freq: "30T"}
+elf: {freq: "H"}
+era5_1989: {freq: "H"}
+era5_1995: {freq: "H"}
+era5_2001: {freq: "H"}
+era5_2007: {freq: "H"}
+era5_2013: {freq: "H"}
+era5_2018: {freq: "H"}
+favorita_sales: {freq: "D", weekly: true}     # retail sales
+favorita_transactions: {freq: "D", weekly: true}     # retail transactions
+gfc12_load: {freq: "H"}
+gfc14_load: {freq: "H"}
+gfc17_load: {freq: "H"}
+hog: {freq: "H"}
+ideal: {freq: "H"}
+kdd2022: {freq: "10T"}
+largest_2017: {freq: "5T"}
+largest_2019: {freq: "5T"}
+largest_2021: {freq: "5T"}
+lcl: {freq: "H"}
+london_smart_meters_with_missing: {freq: "30T"}
+m5: {freq: "D", weekly: true}     # retail sales
+nn5_daily_with_missing: {freq: "D", weekly: true}     # ATM withdrawals: a known strong weekly cycle
+pdb: {freq: "H"}
+pedestrian_counts: {freq: "H"}
+project_tycho: {freq: "W"}
+residential_load_power: {freq: "T"}
+residential_pv_power: {freq: "T"}
+sceaux: {freq: "H"}
+smart: {freq: "H"}
+solar_power: {freq: "4S"}
+spain: {freq: "H"}
+subseasonal: {freq: "D", weekly: false}     # climate
+subseasonal_precip: {freq: "D", weekly: false}     # climate
+sunspot_with_missing: {freq: "D", weekly: false}     # solar activity
+synthetic_broadband: {season: per_row}     # sidecar _season/synthetic_broadband.npy (scripts/build_season_sidecars.py)
+synthetic_broadband_dec2: {season: per_row}     # sidecar _season/synthetic_broadband_dec2.npy (scripts/build_season_sidecars.py)
+synthetic_broadband_s19: {season: per_row}     # sidecar _season/synthetic_broadband_s19.npy (scripts/build_season_sidecars.py)
+synthetic_broadband_s20: {season: per_row}     # sidecar _season/synthetic_broadband_s20.npy (scripts/build_season_sidecars.py)
+synthetic_broadband_s21: {season: per_row}     # sidecar _season/synthetic_broadband_s21.npy (scripts/build_season_sidecars.py)
+synthetic_intermittent_s11: {season: per_row}     # sidecar _season/synthetic_intermittent_s11.npy (scripts/build_season_sidecars.py)
+synthetic_intermittent_s12: {season: per_row}     # sidecar _season/synthetic_intermittent_s12.npy (scripts/build_season_sidecars.py)
+synthetic_intermittent_s13: {season: per_row}     # sidecar _season/synthetic_intermittent_s13.npy (scripts/build_season_sidecars.py)
+synthetic_intermittent_s14: {season: per_row}     # sidecar _season/synthetic_intermittent_s14.npy (scripts/build_season_sidecars.py)
+synthetic_intermittent_s15: {season: per_row}     # sidecar _season/synthetic_intermittent_s15.npy (scripts/build_season_sidecars.py)
+synthetic_lowfreq: {season: per_row}     # sidecar _season/synthetic_lowfreq.npy (scripts/build_season_sidecars.py)
+synthetic_lowfreq_dec2: {season: per_row}     # sidecar _season/synthetic_lowfreq_dec2.npy (scripts/build_season_sidecars.py)
+synthetic_lowfreq_s22: {season: per_row}     # sidecar _season/synthetic_lowfreq_s22.npy (scripts/build_season_sidecars.py)
+synthetic_lowfreq_s23: {season: per_row}     # sidecar _season/synthetic_lowfreq_s23.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s1: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s1.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s10: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s10.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s2: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s2.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s3: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s3.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s4: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s4.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s5: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s5.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s6: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s6.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s7: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s7.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s8: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s8.npy (scripts/build_season_sidecars.py)
+synthetic_ops_bursty_s9: {season: per_row}     # sidecar _season/synthetic_ops_bursty_s9.npy (scripts/build_season_sidecars.py)
+synthetic_subhourly: {season: per_row}     # sidecar _season/synthetic_subhourly.npy (scripts/build_season_sidecars.py)
+synthetic_subhourly_dec2: {season: per_row}     # sidecar _season/synthetic_subhourly_dec2.npy (scripts/build_season_sidecars.py)
+synthetic_subhourly_dec3: {season: per_row}     # sidecar _season/synthetic_subhourly_dec3.npy (scripts/build_season_sidecars.py)
+synthetic_subhourly_s16: {season: per_row}     # sidecar _season/synthetic_subhourly_s16.npy (scripts/build_season_sidecars.py)
+synthetic_subhourly_s17: {season: per_row}     # sidecar _season/synthetic_subhourly_s17.npy (scripts/build_season_sidecars.py)
+synthetic_subhourly_s18: {season: per_row}     # sidecar _season/synthetic_subhourly_s18.npy (scripts/build_season_sidecars.py)
+uber_tlc_hourly: {freq: "H"}
+wind_farms_with_missing: {freq: "T"}
+wind_power: {freq: "4S"}

@@ -137,8 +137,9 @@ class TimeSeriesDataset(Dataset):
         short_min_context: int = 16,
         short_min_target: int = 4,
         # Steps of the file's reference cycle (data/frequency.py), one value
-        # per file; 0.0 = declared without a frequency. None (default) = the
-        # item dict carries no 'season' key, as before.
+        # per file; 0.0 = declared without a frequency; -1.0 (frequency.PER_ROW)
+        # = one value per row, read from the _season/<file>.npy sidecar. None
+        # (default) = the item dict carries no 'season' key, as before.
         season_length: Optional[float] = None,
     ):
         """
@@ -173,6 +174,7 @@ class TimeSeriesDataset(Dataset):
         self.short_min_context = int(short_min_context)
         self.short_min_target = int(short_min_target)
         self.season_length = None if season_length is None else float(season_length)
+        self.row_seasons = None          # per-row seasons (sidecar), when season_length is PER_ROW
         self.real_lens = None            # per-row real trailing length (sidecar)
         self._short_rows = None          # bool per row: real_len < ctx + pred
 
@@ -229,12 +231,26 @@ class TimeSeriesDataset(Dataset):
                     f"{len(data)} series - ignored")
                 real_lens = None
 
+        # Per-row seasons (2026-10-08): same sidecar layout under _season/,
+        # one float per row, only when the frequency table asks for it.
+        row_seasons = None
+        if self.season_length is not None and self.season_length < 0:
+            side = self.data_path.parent / "_season" / self.data_path.name
+            if not side.exists():
+                raise FileNotFoundError(f"{self.data_path.name}: the frequency table says per_row "
+                                        f"but {side} is missing (scripts/build_season_sidecars.py)")
+            row_seasons = np.load(side).astype(np.float32)
+            if row_seasons.shape[0] != len(data):
+                raise ValueError(f"{side}: {row_seasons.shape[0]} rows for {len(data)} series")
+
         # Limit number of series if requested
         if max_series is not None and len(data) > max_series:
             logger.info(f"Limiting to {max_series} series (out of {len(data)})")
             data = data[:max_series]
             if real_lens is not None:
                 real_lens = real_lens[:max_series]
+            if row_seasons is not None:
+                row_seasons = row_seasons[:max_series]
 
         # Filter by minimum length
         if min_series_length is not None:
@@ -245,6 +261,8 @@ class TimeSeriesDataset(Dataset):
                 data = data[mask]
                 if real_lens is not None:
                     real_lens = real_lens[mask]
+                if row_seasons is not None:
+                    row_seasons = row_seasons[mask]
             logger.info(f"After length filter: {len(data)} series")
 
         # Convert to array if homogeneous
@@ -262,6 +280,7 @@ class TimeSeriesDataset(Dataset):
 
         self.data = data
         self.real_lens = real_lens
+        self.row_seasons = row_seasons
         if self.short_series_windows and real_lens is None:
             # A file without a sidecar is a dense full-length block - the
             # normal case for most of a mixed corpus (v4: 106 of 117 files).
@@ -724,7 +743,8 @@ class TimeSeriesDataset(Dataset):
         if self.season_length is not None:
             # All or nothing again. A window read with a stride of `factor`
             # sees a cycle `factor` times shorter.
-            item['season'] = np.float32(self.season_length / factor)
+            season = self.row_seasons[series_idx] if self.row_seasons is not None else self.season_length
+            item['season'] = np.float32(season / factor)
         return item
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:

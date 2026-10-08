@@ -276,3 +276,81 @@ def test_guards_and_flag_registration():
     with pytest.raises(ValueError, match="exclusive"):
         check_model_flags(_RateStub(), "off", True, None, None, True)
     check_model_flags(_RateStub(knob=False), "off", False, None, None)       # default: no new demand
+
+
+# ------------------------------------------------------------ 5. per-row seasons of the synthetic files
+def test_recording_the_season_does_not_change_the_series():
+    from timejepa.data.synthetic import V3_FAMILIES, sample_series
+    for spec in V3_FAMILIES:
+        a = [sample_series(spec, np.random.default_rng(5)) for _ in range(3)]
+        rng, infos = np.random.default_rng(5), []
+        b = []
+        for _ in range(3):
+            info = {}
+            b.append(sample_series(spec, rng, info))
+            infos.append(info)
+        rng_plain = np.random.default_rng(5)
+        a = [sample_series(spec, rng_plain) for _ in range(3)]
+        assert all(np.array_equal(x, y) for x, y in zip(a, b)), spec.name
+        assert all("season" in i and i["season"] >= 0 for i in infos)
+        if spec.kind == "kernel":
+            assert any(i["season"] > 0 for i in infos)
+            for i in infos:
+                if i["season"] > 0:
+                    assert spec.period_range[0] <= i["season"] <= spec.period_range[1]
+
+
+def test_season_sidecars_are_built_by_replay_and_verified(tmp_path, monkeypatch):
+    import build_season_sidecars as B
+    from timejepa.data.synthetic import DEFAULT_FAMILIES, write_synthetic_family
+    spec = next(f for f in DEFAULT_FAMILIES if f.name == "synthetic_lowfreq")
+    small = type(spec)(spec.name, chunk_length=512, period_range=spec.period_range, p_trend=spec.p_trend)
+    monkeypatch.setitem(B.SPECS, spec.name, small)
+    write_synthetic_family(tmp_path / "synthetic_lowfreq_s22.npy", small, n_chunks=12, seed=22000)
+    write_synthetic_family(tmp_path / "synthetic_lowfreq.npy", small, n_chunks=12, seed=2)      # v1 rule: index 2
+    arr = np.load(tmp_path / "synthetic_lowfreq.npy")
+    np.save(tmp_path / "synthetic_lowfreq_dec2.npy", arr.reshape(12, 256, 2).mean(axis=2).astype(np.float32))
+    assert B.family_and_seed("synthetic_lowfreq_s22") == ("synthetic_lowfreq", 22000)
+    assert B.family_and_seed("synthetic_lowfreq") == ("synthetic_lowfreq", 2)
+    assert B.family_and_seed("synthetic_ops_bursty_s3") == ("synthetic_ops_bursty", 3000)
+    assert B.family_and_seed("beijing_air_quality") is None
+    monkeypatch.setattr(sys, "argv", ["x", "--corpus-dir", str(tmp_path), "--jobs", "1"])
+    B.main()
+    s22 = np.load(tmp_path / "_season" / "synthetic_lowfreq_s22.npy")
+    s1 = np.load(tmp_path / "_season" / "synthetic_lowfreq.npy")
+    d2 = np.load(tmp_path / "_season" / "synthetic_lowfreq_dec2.npy")
+    assert s22.shape == (12,) and s22.dtype == np.float32 and (s22 >= 0).all() and (s22 > 0).any()
+    assert np.allclose(d2, s1 / 2)
+    # a file that does not replay (one value changed) is refused, nothing written for it
+    bad = np.load(tmp_path / "synthetic_lowfreq_s22.npy"); bad[3, 10] += 1.0
+    np.save(tmp_path / "synthetic_lowfreq_s22.npy", bad)
+    (tmp_path / "_season" / "synthetic_lowfreq_s22.npy").unlink()
+    with pytest.raises(RuntimeError, match="row 3 differs"):
+        B.replay(tmp_path / "synthetic_lowfreq_s22.npy")
+    assert not (tmp_path / "_season" / "synthetic_lowfreq_s22.npy").exists()
+
+
+def test_dataset_reads_per_row_seasons_from_the_sidecar(tmp_path):
+    path = _file(tmp_path, "syn", n_series=4, length=2048)
+    (tmp_path / "_season").mkdir()
+    np.save(tmp_path / "_season" / "syn.npy", np.array([24.0, 0.0, 96.0, 7.0], dtype=np.float32))
+    kw = dict(context_length=1024, prediction_length=256, stride=64)
+    ds = TimeSeriesDataset(path, season_length=F.PER_ROW, **kw)
+    seen = {}
+    for i in range(len(ds)):
+        item = ds[i]
+        seen.setdefault(int(item["series_id"]), set()).add(float(item["season"]))
+    assert seen == {0: {24.0}, 1: {0.0}, 2: {96.0}, 3: {7.0}}
+    plain = TimeSeriesDataset(path, **kw)
+    assert torch.equal(plain[5]["context"], ds[5]["context"])
+    with pytest.raises(FileNotFoundError, match="per_row"):
+        TimeSeriesDataset(_file(tmp_path, "nosidecar", seed=9), season_length=F.PER_ROW, **kw)
+    np.save(tmp_path / "_season" / "syn.npy", np.ones(3, dtype=np.float32))
+    with pytest.raises(ValueError, match="rows"):
+        TimeSeriesDataset(path, season_length=F.PER_ROW, **kw)
+
+
+def test_table_per_row_entry(tmp_path):
+    p = tmp_path / "freq.yaml"
+    p.write_text("a: {freq: H}\nb: {season: per_row}\nc: null\n")
+    assert F.load_frequency_table(p) == {"a": 24.0, "b": F.PER_ROW, "c": 0.0}

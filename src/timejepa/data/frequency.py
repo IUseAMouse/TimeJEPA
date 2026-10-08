@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 BASE_SEASON = 24.0
+PER_ROW = -1.0      # table value: the season of each row is in the corpus sidecar _season/<file>.npy
 WEEKLY_DOMAINS = ("Transport", "Healthcare", "Sales")
 
 _UNITS = {
@@ -103,12 +104,14 @@ def gift_season(config: str) -> Optional[float]:
 
 def load_frequency_table(path) -> Dict[str, float]:
     """A corpus frequency table (YAML): file stem -> season in steps, 0.0 for a
-    file declared without a frequency (`null`, the synthetic families).
+    file declared without a frequency (`null`), PER_ROW (-1.0) for a file whose
+    rows carry their own season in the `_season/` sidecar.
 
         beijing_air_quality: {freq: H}
         favorita_sales:      {freq: D, weekly: true}
         some_file:           {season: 96}         # explicit, overrides freq
-        synthetic_lowfreq:   null
+        synthetic_lowfreq:   null                 # no frequency: the random Delta draw
+        synthetic_subhourly: {season: per_row}    # scripts/build_season_sidecars.py
     """
     import yaml
 
@@ -124,6 +127,9 @@ def load_frequency_table(path) -> Dict[str, float]:
             raise ValueError(f"{path}: {stem} has weekly: {entry['weekly']!r}; decide true or "
                              "false (does the series follow a weekly rhythm?)")
         season = entry.get("season")
+        if season == "per_row":
+            table[stem] = PER_ROW
+            continue
         if season is None:
             season = season_length(entry.get("freq"), weekly=bool(entry.get("weekly", False)))
         if season is None or float(season) <= 0:

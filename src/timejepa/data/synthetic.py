@@ -59,9 +59,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _seasonal(n: int, rng: np.random.Generator,
-              period_range=(4.0, 2048.0)) -> np.ndarray:
-    """One seasonality: log-uniform period, 1-4 decaying harmonics."""
+              period_range=(4.0, 2048.0), periods: Optional[list] = None) -> np.ndarray:
+    """One seasonality: log-uniform period, 1-4 decaying harmonics. `periods`,
+    when given, receives the drawn period (season recording, no extra draw)."""
     period = np.exp(rng.uniform(np.log(period_range[0]), np.log(period_range[1])))
+    if periods is not None:
+        periods.append(float(period))
     t = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
     n_harm = rng.integers(1, 5)
@@ -147,7 +150,8 @@ class SyntheticSpec:
     kind: str = "kernel"
 
 
-def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator,
+                       info: Optional[dict] = None) -> np.ndarray:
     """
     IT-ops series: small positive floor, BURSTS with Poisson arrivals (sharp
     rise, exponential decay, heavy-tailed amplitudes), segment zero-inflation
@@ -167,6 +171,8 @@ def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndar
     if rng.random() < 0.7:
         period = np.exp(rng.uniform(np.log(spec.period_range[0]),
                                     np.log(spec.period_range[1])))
+        if info is not None:
+            info["season"] = float(period)
         phase = rng.uniform(0, 2 * np.pi)
         rate_mod = np.clip(1.0 + rng.uniform(0.4, 1.0)
                            * np.sin(2 * np.pi * t / period + phase), 0.05, None)
@@ -203,7 +209,8 @@ def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndar
     return x.astype(np.float32)
 
 
-def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator,
+                                info: Optional[dict] = None) -> np.ndarray:
     """
     INTEGER intermittent demand (car_parts, hierarchical_sales): mostly zeros,
     negative-binomial event sizes, optional occurrence seasonality, slow
@@ -216,6 +223,8 @@ def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -
     if rng.random() < 0.5:                     # occurrence seasonality
         period = np.exp(rng.uniform(np.log(spec.period_range[0]),
                                     np.log(spec.period_range[1])))
+        if info is not None:
+            info["season"] = float(period)
         occ *= np.clip(1.0 + 0.8 * np.sin(
             2 * np.pi * np.arange(n) / period + rng.uniform(0, 2 * np.pi)),
             0.05, None)
@@ -229,22 +238,41 @@ def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -
     return (x * unit).astype(np.float32)
 
 
-def sample_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+def sample_series(spec: SyntheticSpec, rng: np.random.Generator,
+                  info: Optional[dict] = None) -> np.ndarray:
+    """One series. `info` (optional dict) receives `season`: the period, in
+    steps, of the series' reference cycle - the seasonal component with the
+    largest weight for the kernel kind, the modulation period for ops and
+    intermittent - or 0.0 when the series has none. Recording draws no random
+    number: the series is the same with or without it, so the seasons of an
+    existing file can be read back by replaying its seed
+    (scripts/build_season_sidecars.py)."""
+    if info is not None:
+        info["season"] = 0.0
     if spec.kind == "ops":
-        return _sample_ops_series(spec, rng)
+        return _sample_ops_series(spec, rng, info)
     if spec.kind == "intermittent":
-        return _sample_intermittent_series(spec, rng)
+        return _sample_intermittent_series(spec, rng, info)
     n = spec.chunk_length
     parts = []
+    seasonal = []                                 # (weight, period) of each seasonal component
     if rng.random() < spec.p_seasonal:
         for _ in range(rng.integers(1, 4)):
-            parts.append(rng.uniform(0.5, 2.0) * _seasonal(n, rng, spec.period_range))
+            # same draw order as before: the weight, then the component's own draws
+            weight = rng.uniform(0.5, 2.0)
+            periods = []
+            parts.append(weight * _seasonal(n, rng, spec.period_range, periods))
+            seasonal.append((weight, periods[0]))
     if rng.random() < spec.p_smooth:
         parts.append(rng.uniform(0.5, 2.0) * _smooth_gp(n, rng))
     if rng.random() < spec.p_trend:
         parts.append(rng.uniform(0.5, 2.0) * _trend(n, rng))
     if not parts:                                 # never an empty series
-        parts.append(_seasonal(n, rng, spec.period_range))
+        periods = []
+        parts.append(_seasonal(n, rng, spec.period_range, periods))
+        seasonal.append((1.0, periods[0]))
+    if info is not None and seasonal:
+        info["season"] = max(seasonal)[1]
 
     x = np.sum(parts, axis=0)
     if rng.random() < 0.25:                       # multiplicative composition
