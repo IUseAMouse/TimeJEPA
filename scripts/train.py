@@ -21,16 +21,26 @@ from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.callbacks import EMACallback
 from timejepa.models import JEPATST  # noqa: F401 - historical re-export
 from timejepa.models.decoders import ForecastingHead  # finetune path (l.162)
-# Model construction: ONE source of truth, shared with evaluate.py and
-# evaluate_gift.py. The 2026-08-19 audit found 4 copies of this function, one
-# already divergent - any new constructor option (G9.2 predictor
-# conditioning, etc.) must now live in ONE place only. Only difference vs the
-# old local copy: the ForecastingHead is built with cfg.model.decoder.d_model
-# (== encoder.d_model in all configs, verified) and the foundation print
-# block is replaced by JEPATST's own.
+# Model construction has one source of truth, shared with evaluate.py and
+# evaluate_gift.py; any new constructor option must live there only.
 from timejepa.evaluation.loading import create_model_from_config
 
 logger = logging.getLogger(__name__)
+
+def apply_schedule_fraction(trainer_kwargs: dict, cfg) -> dict:
+    """training.schedule_fraction < 1: the run ends where the cosine ends.
+    Bounds the Trainer to that fraction of the epoch (limit_train_batches)
+    unless the config already limits it; the modules shorten the scheduler
+    with the same key. Inert at 1.0."""
+    frac = float(cfg.training.get('schedule_fraction', 1.0))
+    if not (0.0 < frac <= 1.0):
+        raise ValueError('training.schedule_fraction must be in (0, 1]')
+    if frac < 1.0 and trainer_kwargs.get('limit_train_batches') is None:
+        trainer_kwargs['limit_train_batches'] = frac
+        logger.info(f"schedule_fraction={frac}: cosine annealed and run bounded at "
+                    f"{frac:.0%} of the epoch")
+    return trainer_kwargs
+
 
 @hydra.main(version_base=None, config_path="../configs/model", config_name="tiny")
 def main(cfg: DictConfig):
@@ -41,16 +51,12 @@ def main(cfg: DictConfig):
     logger.info("=" * 80)
     logger.info(OmegaConf.to_yaml(cfg))
     
-    # Set seed
     pl.seed_everything(cfg.data.seed, workers=True)
     
-    # Create data module
     logger.info("Creating data module...")
     is_pretrain = cfg.training.mode == "pretrain"
 
-    # Augmentations were configured in every YAML but never reached the
-    # DataModule, so scale / jitter / magnitude-warp / DRS have been inert on
-    # every run so far. Wire them, picking the pretrain or finetune block.
+    # Augmentations: pick the pretrain or finetune block of the config.
     aug_root = cfg.get('augmentations') or {}
     aug_key = 'pretrain' if is_pretrain else 'finetune'
     aug_cfg = aug_root.get(aug_key) if aug_root else None
@@ -73,8 +79,7 @@ def main(cfg: DictConfig):
         balanced_sampling=cfg.data.balanced_sampling,
         sampling_temperature=cfg.data.sampling_temperature,
         max_oversample_ratio=cfg.data.max_oversample_ratio,
-        # G10.2: uniform spreading of the cap over the epoch (opt-in, absent
-        # from all existing configs => False => bit-identical iteration).
+        # Uniform spreading of the oversampling cap over the epoch (opt-in).
         ration_oversample=bool(cfg.data.get('ration_oversample', False)),
         batch_size=cfg.data.batch_size,
         stride=cfg.data.stride,
@@ -93,34 +98,34 @@ def main(cfg: DictConfig):
         ),
         p_multi_resolution=(
             float(cfg.data.get('p_multi_resolution', 0.0)) if is_pretrain
-            # G9.3 (2026-08-31): finetune can EXERCISE the xres pairs - the
-            # wiring law (E18b/E21) says a pretrain capability only survives
-            # finetune if finetune passes through it. Dedicated *_finetune
-            # keys, defaults 0/[1] = bit-identical to the existing behavior.
+            # Finetune can exercise the cross-resolution pairs too: a pretrain
+            # capability only survives finetune if finetune passes through it.
+            # Dedicated *_finetune keys, inert by default.
             else float(cfg.data.get('p_multi_resolution_finetune', 0.0))
         ),
-        # G9.2: context at k1, target at k2, per-item 'w' key. Same config
-        # key as the model and the module (model.cross_resolution) - in BOTH
-        # modes since G9.3 (outside train, the dataset emits w=1).
+        # Cross-resolution: context at k1, target at k2, per-item 'w' key.
+        # Same config key as the model and the module, in both modes
+        # (outside train, the dataset emits w=1).
         cross_resolution=bool(cfg.model.get('cross_resolution', False)),
+        # Short-series windows, finetune only (the JEPA latent loss has no
+        # target mask, so pretrain must not see padded targets). Needs the
+        # _reallen sidecar next to the corpus; absent means inactive.
+        short_series_windows=(not is_pretrain)
+        and bool(cfg.data.get('short_series_windows', False)),
+        short_min_context=int(cfg.data.get('short_min_context', 16)),
+        short_min_target=int(cfg.data.get('short_min_target', 4)),
         seed=cfg.data.seed,
-        # Hardcoded to 8 before. With 20+ datasets held in memory - several of
-        # them numpy object arrays, whose per-element refcount updates defeat
-        # fork's copy-on-write - 8 train workers plus 8 persistent validation
-        # workers were enough to get the run OOM-killed by the host kernel
-        # (a bare "Killed", no traceback). Make it tunable.
+        # Tunable: with 20+ datasets in memory (some as numpy object arrays,
+        # which defeat fork's copy-on-write), 8 train plus 8 validation
+        # workers were enough to get the run OOM-killed.
         num_workers=int(cfg.data.get('num_workers', 4)),
         persistent_workers=bool(cfg.data.get('persistent_workers', False)),
         # LOTSA-scale corpora: read the .npy files without loading them into RAM.
-        # Absent from every existing config, so it defaults to False and nothing
-        # changes for them.
         use_mmap=bool(cfg.data.get('use_mmap', False)),
     )
     
-    # Prepare data
     datamodule.prepare_data()
     
-    # Create Model (Architecture)
     model = create_model_from_config(cfg)
     
     if is_pretrain:
@@ -144,16 +149,13 @@ def main(cfg: DictConfig):
             sigreg_config=sigreg_cfg,
             regularize_context=cfg.training.loss.get('regularize_context', True),
             contextualized_targets=cfg.training.get('contextualized_targets', True),
-            # G6 ablation arm; absent from every other config, so they are
-            # unaffected. See configs/model/lotsa_tiny_recon.yaml.
+            # Reconstruction ablation arm; see configs/model/lotsa_tiny_recon.yaml.
             reconstruction_target=cfg.training.get('reconstruction_target', False),
-            # G9.2 - cross-resolution arm; a single config key
-            # (model.cross_resolution) drives the model, the module AND the
-            # datamodule, so they cannot diverge.
+            # Cross-resolution arm: a single config key (model.cross_resolution)
+            # drives the model, the module and the datamodule.
             cross_resolution=cfg.model.get('cross_resolution', False),
-            # ESJEPA - ErrorSignal arm; same principle: a single key
-            # (model.error_signal) drives the model (heads) AND the module
-            # (z loss). lambda_z is a training knob, it lives under
+            # ErrorSignal arm: a single key (model.error_signal) drives the
+            # model (heads) and the module (z loss). lambda_z lives under
             # training.loss.
             error_signal=cfg.model.get('error_signal', False),
             lambda_z=float(cfg.training.loss.get('lambda_z', 0.1)),
@@ -172,6 +174,7 @@ def main(cfg: DictConfig):
             # Scheduler
             warmup_epochs=cfg.training.lr_scheduler.warmup_epochs,
             max_epochs=cfg.training.max_epochs,
+            schedule_fraction=float(cfg.training.get('schedule_fraction', 1.0)),
             lr_scheduler=cfg.training.lr_scheduler.type,
             min_lr=cfg.training.lr_scheduler.min_lr,
             
@@ -183,10 +186,9 @@ def main(cfg: DictConfig):
         
         warmup_epochs = cfg.training.lr_scheduler.warmup_epochs
 
-        # ESJEPA - finetune guard: a z trained at pretrain then silently left
-        # unconsumed by a point decoder is exactly the degradation this
-        # project refuses (the ForecastingHead also raises; this makes the
-        # message actionable at config level).
+        # ErrorSignal finetune guard: a z trained at pretrain must not be
+        # silently left unconsumed by a point decoder (the ForecastingHead
+        # also raises; this makes the message actionable at config level).
         if cfg.model.get('error_signal', False) and cfg.model.decoder.type != 'quantile':
             raise ValueError(
                 "model.error_signal=true requires model.decoder.type='quantile' "
@@ -201,15 +203,17 @@ def main(cfg: DictConfig):
             num_features=cfg.model.num_channels,
             decoder_type=cfg.model.decoder.type,
             revin=model.revin,
-            # ForecastingHead construction site 3/3 - same config key as the
-            # model and the eval (loading.py), guarded by a test.
+            # Same config key as the model and the eval (loading.py), guarded
+            # by a test.
             error_signal=bool(cfg.model.get('error_signal', False)),
+            # Optional head width, same key as loading.py; absent means the
+            # d_model fallback.
+            quantile_hidden_dim=cfg.model.decoder.get('quantile_hidden_dim'),
         )
         
         pl_module = FinetuneModule(
             model=model,
-            # Workstream 2: query-table extension (native horizon), absent
-            # from all existing configs so inert for them.
+            # Query-table extension (native horizon), inert when absent.
             extend_horizon_queries=cfg.training.get('extend_horizon_queries', False),  
             
             # Pretrained weights & Strategy
@@ -219,10 +223,37 @@ def main(cfg: DictConfig):
             
             # Loss
             loss_type=cfg.training.loss.finetune_type,
-            # G9.3 - invariance anchor (E18b backlog): keep lambda*MSE(z_pred,
-            # z_tgt) at finetune so drift destroys neither the judge nor xres
-            # coherence. Default 0.0 = bit-identical.
+            # Invariance anchor: keep lambda*MSE(z_pred, z_tgt) at finetune so
+            # drift destroys neither the judge nor cross-resolution coherence.
             lambda_anchor=float(cfg.training.loss.get('lambda_anchor', 0.0)),
+            # Joint JEPA term on the true target during finetune, and the
+            # critic loop; inert defaults.
+            lambda_joint=float(cfg.training.loss.get('lambda_joint', 0.0)),
+            joint_target=str(cfg.training.loss.get('joint_target', 'frozen')),
+            joint_contextualized=bool(cfg.training.loss.get('joint_contextualized', False)),
+            joint_sigreg=bool(cfg.training.loss.get('joint_sigreg', False)),
+            sigreg_config=(OmegaConf.to_container(cfg.training.loss.sigreg, resolve=True)
+                           if cfg.training.loss.get('sigreg') else {}),
+            critic_steps=list(cfg.training.loss.get('critic_steps') or []),
+            critic_alpha=float(cfg.training.loss.get('critic_alpha', 0.0)),
+            critic_route=str(cfg.training.loss.get('critic_route', 'A')),
+            critic_target=str(cfg.training.loss.get('critic_target', 'center')),
+            critic_energy=str(cfg.training.loss.get('critic_energy', 'cos')),
+            critic_contextualized=bool(cfg.training.loss.get('critic_contextualized', False)),
+            critic_step_weights=str(cfg.training.loss.get('critic_step_weights', 'uniform')),
+            critic_noise=float(cfg.training.loss.get('critic_noise', 0.0)),
+            critic_batch_fraction=float(cfg.training.loss.get('critic_batch_fraction', 1.0)),
+            critic_max_abs_delta=float(cfg.training.loss.get('critic_max_abs_delta', 5.0)),
+            critic_step_norm=bool(cfg.training.loss.get('critic_step_norm', True)),
+            # Score matching on the energy; inert defaults.
+            lambda_score=float(cfg.training.loss.get('lambda_score', 0.0)),
+            score_route=str(cfg.training.loss.get('score_route', 'B')),
+            score_perturb=(OmegaConf.to_container(cfg.training.loss.score_perturb, resolve=True)
+                           if cfg.training.loss.get('score_perturb') else None),
+            score_batch_fraction=float(cfg.training.loss.get('score_batch_fraction', 0.5)),
+            score_contextualized=bool(cfg.training.loss.get('score_contextualized', False)),
+            score_energy=str(cfg.training.loss.get('score_energy', 'cos')),
+            score_valley_delta=float(cfg.training.loss.get('score_valley_delta', 0.1)),
             
             # Optimizer
             learning_rate=cfg.training.optimizer.learning_rate,
@@ -233,6 +264,7 @@ def main(cfg: DictConfig):
             # Scheduler
             warmup_epochs=warmup_epochs,
             max_epochs=cfg.training.max_epochs,
+            schedule_fraction=float(cfg.training.get('schedule_fraction', 1.0)),
             lr_scheduler=cfg.training.lr_scheduler.type,
             min_lr=cfg.training.lr_scheduler.min_lr,
             
@@ -266,12 +298,9 @@ def main(cfg: DictConfig):
         save_top_k=cfg.checkpoint.save_top_k,
         save_last=cfg.checkpoint.save_last,
         filename=cfg.checkpoint.filename,
-        # B21: the config carried auto_insert_metric_name: false but it was
-        # never forwarded, so Lightning kept its default (True) and prefixed
-        # each metric name AGAIN on top of the template's own text. Result:
-        # "epochepoch=00_val_lossval_loss=0.3445.ckpt" - doubled names, and
-        # '=' characters that Hydra's override grammar then choked on for
-        # every downstream finetune and eval command.
+        # Must be forwarded: with Lightning's default (True) each metric name
+        # is prefixed again on top of the template's own text, giving names
+        # with '=' characters that Hydra's override grammar chokes on.
         auto_insert_metric_name=bool(
             cfg.checkpoint.get('auto_insert_metric_name', False)
         ),
@@ -291,8 +320,12 @@ def main(cfg: DictConfig):
     # LR monitor
     callbacks.append(LearningRateMonitor(logging_interval='step'))
     
-    # EMA (pretrain only)
-    if is_pretrain and cfg.training.ema.enabled:
+    # EMA: pretrain, or a finetune whose joint-loss target is an EMA
+    # (joint_target: ema); the same callback drives FinetuneModule.update_target_encoder.
+    joint_ema = (not is_pretrain
+                 and str(cfg.training.loss.get('joint_target', 'frozen')) == 'ema'
+                 and float(cfg.training.loss.get('lambda_joint', 0.0)) > 0)
+    if (is_pretrain and cfg.training.ema.enabled) or joint_ema:
         callbacks.append(EMACallback(
             momentum_base=cfg.training.ema.momentum_base,
             momentum_final=cfg.training.ema.momentum_final,
@@ -308,15 +341,10 @@ def main(cfg: DictConfig):
         log_model=cfg.wandb.log_model
     )
     
-    # Trainer
-    #
-    # `limit_val_batches` matters a lot here. The validation split is 2% of the
-    # windows, which on the full 24-dataset corpus is over a million samples -
-    # 2109 batches. With val_check_interval=0.1 that is ~21k validation batches
-    # per epoch, more compute than the training itself, and it keeps a second
-    # set of dataloader workers alive alongside the training ones. A few hundred
-    # batches give a val_loss that is already stable to well under the
-    # differences we care about.
+    # `limit_val_batches` matters: the validation split of the full corpus is
+    # over a million windows (2109 batches), and with val_check_interval=0.1
+    # that would be more compute than the training itself. A few hundred
+    # batches give a val_loss stable well under the differences we care about.
     trainer_kwargs = dict(
         accelerator=cfg.trainer.accelerator,
         logger=wandb_logger,
@@ -336,6 +364,7 @@ def main(cfg: DictConfig):
     for key in ('limit_train_batches', 'limit_val_batches'):
         if cfg.trainer.get(key) is not None:
             trainer_kwargs[key] = cfg.trainer.get(key)
+    apply_schedule_fraction(trainer_kwargs, cfg)
 
     trainer = pl.Trainer(**trainer_kwargs)
     

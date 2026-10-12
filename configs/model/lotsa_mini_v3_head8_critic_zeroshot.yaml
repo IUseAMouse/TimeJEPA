@@ -1,0 +1,45 @@
+# @package _global_
+# Critic loop arm, route A. After the head's fan, N gradient steps of the
+# fan's center down the energy E(x, y-hat) = 1 - cos(z_pred, enc(y-hat)); the
+# fan is translated with its median so the monotone head structure survives.
+# A pinball is applied at every step (deep supervision) with one backward.
+# N is sampled per batch in critic_steps; N = 0 is the joint arm itself, kept
+# in the draw so the head stays good on its own. Route A: z_pred detached
+# inside the energy (critic frozen during the descent). Validation runs
+# N = max deterministically, so val_loss is the loss of the refined forecast.
+#
+# critic_alpha 0.05 comes from the inference-side ceiling curve: normalized
+# step, alpha = largest displacement of any point per step; N = 8 at inference
+# gives a 0.4 sigma box (diagnostic: evaluate_gift +refine=ceiling).
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_critic_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # decisive curve: critic/pinball_i must decrease with i (wandb).
+#   # Other witnesses: critic/energy_drop > 0, critic/delta_abs, critic/delta_clipped_frac ~ 0.
+#   # Eval config: lotsa_mini_v3_head8_critic_eval (+refine=energy for the loop at inference).
+defaults:
+  - lotsa_mini_v3_head8_joint_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_critic_zs"
+
+training:
+  loss:
+    # The energy judges y-hat through the online encoder, so the joint target
+    # must live in the same space: EMA of the online encoder (pretrain
+    # convention) rather than a frozen copy the pinball would drift away from.
+    joint_target: ema
+    critic_steps: [0, 1, 2, 4, 8]   # max 8 = the inference budget (box N*alpha = 0.4 sigma); the sparse draw keeps the mean cost at 3 steps
+    critic_alpha: 0.05
+    critic_route: A
+    critic_target: center
+    critic_energy: cos
+    critic_contextualized: false
+    critic_step_weights: uniform
+    critic_noise: 0.0
+    critic_batch_fraction: 0.25
+    critic_max_abs_delta: 5.0
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "critic", "robust-scale"]

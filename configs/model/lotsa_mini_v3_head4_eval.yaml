@@ -1,0 +1,14 @@
+# @package _global_
+# Eval for the x4 head checkpoints: decoder.quantile_hidden_dim must match the
+# finetune config (768), otherwise load_checkpoint refuses on shape mismatch.
+defaults:
+  - lotsa_mini_v3_eval
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head4_zs"
+  decoder:
+    quantile_hidden_dim: 768
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "eval", "v3", "head4", "robust-scale"]

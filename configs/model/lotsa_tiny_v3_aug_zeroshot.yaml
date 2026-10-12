@@ -1,25 +1,15 @@
 # @package _global_
-# G9.0-AUGMENTATION arm (2026-09-01) - finetune with decimated inputs, NO FiLM.
+# Augmentation arm: finetune with decimated inputs, no FiLM.
 #
-# MEASURED motive (RateIN v3 verdict): the inference layer decimates 35% of
-# eval instances (mean-pooling in blocks of k), yet v3 NEVER saw a decimated
-# series in training - spectrum cut, smoother: a distribution shift inflicted
-# on the model exactly where it wins. This arm aligns training on that
-# regime: k1=k2 drawn from the same factors as the xres config
-# (comparability: the pair (aug alone) vs (full xres) differs only by the
-# FiLM/w/anchor bundle). cross_resolution stays false -> w=1 everywhere,
-# NO new parameter: same architecture, eval via lotsa_tiny_v3_eval.
+# Motive: the RateIN inference layer decimates 35% of eval instances
+# (mean-pooling in blocks of k), yet v3 never saw a decimated series in
+# training. This arm aligns training on that regime: k1=k2 drawn from the
+# same factors as the xres config, so (aug alone) vs (full xres) differs only
+# by the FiLM/w/anchor bundle. cross_resolution stays false, so w=1
+# everywhere and no new parameter; eval via lotsa_tiny_v3_aug_eval.
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3_aug_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<ckpt>"'
-#
-# Predictions (numbers recorded in the registry AT LAUNCH): P-aug.1 the
-# configs mostly decimated at eval (bizitobs, solar/10T, electricity/15T,
-# loop/5T...) improve under flip+ratein; P-aug.2 the configs kept at k=1 are
-# stable (+/-1%); P-aug.3 the flip+ratein aggregate beats 0.5588.
-# FAILURE-DIAGNOSTIC: if the aggregate does not move, seeing decimated inputs
-# is not enough -> the xres-FiLM case (w conditioning) takes over on the
-# residual 0.5588->0.5358.
 defaults:
   - lotsa_tiny_v3_zeroshot
   - _self_

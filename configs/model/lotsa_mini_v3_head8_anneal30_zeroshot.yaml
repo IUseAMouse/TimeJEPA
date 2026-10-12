@@ -1,0 +1,23 @@
+# @package _global_
+# Anneal-30 arm. Finetune arms improve until about 25-30% of the epoch and
+# degrade afterwards, with the peak checkpoint taken while the cosine is still
+# at ~85% of its peak LR because the schedule spans the whole epoch. Here the
+# cosine anneals to min_lr at 30% of the epoch and the run stops there.
+# One variable vs lotsa_mini_v3_head8_zeroshot: schedule_fraction.
+#
+#   python scripts/train.py --config-name lotsa_mini_v3_head8_anneal30_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # witness: lr-* on wandb reaches min_lr at the end of the run (~22 h at 8 it/s)
+#   # eval: lotsa_mini_v3_head8_eval on the last checkpoint and on the 15/25% ones.
+defaults:
+  - lotsa_mini_v3_head8_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v3_head8_anneal30_zs"
+
+training:
+  schedule_fraction: 0.3
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v3", "head8", "anneal30", "robust-scale"]

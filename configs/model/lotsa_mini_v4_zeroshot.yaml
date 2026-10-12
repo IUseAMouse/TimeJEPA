@@ -1,0 +1,33 @@
+# @package _global_
+# Corpus v4 finetune with short-series boundary windows. Series shorter than
+# ctx+pred train in the condition evaluation imposes on them (prepare_context:
+# flat left pad, few real context steps, short real target). The split point
+# falls inside the real data; the context is left-padded by the row itself;
+# the target keeps the real tail, is right-padded with its last value and
+# masked out of the pinball beyond the real end.
+#
+# Finetune from the existing mini v3 pretrain val-best, with the x8 quantile
+# head, so the one variable is corpus v4 + the windows; the matched reference
+# is the head8 25% checkpoint.
+#
+#   python scripts/train.py --config-name lotsa_mini_v4_zeroshot \
+#       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_mini_v3/pretrain_True/epoch00_valloss0.5495.ckpt"'
+#   # eval: lotsa_mini_v4_eval (own output namespace)
+#
+# Witness at the first decile: aug/short_frac > 0 (share of batch items with
+# a masked target); if 0, the _reallen sidecar is missing and the arm has no effect.
+defaults:
+  - lotsa_mini_v3_head8_zeroshot
+  - _self_
+
+model:
+  name: "timejepa_lotsa_mini_v4_zs"
+
+data:
+  data_dir: "data/processed/lotsa_v4"
+  short_series_windows: true
+  short_min_context: 16
+  short_min_target: 4
+
+wandb:
+  tags: ["mini", "jepa_tst", "experiment", "lotsa", "zeroshot", "v4", "short-series", "robust-scale"]
