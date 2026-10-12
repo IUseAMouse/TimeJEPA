@@ -1,38 +1,24 @@
 """
-GIFT-Eval protocol, reimplemented faithfully and self-contained.
+GIFT-Eval protocol, self-contained.
 
-Every constant and formula below is transcribed from the official harness
-(github.com/SalesforceAIResearch/gift-eval, src/gift_eval/data.py, Apache-2)
-and from gluonts' seasonality table - fetched and pinned on 2026-08-18.
-The official code is NOT imported: it drags gluonts + dotenv + toolz into the
-project for what amounts to one split rule and two metric definitions. Instead
-the rules are restated here verbatim, each next to its source, so a diff
-against upstream stays a five-minute job.
+Constants and formulas are transcribed from the official harness
+(github.com/SalesforceAIResearch/gift-eval, src/gift_eval/data.py) and from
+gluonts' seasonality table; the official code is not imported.
 
-The protocol, in full
----------------------
-* 97 configs, named ``dataset/freq/term`` (``GIFT_CONFIGS``). The list is not
-  derived - it is the exact row set of the official leaderboard CSVs.
-* ``prediction_length = base_horizon[freq] * multiplier[term]`` with the M4
-  datasets on their own horizon table, and multipliers 1 / 10 / 15 for
-  short / medium / long.
-* Test windows per dataset: ``min(max(1, ceil(0.1 * min_series_length / h)), 20)``
-  and always exactly 1 for M4. Windows are the LAST ``windows * h`` steps of
-  each series, non-overlapping, stride ``h``; everything before a window is
-  its context.
-* Multivariate datasets are exploded into univariate series (one per channel),
-  exactly like the official ``MultivariateToUnivariate`` - the project is
-  univariate by design, and so is the official evaluation of univariate models.
-* Metrics: MASE (per-instance seasonal scaling on the FULL past, gluonts
-  convention) and mean weighted sum quantile loss ("CRPS" on the leaderboard,
-  9 quantiles 0.1..0.9 - the decoder's native grid). NaN targets are masked,
-  never imputed: the *_with_missing datasets are scored only where truth exists.
-* Leaderboard aggregation: each config's metric is divided by Seasonal Naive's
-  and the 97 ratios are combined by geometric mean. Two normalizations are
-  reported side by side: against the OFFICIAL Seasonal Naive numbers (vendored
-  in assets/gift_seasonal_naive.csv, the leaderboard's own denominators) and
-  against a Seasonal Naive computed HERE through the same code path (immune to
-  any convention drift between this module and gluonts).
+* 97 configs named ``dataset/freq/term`` (``GIFT_CONFIGS``), the exact row
+  set of the official leaderboard CSVs.
+* ``prediction_length = base_horizon[freq] * multiplier[term]``, M4 on its
+  own horizon table, multipliers 1 / 10 / 15 for short / medium / long.
+* Test windows: ``min(max(1, ceil(0.1 * min_series_length / h)), 20)``, 1 for
+  M4; the last ``windows * h`` steps of each series, non-overlapping, with
+  everything before a window as its context.
+* Multivariate datasets are exploded into univariate series, one per channel.
+* Metrics: MASE (seasonal scaling on the full past, gluonts convention) and
+  mean weighted sum quantile loss ("CRPS", 9 quantiles 0.1..0.9). NaN targets
+  are masked, never imputed.
+* Aggregation: geometric mean over configs of the ratio to Seasonal Naive,
+  against the official Seasonal Naive numbers (assets/gift_seasonal_naive.csv)
+  and against a Seasonal Naive computed through this same code path.
 """
 
 from __future__ import annotations
@@ -49,7 +35,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants - transcribed from gift_eval/data.py
+# Constants transcribed from gift_eval/data.py
 # ---------------------------------------------------------------------------
 
 TEST_SPLIT = 0.1
@@ -59,16 +45,15 @@ M4_PRED_LENGTH_MAP = {"A": 6, "Q": 8, "M": 18, "W": 13, "D": 14, "H": 48}
 PRED_LENGTH_MAP = {"M": 12, "W": 8, "D": 30, "H": 48, "T": 48, "S": 60}
 TERM_MULTIPLIER = {"short": 1, "medium": 10, "long": 15}
 
-# gluonts DEFAULT_SEASONALITIES (time_feature/seasonality.py). The rule for a
-# multiple is base // n when it divides, else 1 - e.g. 15T -> 1440/15 = 96.
+# gluonts DEFAULT_SEASONALITIES (time_feature/seasonality.py). For a multiple
+# the rule is base // n when it divides, else 1 (15T -> 1440/15 = 96).
 DEFAULT_SEASONALITIES = {"S": 3600, "T": 1440, "H": 24, "D": 1, "W": 1,
                          "M": 12, "B": 5, "Q": 4}
 
 QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
-# The 97 configs, exactly the row set of the official results CSVs. Kept as a
-# literal rather than generated: the benchmark is versioned by this list, and a
-# generator would hide any upstream drift instead of failing loudly on it.
+# The 97 configs, the row set of the official results CSVs. Kept as a literal
+# so that any upstream drift fails loudly instead of being generated over.
 GIFT_CONFIGS: Tuple[str, ...] = (
     "bitbrains_fast_storage/5T/long", "bitbrains_fast_storage/5T/medium",
     "bitbrains_fast_storage/5T/short", "bitbrains_fast_storage/H/short",
@@ -188,11 +173,10 @@ def load_series(gift_root: Path, config: str) -> List[np.ndarray]:
     """
     All series of a config as float32 1-D arrays (NaN preserved).
 
-    Multivariate targets are exploded channel-wise, mirroring the official
-    MultivariateToUnivariate - channel k of series i becomes its own series,
-    in (series, channel) order so item counts match the official expansion.
+    Multivariate targets are exploded channel-wise in (series, channel)
+    order, as the official MultivariateToUnivariate does.
     """
-    import datasets as hf_datasets  # local import: only this loader needs it
+    import datasets as hf_datasets
 
     path = gift_root / storage_path(config)
     if not path.exists():
@@ -214,7 +198,7 @@ def load_series(gift_root: Path, config: str) -> List[np.ndarray]:
 
 @dataclass
 class TestInstance:
-    """One rolling-evaluation window: everything-before as context, h as target."""
+    """One rolling-evaluation window: everything before as context, h as target."""
     series_idx: int
     context: np.ndarray   # full past, length varies
     target: np.ndarray    # length = prediction_length, may contain NaN
@@ -223,9 +207,9 @@ class TestInstance:
 def iter_test_instances(series: Sequence[np.ndarray], h: int,
                         windows: int) -> Iterator[TestInstance]:
     """
-    The official split: the last ``windows * h`` steps of each series are test,
-    cut into non-overlapping windows of length h (distance = h), each forecast
-    from the entire history before it.
+    The official split: the last ``windows * h`` steps of each series, cut
+    into non-overlapping windows of length h, each forecast from the entire
+    history before it.
     """
     for idx, y in enumerate(series):
         for k in range(windows):
@@ -239,7 +223,7 @@ def iter_test_instances(series: Sequence[np.ndarray], h: int,
 
 
 # ---------------------------------------------------------------------------
-# Metrics - gluonts conventions, NaN-masked
+# Metrics, gluonts conventions, NaN-masked
 # ---------------------------------------------------------------------------
 
 def seasonal_error(past: np.ndarray, m: int) -> float:
@@ -258,18 +242,20 @@ class MetricAccumulator:
     """
     Streams per-instance results into the two leaderboard metrics.
 
-    MASE  - mean over instances of mean_t|err| / seasonal_error(past).
-    CRPS  - mean over quantiles of  sum(2*QL_q) / sum(|y|), pooled over the
-            whole config (gluonts mean_weighted_sum_quantile_loss).
+    MASE: mean over every valid observation of |err| / seasonal_error(past),
+          pooled over instances and steps (gluonts axis=None), so an instance
+          with NaN targets weighs by its number of valid steps.
+    CRPS: mean over quantiles of sum(2*QL_q) / sum(|y|), pooled over the
+          whole config (gluonts mean_weighted_sum_quantile_loss).
     """
-    mase_terms: List[float] = field(default_factory=list)
+    mase_sum: float = 0.0
+    mase_obs: int = 0
     ql_sums: np.ndarray = field(
         default_factory=lambda: np.zeros(len(QUANTILE_LEVELS), dtype=np.float64))
     abs_sum: float = 0.0
     n_instances: int = 0
     n_skipped_scale: int = 0
-    # Pooled sums for the point metrics of the official results format
-    # (gluonts axis=None aggregation: pooled over every observation).
+    # Pooled sums for the point metrics of the official results format.
     abs_err_sum: float = 0.0
     sq_err_sum: float = 0.0
     smape_sum: float = 0.0
@@ -277,10 +263,8 @@ class MetricAccumulator:
     n_obs: int = 0
     n_obs_nonzero: int = 0
     # Empirical coverage per level: count(y <= q_k) pooled over the config.
-    # Instrument of the ESJEPA/E21 criterion ("does coverage generalize
-    # toward nominal?") - a MEASUREMENT, never an adaptation. n_obs_q keeps
-    # the denominator separate: instances without a fan (point forecast) do
-    # not vote in it.
+    # A measurement only. n_obs_q keeps the denominator separate: instances
+    # without a fan do not count.
     cov_counts: np.ndarray = field(
         default_factory=lambda: np.zeros(len(QUANTILE_LEVELS), dtype=np.float64))
     n_obs_q: int = 0
@@ -295,7 +279,8 @@ class MetricAccumulator:
         y, yhat = target[mask], median[mask]
         err = np.abs(y - yhat)
         if np.isfinite(scale) and scale > 0:
-            self.mase_terms.append(float(err.mean()) / scale)
+            self.mase_sum += float(err.sum()) / scale
+            self.mase_obs += int(mask.sum())
         else:
             self.n_skipped_scale += 1
 
@@ -327,7 +312,7 @@ class MetricAccumulator:
                     2.0 * np.abs(e * ((y <= median[mask]) - qv)).sum())
 
     def result(self) -> Dict[str, float]:
-        mase = float(np.mean(self.mase_terms)) if self.mase_terms else np.nan
+        mase = self.mase_sum / self.mase_obs if self.mase_obs else np.nan
         crps = (float((self.ql_sums / self.abs_sum).mean())
                 if self.abs_sum > 0 else np.nan)
         n = max(self.n_obs, 1)
@@ -356,8 +341,8 @@ def seasonal_naive_forecast(context: np.ndarray, h: int, m: int) -> np.ndarray:
         out = np.tile(tile, h // m + 1)[:h].astype(np.float32)
     else:
         out = np.full(h, context[-1], dtype=np.float32)
-    # A NaN in the copied cycle would poison the loss - fall back to the last
-    # finite value, which is what gluonts' predictor effectively does.
+    # A NaN in the copied cycle would poison the loss; fall back to the last
+    # finite value, as gluonts' predictor effectively does.
     if np.isnan(out).any():
         finite = context[~np.isnan(context)]
         fill = finite[-1] if finite.size else 0.0

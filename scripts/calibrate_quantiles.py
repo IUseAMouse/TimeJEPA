@@ -1,41 +1,28 @@
 """
-G4.2 - UNIFORM conformal quantile calibration (split conformal, CQR-style).
+Uniform conformal quantile calibration (split conformal, CQR-style).
 
     python scripts/calibrate_quantiles.py \\
         --checkpoint checkpoints/champions/ration45_mase0.8702_crps0.5959.ckpt \\
         --config-name lotsa_tiny_mix_zeroshot --flip
 
-Status (decision 2026-08-25): EXPERIMENTAL ABLATION for the paper - not
-necessarily the official reported number.
+The raw fan is too narrow ([q10, q90] coverage of 42-72% vs 80% nominal,
+biased in the same direction on every dataset). The fix is one widening
+factor per quantile level around the median, q'_k = med + gamma_k * (q_k - med):
+a single vector of scalars shared by all GIFT configs, which leaves MASE
+unchanged since the median does not move.
 
-Measured problem: the fan is too narrow - [q10, q90] coverage of 42-72%
-depending on the dataset vs 80% nominal, biased in the SAME direction everywhere.
-
-The fix: one widening factor PER quantile level, around the median -
-q'_k = med + gamma_k * (q_k - med) - a single vector of 9 scalars for all 97
-GIFT configs ("one checkpoint, zero per-config adaptation" doctrine). MASE
-invariant by construction (the median does not move).
-
-Calibration: on the VALIDATION windows of the FINETUNE corpus - never GIFT
-(the blind-eval test passes: gamma is frozen before submitting, it is part of
-the model, like a classifier's temperature). For each level k, gamma_k is the
+Calibration uses the validation windows of the finetune corpus, never GIFT,
+so gamma is frozen before evaluation. For each level k, gamma_k is the
 empirical quantile of the ratio r = (y-med)/(q_k-med) that restores nominal
-coverage (Romano et al., CQR - multiplicative variant, scale-invariant per
-window). Aggregation: MEDIAN of the gammas per dataset (one dataset = one
-vote, large corpora do not vote more).
+coverage (Romano et al., CQR, multiplicative variant). Gammas are aggregated
+by the median across datasets (one dataset, one vote).
 
-Stated limits:
-  * coverage is invariant under monotone transforms, but gamma is fitted in
-    the datamodule window space and applied in the denormalized GIFT space -
-    the gap (arcsinh) is second-order next to an 8-38 point miscalibration;
-  * gamma is assumed horizon-independent (calibrated at h=256, applied at
-    h in [6, 720]);
-  * calibrate WITH --flip if the official procedure is x flip (averaging two
-    fans TIGHTENS the spread - the correction must see the procedure it
-    corrects).
+Limits: gamma is fitted in the normalized window space and applied in the
+denormalized GIFT space; it is assumed horizon-independent; calibrate with
+--flip if the evaluation uses the x flip, since averaging two fans tightens
+the spread.
 
 Output: evaluation/calibration/gamma_<ckpt>[<tags>].json
-        {levels, gamma, coverage_before/after per dataset, meta}
 Consumed by: evaluate_gift.py  +quantile_gamma=<this json>.
 """
 
@@ -74,12 +61,10 @@ def gamma_for_level(r: np.ndarray, k: float) -> float:
 
 
 def calibrate_dataset(model, get_item, idx, h: int, batch_size: int,
-                      flip: bool, device):
-    """Collect ONE dataset's ratios and coverages and return
-    (levels, {gamma, coverage_before, n_windows}) - accumulators local to the
-    function: state can no longer leak from one dataset to the next
-    (2026-08-26 bug: init coupled to level discovery, only the first dataset
-    got initialized)."""
+                      flip: bool, device, w: float = None):
+    """Collect one dataset's ratios and coverages and return
+    (levels, {gamma, coverage_before, n_windows}). Accumulators are local so
+    no state leaks from one dataset to the next."""
     levels, ratios, covered = None, None, None
     for i0 in range(0, len(idx), batch_size):
         chunk = idx[i0:i0 + batch_size]
@@ -88,8 +73,9 @@ def calibrate_dataset(model, get_item, idx, h: int, batch_size: int,
                            for it in items]).unsqueeze(-1).to(device)  # [B, L, 1]
         y = torch.stack([torch.as_tensor(it['target'], dtype=torch.float32).reshape(-1)
                          for it in items]).cpu().numpy()               # [B, h]
+        w_vec = None if w is None else torch.full((ctx.shape[0],), float(w), device=device)
         with torch.no_grad():
-            out = tta_forecast(model, ctx, h, flip=flip)
+            out = tta_forecast(model, ctx, h, flip=flip, w=w_vec)
         med = out["forecast_denorm"].squeeze(-1).cpu().numpy()         # [B, h]
         q = out["quantiles_denorm"].cpu().numpy()
         if q.ndim == 4:
@@ -127,11 +113,23 @@ def main():
                     help="val windows sampled per dataset")
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--out-dir", default="evaluation/calibration")
+    ap.add_argument("--config-dir", default=None,
+                    help="config directory (default: this repo's configs/model; TimeSSM passes its own)")
+    ap.add_argument("--horizon", type=int, default=None,
+                    help="calibration horizon (default: the config's prediction_length; a horizon-free "
+                         "model can be calibrated at any h)")
+    ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
+                    help="hydra overrides (e.g. data.data_dir=/abs/path)")
+    ap.add_argument("--frequency-table", default=None,
+                    help="corpus frequency table (timejepa.data.frequency): calibrate with Delta tied "
+                         "to each dataset's frequency, for a model evaluated with +freq_delta=true")
     args = ap.parse_args()
 
-    config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
-    with initialize_config_dir(version_base=None, config_dir=config_dir):
-        cfg = compose(config_name=args.config_name)
+    config_dir = args.config_dir or str(Path(__file__).resolve().parents[1] / "configs" / "model")
+    with initialize_config_dir(version_base=None, config_dir=str(Path(config_dir).resolve())):
+        cfg = compose(config_name=args.config_name, overrides=list(args.set))
+    if args.horizon is not None:
+        cfg.model.prediction_length = int(args.horizon)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = create_model_from_config(cfg)
@@ -160,13 +158,12 @@ def main():
         use_mmap=bool(cfg.data.get('use_mmap', False)),
     )
     # Outside Lightning, prepare_data (.npy discovery) must be called
-    # explicitly - setup('fit') alone sees an empty dataset_files and
-    # concludes "every dataset skipped" (measured 2026-08-26).
+    # explicitly: setup('fit') alone sees no dataset files.
     dm.prepare_data()
     dm.setup('fit')
 
     # val_dataset is the ordered concatenation of the datasets: per-dataset
-    # sizes give the bounds - regular sampling inside each one.
+    # sizes give the bounds, with regular sampling inside each one.
     names = dm.dataset_names_order
     sizes = dm.val_dataset_sizes
     bounds = np.cumsum([0] + list(sizes))
@@ -174,6 +171,12 @@ def main():
     levels = None
     per_ds = {}
 
+    seasons = None
+    if args.frequency_table:
+        from timejepa.data.frequency import delta_scale, load_frequency_table
+        seasons = load_frequency_table(args.frequency_table)
+        if getattr(model, "rate_knob", None) != "delta":
+            raise ValueError("--frequency-table needs a model with a Delta rate knob")
     for d, name in enumerate(names):
         lo, hi = int(bounds[d]), int(bounds[d + 1])
         if hi - lo < 8:
@@ -182,7 +185,9 @@ def main():
         idx = np.linspace(lo, hi - 1, min(args.per_dataset, hi - lo)).astype(int)
         levels, stats = calibrate_dataset(
             model, lambda j: dm.val_dataset[int(j)], idx, h,
-            args.batch_size, args.flip, device)
+            args.batch_size, args.flip, device,
+            w=(delta_scale(seasons[name], *model.delta_range)
+               if seasons is not None and seasons[name] > 0 else None))
         per_ds[name] = stats
         g, cb = stats["gamma"], stats["coverage_before"]
         logger.info(f"  {name:32s} n={len(idx):4d} "
@@ -203,7 +208,8 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = Path(args.checkpoint).stem + ("_flip" if args.flip else "")
+    tag = (Path(args.checkpoint).stem + ("_flip" if args.flip else "")
+           + ("_fdelta" if args.frequency_table else ""))
     payload = {
         "levels": levels, "gamma": gamma,
         "checkpoint": args.checkpoint, "config_name": args.config_name,

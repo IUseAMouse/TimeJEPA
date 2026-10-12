@@ -4,9 +4,8 @@ Tests for the GIFT-Eval protocol (src/timejepa/evaluation/gift.py).
 The module reimplements the official harness constant by constant; each test
 below pins one of those transcriptions against an independently verifiable
 value (the official data.py, the gluonts seasonality table, or an analytic
-property of the metric). If one breaks, the transcription drifted - not a
-detail: these rules decide whether our numbers are comparable to the
-leaderboard or merely decorative.
+property of the metric). If one breaks, the transcription drifted; these
+rules decide whether our numbers are comparable to the leaderboard.
 """
 
 import sys
@@ -21,7 +20,7 @@ from timejepa.evaluation import gift                                     # noqa:
 
 
 # ---------------------------------------------------------------------------
-# Per-config derivations - values cross-checked against the official data.py
+# Per-config derivations, cross-checked against the official data.py
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("config,expected", [
@@ -72,7 +71,7 @@ def test_the_97_configs_match_the_official_baseline_exactly():
     """
     The Seasonal Naive CSV shipped with the package is the leaderboard's row
     list. Any divergence from GIFT_CONFIGS means one of the two lists drifted
-    from upstream - the test fails rather than letting an aggregate be
+    from upstream; the test fails rather than letting an aggregate be
     silently computed on a subset.
     """
     sn = gift.official_seasonal_naive()
@@ -137,7 +136,7 @@ def test_mase_scale_uses_the_full_past():
 def test_nan_targets_are_masked_not_imputed():
     acc = gift.MetricAccumulator()
     target = np.array([10., np.nan, 14.])
-    median = np.array([11., 999., 11.])             # the 999 must NOT count
+    median = np.array([11., 999., 11.])             # the 999 must not count
     acc.add(target, median, None, scale=1.0)
     r = acc.result()
     assert r["MASE"] == pytest.approx(2.0)          # (1 + 3) / 2
@@ -187,7 +186,7 @@ def test_prepare_context_contract():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
     from evaluate_gift import prepare_context
 
-    # truncates on the LEFT to a stride multiple: the recent edge stays intact
+    # truncates on the left to a stride multiple: the recent edge stays intact
     ctx = prepare_context(np.arange(1000, dtype=np.float32), 1024, 8, 16)
     assert len(ctx) == 1000 - (1000 % 8)
     assert ctx[-1] == 999.0
@@ -200,7 +199,7 @@ def test_prepare_context_contract():
     ctx = prepare_context(np.array([5., 6., 7.], dtype=np.float32), 1024, 8, 16)
     assert len(ctx) == 16 and ctx[0] == 5.0 and ctx[-1] == 7.0
 
-    # NaN linearly interpolated - model input only
+    # NaN linearly interpolated, model input only
     y = np.array([0., np.nan, 2., np.nan, np.nan, 5.] + [1.0] * 26,
                  dtype=np.float32)
     ctx = prepare_context(y, 1024, 8, 16)
@@ -209,3 +208,30 @@ def test_prepare_context_contract():
 
     # all-NaN: refused, not invented
     assert prepare_context(np.full(50, np.nan, dtype=np.float32), 1024, 8, 16) is None
+
+
+def test_mase_is_pooled_over_valid_observations_like_gluonts():
+    """gluonts aggregates MASE with axis=None: a partly-NaN target weighs by
+    its number of valid steps. A mean of per-instance means reads 0.4% high on
+    kdd_cup_2018/D against the official Chronos-Bolt line."""
+    acc = gift.MetricAccumulator()
+    full = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+    holes = np.array([np.nan, np.nan, np.nan, 10.0], dtype=np.float32)
+    acc.add(full, full + 1.0, None, scale=1.0)            # four errors of 1
+    acc.add(holes, np.zeros(4, dtype=np.float32), None, scale=2.0)   # one error of 10 / 2
+    assert acc.result()["MASE"] == pytest.approx((4 * 1.0 + 5.0) / 5)      # not (1 + 5) / 2
+    whole = gift.MetricAccumulator()
+    whole.add(full, full + 1.0, None, scale=1.0)
+    whole.add(full, full + 3.0, None, scale=1.0)
+    assert whole.result()["MASE"] == pytest.approx(2.0)   # complete targets: the mean of the two means
+
+
+def test_prepare_context_keeps_nans_on_request():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from evaluate_gift import prepare_context
+
+    y = np.array([1.0, np.nan, 3.0, 4.0], dtype=np.float32)
+    assert np.array_equal(prepare_context(y, 1024, 1, 1), np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    kept = prepare_context(y, 1024, 1, 1, keep_nan=True)
+    assert np.isnan(kept[1]) and np.array_equal(kept[[0, 2, 3]], y[[0, 2, 3]])
+    assert prepare_context(np.full(8, np.nan, dtype=np.float32), 1024, 1, 1, keep_nan=True) is None

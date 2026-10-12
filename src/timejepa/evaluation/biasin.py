@@ -1,0 +1,173 @@
+"""
+BiasIN: causal level-bias correction of the forecast center.
+
+Only the part of the bias that persists from one window to the next can be
+corrected causally. On the backtest windows already used by RateIN (the
+last h steps of the past, before any test target), forecast, take the
+residual of the median in units of the local scale of the context, and shift
+the test fan by a shrunk fraction of it. The shrink is chosen by the backtest
+too: the bias estimated on the older window is applied to the forecast of
+the recent window, and the shrink that lowers the pooled pinball by more
+than the margin is kept; otherwise no-op. Per-config decision,
+model-agnostic.
+
+Everything here is numpy and free of the model; the harness feeds it fans,
+targets and contexts.
+"""
+
+from typing import Dict, List, Optional, Sequence
+
+import numpy as np
+
+DEFAULT_LAMBDAS = (0.25, 0.5, 1.0)
+REL_MARGIN = 0.05
+SCALE_TAIL = 256
+
+
+def level_scale(context: np.ndarray, tail: int = SCALE_TAIL, floor: float = 1e-8) -> float:
+    """Robust scale of the recent context (MAD x 1.4826 on the last `tail`
+    points, std fallback), the unit in which a level bias is expressed so it
+    transfers from the backtest window to the test window."""
+    x = np.asarray(context, dtype=np.float64)[-tail:]
+    x = x[np.isfinite(x)]
+    if x.size < 2:
+        return 1.0
+    med = np.median(x)
+    mad = np.median(np.abs(x - med)) * 1.4826
+    if mad <= floor:
+        sd = float(x.std())
+        return max(sd, floor) if sd > floor else 1.0
+    return float(mad)
+
+
+def level_bias(known: np.ndarray, median: np.ndarray, scale: float) -> float:
+    """beta = median(known - median) / scale over the finite steps; nan when
+    nothing is finite. The median, since MASE and the pinball are L1 losses
+    whose optimal constant shift is the residual's median; on heavy tails the
+    mean is dragged by spikes."""
+    d = np.asarray(known, dtype=np.float64) - np.asarray(median, dtype=np.float64)
+    d = d[np.isfinite(d)]
+    if d.size == 0:
+        return float("nan")
+    return float(np.median(d) / max(scale, 1e-12))
+
+
+def shift_fan(fan: Optional[np.ndarray], median: np.ndarray, shift: float):
+    """Translate the whole fan (every quantile) and the median by `shift`
+    (native units): the fan's shape and monotonicity are untouched."""
+    med = np.asarray(median, dtype=np.float64) + shift
+    if fan is None:
+        return None, med
+    return np.asarray(fan, dtype=np.float64) + shift, med
+
+
+def pinball(fan: np.ndarray, y: np.ndarray, levels: Sequence[float]) -> float:
+    """Mean pinball (x2 convention is irrelevant to ratios); NaN targets masked."""
+    y = np.asarray(y, dtype=np.float64)
+    ok = np.isfinite(y)
+    if not ok.any():
+        return float("nan")
+    d = y[ok, None] - np.asarray(fan, dtype=np.float64)[ok]
+    q = np.asarray(levels, dtype=np.float64)
+    return float(np.mean(np.maximum(q * d, (q - 1.0) * d)))
+
+
+def choose_shrink(records: List[dict], levels: Sequence[float],
+                  lambdas: Sequence[float] = DEFAULT_LAMBDAS,
+                  margin: float = REL_MARGIN) -> dict:
+    """Per-config causal validation of the correction.
+
+    records: one per series with two backtest windows,
+        {"fan": fan of the recent window [h, Q], "known": its truth [h],
+         "beta_old": bias estimated on the older window, "scale": scale of
+         the recent window's context}.
+    For each lambda the recent-window fan is shifted by lambda * beta_old *
+    scale and the pinball is pooled over series; the best lambda is kept if
+    its ratio to the unshifted pinball is below 1 - margin, else 0.
+    Returns {"lambda", "ratios", "n_val"}.
+    """
+    valid = [r for r in records if np.isfinite(r["beta_old"]) and r["fan"] is not None]
+    if not valid:
+        return {"lambda": 0.0, "ratios": {}, "n_val": 0}
+    base = sum(pinball(r["fan"], r["known"], levels) for r in valid)
+    ratios = {}
+    for lam in lambdas:
+        tot = 0.0
+        for r in valid:
+            fan_s, _ = shift_fan(r["fan"], r["fan"][:, 0], lam * r["beta_old"] * r["scale"])
+            tot += pinball(fan_s, r["known"], levels)
+        ratios[float(lam)] = float(tot / max(base, 1e-12))
+    best = min(ratios, key=ratios.get)
+    lam_star = best if ratios[best] < 1.0 - margin else 0.0
+    return {"lambda": float(lam_star), "ratios": {f"{k:g}": round(v, 5) for k, v in ratios.items()},
+            "n_val": len(valid)}
+
+
+def series_beta(betas: Sequence[float]) -> float:
+    """The bias carried to the test window: mean of the finite window
+    estimates (recent and older), nan if none."""
+    b = np.asarray([x for x in betas if np.isfinite(x)], dtype=np.float64)
+    return float(b.mean()) if b.size else float("nan")
+
+
+def test_shift(beta: float, lam: float, context: np.ndarray) -> float:
+    """Native-unit shift for a test instance: lambda * beta * scale(context)."""
+    if not np.isfinite(beta) or lam == 0.0:
+        return 0.0
+    return float(lam * beta * level_scale(context))
+
+
+def oracle_shift(target: np.ndarray, median: np.ndarray) -> float:
+    """Diagnostic only, never official: the constant per-instance level shift
+    a target-aware oracle would apply, which bounds the systematic level
+    bias. The median of the residual (L1-optimal)."""
+    d = np.asarray(target, dtype=np.float64) - np.asarray(median, dtype=np.float64)
+    d = d[np.isfinite(d)]
+    return float(np.median(d)) if d.size else 0.0
+
+
+# ---------------------------------------------------------------------------
+# SpreadIN: causal width calibration of the fan.
+#
+# The magnitude of the residual persists from one window to the next
+# (volatility clusters). A single scale factor of the fan around its median,
+# chosen per config on the backtest windows (pooled pinball, small margin,
+# s = 1 otherwise), is a conformal-style correction of it. The median is
+# untouched, so MASE cannot move, only CRPS and coverage.
+# ---------------------------------------------------------------------------
+
+DEFAULT_SPREAD_GRID = (0.8, 0.9, 1.1, 1.25, 1.5, 2.0)
+SPREAD_MARGIN = 0.01
+
+
+def scale_fan(fan: Optional[np.ndarray], median: np.ndarray, s: float):
+    """fan' = median + s * (fan - median); the median column stays put."""
+    if fan is None or s == 1.0:
+        return fan
+    fan = np.asarray(fan, dtype=np.float64)
+    med = np.asarray(median, dtype=np.float64)[:, None]
+    return med + s * (fan - med)
+
+
+def choose_spread(records: List[dict], levels: Sequence[float], median_idx: int,
+                  grid: Sequence[float] = DEFAULT_SPREAD_GRID,
+                  margin: float = SPREAD_MARGIN) -> dict:
+    """Per-config scale of the fan from the backtest windows.
+
+    records: {"fan": [h, Q], "known": [h]} for every backtest window (both
+    windows of every series). Pooled pinball of the rescaled fan over all
+    records; the best s is kept if its ratio to s = 1 is below 1 - margin.
+    """
+    valid = [r for r in records if r["fan"] is not None]
+    if not valid:
+        return {"s": 1.0, "ratios": {}, "n_windows": 0}
+    base = sum(pinball(r["fan"], r["known"], levels) for r in valid)
+    ratios = {}
+    for s in grid:
+        tot = sum(pinball(scale_fan(r["fan"], r["fan"][:, median_idx], s), r["known"], levels)
+                  for r in valid)
+        ratios[float(s)] = float(tot / max(base, 1e-12))
+    best = min(ratios, key=ratios.get)
+    s_star = best if ratios[best] < 1.0 - margin else 1.0
+    return {"s": float(s_star), "ratios": {f"{k:g}": round(v, 5) for k, v in ratios.items()},
+            "n_windows": len(valid)}

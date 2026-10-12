@@ -1,46 +1,43 @@
 """
-G12 on GIFT - raw TTM-R3 vs the "TTM proposes, TimeJEPA judges" hybrid.
+Raw TTM-R3 vs the "TTM proposes, TimeJEPA judges" hybrid on GIFT.
 
     python scripts/evaluate_gift_hybrid.py \\
         --judge-checkpoint checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<ckpt> \\
         --judge-config lotsa_tiny_v3_eval
 
-STATUS: PAPER experiment (chapter G12), NEVER an official number - a
-two-model hybrid is beyond the G11 line (decision 2026-08-24). Designed
-2026-08-28 (user question: port the evaluate_energy/TTM duo to GIFT). The
-leaderboard harness (evaluate_gift.py) is NOT touched.
+Paper experiment, never an official number: a two-model hybrid. The
+leaderboard harness (evaluate_gift.py) is not touched.
 
-Three readouts, three statuses:
-  * `ttm`        - raw TTM-R3 on the GIFT windows. Its ABSOLUTE MASE compares
+Readouts:
+  * `ttm`        : raw TTM-R3 on the GIFT windows. Its absolute MASE compares
                    to the vendored official TTM-R3-PT CSV (harness
-                   cross-validation + the "pipeline" share of their score).
-                   Warning: its CRPS is a collapsed point forecast: do NOT cite it.
-  * `hybrid_ttm` - pool of bootstrap + SN + drift + jittered TTM paths,
-                   judged by OUR pretrain (contextualized encoding, E18c),
-                   read as weighted quantiles. THE measure: an external point
-                   forecaster becomes probabilistic (fan + coverage) via a
-                   latent judge.
-  * champion reference: NOT recomputed here - cite the existing full evals
-                   (better statistics than our capped windows).
+                   cross-validation). Its CRPS is a collapsed point forecast,
+                   do not cite it.
+  * `hybrid_ttm` : pool of bootstrap + SN + drift + jittered TTM paths,
+                   judged by our pretrain (contextualized encoding), read as
+                   weighted quantiles: an external point forecaster becomes
+                   probabilistic via a latent judge.
+  * the champion reference is not recomputed here; cite the full evals.
 
-Pairing: BOTH readers see exactly the same instances (regular subsampling,
---instances per config) - internal comparisons are paired; absolute values on
-capped windows do not replace a full eval.
+Pairing: both readers see exactly the same instances (regular subsampling,
+--instances per config), so internal comparisons are paired; absolute values
+on capped windows do not replace a full eval.
 
-TTM rollout for h > 96: autoregressive segment-by-segment reinjection (jitter
-on the FIRST segment only - diversity is born at the start, later segments
-extend each path deterministically).
+TTM rollout for h > 96: autoregressive segment-by-segment reinjection, with
+jitter on the first segment only (later segments extend each path
+deterministically).
 
-Judge choice (to declare in the paper):
-  * primary   = the pretrain's FINAL named checkpoint (zero selection);
-  * secondary = probe-selected judge (early-peak law) - the probe reads GIFT
-    data, so that column is labeled "declared selection".
+Judge choice: primary = the pretrain's final named checkpoint (no selection);
+secondary = probe-selected judge, labeled "declared selection" since the
+probe reads GIFT data.
 
 Outputs: evaluation/gift_hybrid/<judge>/{per_config/*.json, summary.json}
 (same format as the official harness, coverage included).
 """
 
 import argparse
+from collections import Counter
+from types import SimpleNamespace
 import json
 import logging
 import sys
@@ -57,9 +54,11 @@ from hydra import compose, initialize_config_dir                    # noqa: E402
 
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
 from timejepa.evaluation import gift                                # noqa: E402
-from evaluate_gift import prepare_context                           # noqa: E402
+from evaluate_gift import prepare_context, tta_forecast             # noqa: E402
+from evaluate_gift import _backtest_series_k, _mix_weights          # noqa: E402
+from timejepa.evaluation import ratein as ratein_mod                # noqa: E402
 from evaluate_energy import (TTMProposer, candidate_energies,       # noqa: E402
-                             fan_from_energies)
+                             fan_from_energies, mc_dropout_paths)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("gift_hybrid")
@@ -82,8 +81,104 @@ def ttm_rollout(prop: TTMProposer, ctx: np.ndarray, h: int,
     return np.concatenate(segs, axis=1)
 
 
+class TTMForecaster:
+    """evaluate_gift-compatible view of the TTM proposer (the model-agnostic
+    RateIN test): point forecast repeated over the 9 quantile levels (this TTM-R3 revision is point-only here), autoregressive rollout
+    beyond its 96-step horizon, optional sign-flip mirror (forecast(-x)
+    negated, averaged with forecast(x)). `forecast(batch, n)` is what
+    `_backtest_series_k` calls; `point(ctx, h)` is the per-instance path.
+    TTM left-pads short contexts to its 1024 window with the first value
+    (its own convention, in TTMProposer.paths)."""
+    LEVELS = tuple(0.1 * j for j in range(1, 10))
+
+    def __init__(self, prop: TTMProposer, flip: bool, rng):
+        self.prop, self.flip, self.rng = prop, flip, rng
+        self.input_length = prop.ctx_len
+        self.patching = SimpleNamespace(stride=8, patch_size=16)
+
+    def point(self, ctx: np.ndarray, h: int) -> np.ndarray:
+        ctx = np.asarray(ctx, dtype=np.float32)
+        p = ttm_rollout(self.prop, ctx, h, 0, self.rng)[0]
+        if self.flip:
+            q = -ttm_rollout(self.prop, -ctx, h, 0, self.rng)[0]
+            p = 0.5 * (p + q)
+        return p
+
+    @torch.no_grad()
+    def forecast(self, batch: torch.Tensor, n: int) -> dict:
+        x = batch[..., 0].detach().cpu().numpy()
+        pts = np.stack([self.point(x[b], n) for b in range(x.shape[0])])
+        fan = np.repeat(pts[:, :, None], len(self.LEVELS), axis=2)
+        return {"forecast_denorm": torch.from_numpy(pts[:, :, None]),
+                "quantiles_denorm": torch.from_numpy(fan),
+                "quantile_levels": list(self.LEVELS)}
+
+
+def ttm_layered_point(fc: TTMForecaster, ctx: np.ndarray, h: int,
+                      comps) -> np.ndarray:
+    """RateIN on a point proposer: for each (k, weight) component, decimate
+    the context by k, forecast ceil(h/k) steps, re-interpolate to the native
+    grid, and average the components by weight (the quantile averaging of
+    RateIN-mix collapses to a weighted mean on a point). Components whose
+    decimated history is shorter than a patch, or non-finite, are dropped
+    and the weights renormalized. None if nothing survives."""
+    acc, w_sum = None, 0.0
+    for kk, wk in comps:
+        hist = (ratein_mod.decimate(ctx[-(fc.input_length * kk):], kk)
+                if kk > 1 else ctx)
+        if kk > 1 and len(hist) < fc.patching.patch_size:
+            continue
+        pt = fc.point(hist, -(-h // kk))
+        pt_nat = (ratein_mod.reinterp_fan(pt[:, None], h, kk)[:, 0]
+                  if kk > 1 else pt[:h])
+        if not np.isfinite(pt_nat).all():
+            continue
+        acc = wk * pt_nat if acc is None else acc + wk * pt_nat
+        w_sum += wk
+    return None if acc is None else acc / w_sum
+
+
+def self_proposal(model, past: np.ndarray, h: int, device,
+                  k: int = 1, n_dropout: int = 4, rng=None):
+    """Champion-stack proposal: (fan [h, 9], paths [9 + n_dropout, h]).
+
+    Fan = sign-flip TTA, optionally RateIN-decimated by k (per-series k from
+    the causal backtest, same layers as the official pipeline). Paths
+    entering the judged pool = the 9 fan trajectories plus n_dropout
+    MC-dropout coherent paths. Returns (None, None) when the context cannot
+    be prepared.
+    """
+    hist = past
+    if k > 1:
+        hist = ratein_mod.decimate(past[-(model.input_length * k):], k)
+        if len(hist) < model.patching.patch_size:
+            k, hist = 1, past
+    ctx = prepare_context(hist, model.input_length, model.patching.stride,
+                          model.patching.patch_size)
+    if ctx is None:
+        return None, None
+    x = torch.from_numpy(ctx).reshape(1, -1, 1).to(device)
+    h_fc = -(-h // k)
+    with torch.no_grad():
+        out = tta_forecast(model, x, h_fc, flip=True)
+    q = out["quantiles_denorm"][0].cpu().numpy()
+    q = q[..., 0] if q.ndim == 3 else q                       # [h_fc, 9]
+    paths_dec = [q.T]                                          # 9 trajectories
+    if n_dropout > 0:
+        paths_dec.append(mc_dropout_paths(model, ctx, h_fc, n_dropout, device))
+    paths_dec = np.concatenate(paths_dec)                      # [9+n, h_fc]
+    if k > 1:
+        q = ratein_mod.reinterp_fan(q, h, k)
+        paths_dec = np.stack([ratein_mod.reinterp_fan(pp[:, None], h, k)[:, 0]
+                              for pp in paths_dec])
+    return q, paths_dec
+
+
 def evaluate_config(config, judge, prop, gift_root, device, rng,
-                    max_inst, K, n_jitter, centered=False):
+                    max_inst, K, n_jitter, centered=False,
+                    proposer=None, self_dropout=4, self_ratein=False,
+                    temperature=1.0, ttm_flip=False, ttm_ratein=False,
+                    bt_series=32):
     h = gift.prediction_length(config)
     m = gift.seasonality(config.split("/")[1])
     series = gift.load_series(gift_root, config)
@@ -92,10 +187,30 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
     total = sum(1 for _ in gift.iter_test_instances(series, h, windows))
     stride = max(1, total // max_inst)
 
-    readers = ("ttm",) if judge is None else ("ttm", "hybrid_ttm")
+    base = "self" if proposer is not None else "ttm"
+    readers = (base,) if judge is None else (base, f"hybrid_{base}")
     accs = {r: gift.MetricAccumulator() for r in readers}
     sn_acc = gift.MetricAccumulator()
     n_used, n_ttm_nonfinite = 0, 0
+    # Self mode: per-series k from the causal backtest (the champion's own
+    # RateIN layer), computed once per config, batched.
+    bt_ks = None
+    if proposer is not None and self_ratein:
+        bt_ks, _ = _backtest_series_k(proposer, series, h, windows,
+                                      proposer.input_length,
+                                      proposer.patching.stride,
+                                      proposer.patching.patch_size, device, 64)
+    # TTM + inference layers (the model-agnostic test of RateIN): flip and/or
+    # the pooled backtest + quantile mix, computed on the TTM proposer itself.
+    ttm_fc, ttm_comps, ttm_diag, k_hist = None, [(1, 1.0)], None, Counter()
+    if prop is not None and proposer is None and (ttm_flip or ttm_ratein):
+        ttm_fc = TTMForecaster(prop, ttm_flip, rng)
+        if ttm_ratein:
+            _, ttm_diag = _backtest_series_k(
+                ttm_fc, series[:bt_series], h, windows, ttm_fc.input_length,
+                ttm_fc.patching.stride, ttm_fc.patching.patch_size, device, 16,
+                pooled=True)
+            ttm_comps = list(_mix_weights(ttm_diag["ratios"]).items())
     for i, inst in enumerate(gift.iter_test_instances(series, h, windows)):
         if i % stride or n_used >= max_inst:
             continue
@@ -108,15 +223,38 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
                 continue
         scale = gift.seasonal_error(inst.context, m)
 
-        tp = ttm_rollout(prop, inst.context.astype(np.float32), h, n_jitter, rng)
-        # TTM emits NaNs on some extreme contexts (variance ~0, bitbrains):
-        # non-finite clean path -> instance skipped for BOTH readers (pairing
-        # comes first); non-finite jitters simply dropped.
-        if not np.isfinite(tp[0]).all():
-            n_ttm_nonfinite += 1
-            continue
-        tp = tp[np.isfinite(tp).all(axis=1)]
-        accs["ttm"].add(inst.target, tp[0], None, scale)      # clean path, point
+        if proposer is not None:
+            kk = bt_ks.get(inst.series_idx, 1) if bt_ks else 1
+            fan_p, tp = self_proposal(proposer, inst.context.astype(np.float32),
+                                      h, device, k=kk, n_dropout=self_dropout,
+                                      rng=rng)
+            if fan_p is None or not np.isfinite(fan_p).all():
+                n_ttm_nonfinite += 1
+                continue
+            tp = tp[np.isfinite(tp).all(axis=1)]
+            # Baseline reader = the champion's full fan: hybrid-vs-self is a
+            # paired fan-level comparison (impossible with TTM, point-only).
+            accs["self"].add(inst.target, fan_p[:, 4], fan_p, scale)
+        elif ttm_fc is not None:
+            pt = ttm_layered_point(ttm_fc, inst.context.astype(np.float32), h,
+                                   ttm_comps)
+            if pt is None:
+                n_ttm_nonfinite += 1
+                continue
+            tp = pt[None, :]
+            k_hist[max(ttm_comps, key=lambda c: c[1])[0]] += 1
+            accs["ttm"].add(inst.target, tp[0], None, scale)   # layered point
+        else:
+            tp = ttm_rollout(prop, inst.context.astype(np.float32), h,
+                             n_jitter, rng)
+            # TTM emits NaNs on some extreme contexts (variance ~0): a
+            # non-finite clean path skips the instance for both readers
+            # (pairing comes first); non-finite jitters are dropped.
+            if not np.isfinite(tp[0]).all():
+                n_ttm_nonfinite += 1
+                continue
+            tp = tp[np.isfinite(tp).all(axis=1)]
+            accs["ttm"].add(inst.target, tp[0], None, scale)  # clean path
 
         if judge is not None:
             # h_judge: the energy reads on the first steps <= the judge's
@@ -125,8 +263,8 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
                                           rng, device, extra_cands=tp,
                                           h_judge=judge.prediction_length,
                                           centered=centered)
-            fan = fan_from_energies(cands, e)                 # [h, 9]
-            accs["hybrid_ttm"].add(inst.target, fan[:, 4], fan, scale)
+            fan = fan_from_energies(cands, e, temperature=temperature)
+            accs[f"hybrid_{base}"].add(inst.target, fan[:, 4], fan, scale)
 
         sn_acc.add(inst.target, gift.seasonal_naive_forecast(inst.context, h, m),
                    None, scale)
@@ -135,6 +273,13 @@ def evaluate_config(config, judge, prop, gift_root, device, rng,
     out = {"config": config, "h": h, "n_instances": n_used,
            "n_ttm_nonfinite_skipped": n_ttm_nonfinite,
            "seasonal_naive_local": sn_acc.result()}
+    if ttm_fc is not None:
+        out["ttm_layers"] = {
+            "flip": bool(ttm_flip),
+            "ratein": "mix-pool" if ttm_ratein else "off",
+            "mix": {str(k): round(w, 4) for k, w in ttm_comps},
+            "k_hist": {str(k): n for k, n in sorted(k_hist.items())},
+            "backtest": ttm_diag}
     for r, acc in accs.items():
         out[r] = acc.result()
     return out
@@ -163,9 +308,33 @@ def main():
                     help="GIFT subset 'a/b/c,d/e/f' (default: all 97)")
     ap.add_argument("--gift-root", default="data/gift_eval")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--proposer", choices=("ttm", "self"), default="ttm",
+                    help="'self' = OUR finetuned champion proposes (fan "
+                         "trajectories + MC-dropout paths, the measured E18d "
+                         "pool recipe) and the pretrain judge reranks; no "
+                         "external model involved, granite-tsfm not needed")
+    ap.add_argument("--proposer-checkpoint", default=None,
+                    help="finetuned forecaster checkpoint (self mode)")
+    ap.add_argument("--proposer-config", default="lotsa_tiny_v3_eval")
+    ap.add_argument("--proposer-dropout", type=int, default=4,
+                    help="MC-dropout coherent paths added to the pool")
+    ap.add_argument("--proposer-ratein", action="store_true",
+                    help="apply the champion's RateIN layer (per-series "
+                         "causal backtest k) to the proposer fan")
+    ap.add_argument("--temperature", type=float, default=1.0,
+                    help="Gibbs T on standardized energies (P-SH.3 control: "
+                         "small T concentrates mass on the best candidates, "
+                         "the anti-dilution knob measured in E18e)")
     ap.add_argument("--centered-bootstrap", action="store_true",
                     help="G12c: seasonal-innovation bootstrap glued onto the "
                          "TTM path (anti-dilution by construction)")
+    ap.add_argument("--ttm-flip", action="store_true",
+                    help="sign-flip mirror on the TTM proposer (TTA layer 1)")
+    ap.add_argument("--ttm-ratein", action="store_true",
+                    help="RateIN on the TTM proposer: pooled causal backtest "
+                         "over k + weighted mix (the model-agnostic test)")
+    ap.add_argument("--bt-series", type=int, default=32,
+                    help="series used by the TTM backtest per config (cost cap)")
     ap.add_argument("--tag", default=None,
                     help="output-directory suffix - REQUIRED for a pool "
                          "variant (otherwise marker collision with the same "
@@ -173,6 +342,11 @@ def main():
     args = ap.parse_args()
     if not args.ttm_only and args.judge_checkpoint is None:
         ap.error("--judge-checkpoint is required (unless --ttm-only)")
+    if args.proposer == "self":
+        if args.ttm_only:
+            ap.error("--ttm-only and --proposer self are mutually exclusive")
+        if args.proposer_checkpoint is None:
+            ap.error("--proposer-checkpoint is required with --proposer self")
     if args.ttm_only and args.instances == 150:
         args.instances = 10 ** 9           # full windows by default
     if args.ttm_only:
@@ -187,13 +361,27 @@ def main():
         judge = create_model_from_config(cfg)
         judge = load_checkpoint(judge, args.judge_checkpoint, device)
         judge.to(device).eval()
-    prop = TTMProposer(args.ttm_model, device, revision=args.ttm_revision)
+    proposer = None
+    if args.proposer == "self":
+        prop = None                       # no TTM, no granite-tsfm import
+        config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
+        with initialize_config_dir(version_base=None, config_dir=config_dir):
+            pcfg = compose(config_name=args.proposer_config)
+        proposer = create_model_from_config(pcfg)
+        proposer = load_checkpoint(proposer, args.proposer_checkpoint, device)
+        proposer.to(device).eval()
+    else:
+        prop = TTMProposer(args.ttm_model, device, revision=args.ttm_revision)
 
     configs = ([c.strip() for c in args.configs.split(",")] if args.configs
                else list(gift.GIFT_CONFIGS))
     rng = np.random.default_rng(args.seed)
     stem = ("ttm_raw" if args.ttm_only
             else Path(args.judge_checkpoint).stem)
+    if args.ttm_flip:
+        stem += "_flip"
+    if args.ttm_ratein:
+        stem += "_ratein-mix-pool"
     out_dir = (Path("evaluation") / "gift_hybrid"
                / (stem + (f"_{args.tag}" if args.tag else "")))
     (out_dir / "per_config").mkdir(parents=True, exist_ok=True)
@@ -210,45 +398,58 @@ def main():
             res = evaluate_config(config, judge, prop, Path(args.gift_root),
                                   device, rng, args.instances,
                                   args.candidates, args.ttm_jitter,
-                                  centered=args.centered_bootstrap)
+                                  centered=args.centered_bootstrap,
+                                  proposer=proposer,
+                                  self_dropout=args.proposer_dropout,
+                                  self_ratein=args.proposer_ratein,
+                                  temperature=args.temperature,
+                                  ttm_flip=args.ttm_flip,
+                                  ttm_ratein=args.ttm_ratein,
+                                  bt_series=args.bt_series)
         except Exception as exc:   # one broken config must not kill 96 others
             logger.error(f"[{i}/{len(configs)}] {config} FAILED: "
                          f"{type(exc).__name__}: {exc}")
             continue
         marker.write_text(json.dumps(res, indent=1))
         results[config] = res
-        t = res["ttm"]
-        if "hybrid_ttm" in res:
-            hy = res["hybrid_ttm"]
+        base = "self" if args.proposer == "self" else "ttm"
+        t = res[base]
+        if f"hybrid_{base}" in res:
+            hy = res[f"hybrid_{base}"]
             cov = hy.get("coverage") or {}
             extra = (f"hybrid MASE {hy['MASE']:.3f} CRPS {hy['CRPS']:.3f} "
                      f"cov80 {(cov.get('0.9', 0) - cov.get('0.1', 0)):.2f} ")
         else:
             extra = ""
+        if "ttm_layers" in res:
+            extra += "mix " + " ".join(
+                f"k{k}:{w:.2f}" for k, w in res["ttm_layers"]["mix"].items()) + " "
         logger.info(
-            f"[{i}/{len(configs)}] {config}: ttm MASE {t['MASE']:.3f} | "
+            f"[{i}/{len(configs)}] {config}: {base} MASE {t['MASE']:.3f} "
+            f"CRPS {t.get('CRPS', float('nan')):.3f} | "
             f"{extra}({res['n_instances']} inst, {time.time() - t0:.0f}s)")
 
-    # Aggregates: geomean of ratios vs LOCAL SN (same windows - paired).
+    # Aggregates: geomean of ratios vs local SN (same windows, paired).
     def geomean_ratio(metric, reader):
         ratios = [results[c][reader][metric] / results[c]["seasonal_naive_local"][metric]
                   for c in results
                   if results[c]["seasonal_naive_local"][metric] > 0]
         return float(np.exp(np.mean(np.log(ratios)))) if ratios else float("nan")
 
-    readers = ("ttm",) if args.ttm_only else ("ttm", "hybrid_ttm")
+    base = "self" if args.proposer == "self" else "ttm"
+    readers = ((base,) if args.ttm_only else (base, f"hybrid_{base}"))
     summary = {"judge": args.judge_checkpoint, "ttm": args.ttm_model,
                "revision": args.ttm_revision, "instances_cap": args.instances,
                "aggregates_vs_local_sn": {
                    r: {m: geomean_ratio(m, r) for m in ("MASE", "CRPS")}
                    for r in readers}}
-    covs = [results[c]["hybrid_ttm"].get("coverage") for c in results
-            if results[c].get("hybrid_ttm", {}).get("coverage")]
+    covs = [results[c][f"hybrid_{base}"].get("coverage") for c in results
+            if results[c].get(f"hybrid_{base}", {}).get("coverage")]
     if covs:
         summary["hybrid_coverage80_mean"] = float(
             np.mean([c["0.9"] - c["0.1"] for c in covs]))
     if args.ttm_only:
-        # The cross-validation number: ratio vs the vendored OFFICIAL SN -
+        # The cross-validation number: ratio vs the vendored official SN,
         # the leaderboard normalization (TTM-R3-PT: MASE 0.7240).
         summary["ttm_vs_official_sn"] = gift.aggregate(
             {c: results[c]["ttm"] for c in results},
@@ -259,6 +460,7 @@ def main():
     for r in readers:
         a = summary["aggregates_vs_local_sn"][r]
         note = "  (collapsed point CRPS - do not cite)" if r == "ttm" else ""
+        # (reader 'self' carries the champion's full fan: its CRPS is real)
         logger.info(f"  {r:11s} MASE ratio {a['MASE']:.4f} | "
                     f"CRPS ratio {a['CRPS']:.4f}{note}  [vs local SN]")
     if args.ttm_only:
