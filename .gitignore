@@ -112,3 +112,11 @@ temp/
 lightning/
 # Snapshots vendorés du leaderboard GIFT-Eval (référence des rangs du registre)
 !docs/assets/gift_leaderboard/**
+
+# Kept locally, out of the public branch (2026-10-12)
+paper/
+PLAN.md
+export/
+docs/_sanitized_part*.md
+docs/EXPERIMENTAL_LOG.sanitized.md
+docs/EXPERIMENTAL_LOG.md
