@@ -1,45 +1,30 @@
-# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round
-# (G13-T1/T2 control-as-EBM probe, E20c); kept per the no-delete policy.
+# Deprecated: one-shot probe from a closed experiment round, kept for reference.
 """
-G13-T1/T2 - the "control in EBM mode" hypothesis, tested WITHOUT a_film or GPU.
+Control-as-EBM probe on a simulated thermostat, without a_film or GPU.
 
     python scripts/control_ebm_probe.py \\
         --checkpoint checkpoints/timejepa_tiny_lotsa_mix/last.ckpt \\
         --model-config lotsa_tiny_mix_eval --standalone-targets
 
-Principle: we OWN the simulator (linear thermostat, known dynamics), so every
-claim of the judge and every plan is verifiable against the true dynamics -
-which neither LOTSA nor GIFT allows.
-
-Simulator (observable univariate, hidden action as in LOTSA):
+The simulator has known linear dynamics, so every claim of the energy judge
+and every plan can be checked against the truth:
     x_{t+1} = x_t + alpha*(amb_t - x_t) + beta*u_t + sigma*eps_t
     amb_t   = 24-step sinusoid + level; u_t in [0, 1] (heating)
-    history generated under a thermostat POLICY (smoothed bang-bang) => u
-    correlated with the state = deliberate observational confounding, the G13
-    wall in miniature.
+The history is generated under a thermostat policy, so u is correlated with
+the state (deliberate observational confounding).
 
-T1 - does the judge know the dynamics?
-    h=256 candidates: coherent (new seeds + varied setpoints) against three
-    violation families - time reversal, initial-state jump, INVERTED action
-    response (beta -> -beta). Energy AUC per family. Predictions written
-    beforehand: jump/reversal separated (AUC > 0.7); the action sign is the
-    hard case - if it is NOT separated, that directly measures the
-    confounding wall (the observational judge does not know the effect of u,
-    only the morphologies).
+T1: does the judge know the dynamics? Coherent h=256 candidates against three
+violation families (time reversal, initial-state jump, inverted action
+response); energy AUC per family.
 
-T2 - planning by backprop, ground truth in hand.
-    Goal: keep x inside a band [c_lo, c_hi] over h steps. Command u in
-    [0,1]^h optimized by gradient THROUGH the differentiable simulator
-    (noise-free), under two objectives:
-        (a) cost alone;
-        (b) cost + lambda_E * Energy(ctx, x(u)) - the uncertainty
-            regularizer a la Henaff/Canziani/LeCun (MPUR).
-    VERDICT BY EXECUTION: 200 noisy rollouts under the found u -> realized
-    violation rate + "optimism gap" (noise-free planned cost vs realized
-    cost). Prediction: (a) over-promises (smooth-simulator Goodhart), (b)
-    closes the gap; if energy does not help, negative result recorded.
+T2: planning by backprop through the noise-free simulator to keep x inside a
+band, with cost alone or cost + lambda_E * energy (MPUR-style regularizer,
+Henaff et al.). Verdict by execution: noisy rollouts under the found u give
+the realized violation rate and the optimism gap (planned vs realized cost).
 
 Read-only, CPU (~2-4 min). Console output + JSON evaluation/control_ebm/.
+The reference implementation of the candidate energy is
+src/timejepa/training/critic.py; this script keeps its own copy.
 """
 
 import argparse
@@ -184,10 +169,9 @@ def run_t1(model, standalone, n_inst, n_cand, seed):
 # ------------------------------------------------------------------------ T2
 def plan(model, ctx, x0, t0, standalone, lambda_e, c_lo, c_hi,
          steps=120, lr=0.08, lambda_u=0.02, plan_beta=BETA):
-    """plan_beta != BETA = T2b: the PLANNER believes a wrong dynamics
-    (controlled model error); execution (realized) always uses the true one.
-    That is the real MPUR setting - the regularizer only has work to do when
-    the planning model is wrong."""
+    """plan_beta != BETA: the planner believes a wrong dynamics (controlled
+    model error) while execution always uses the true one. The regularizer
+    only has work to do when the planning model is wrong."""
     raw = torch.zeros(H, requires_grad=True)
     opt = torch.optim.Adam([raw], lr=lr)
     for _ in range(steps):
@@ -196,9 +180,8 @@ def plan(model, ctx, x0, t0, standalone, lambda_e, c_lo, c_hi,
         cost = (torch.relu(x - c_hi) + torch.relu(c_lo - x)).mean() \
             + lambda_u * (u ** 2).mean()
         # The energy lives at ~0.7-1.0, the cost at ~0.005: regularize on the
-        # energy EXCESS above the coherent-futures level (E20c: raw lambda_E
-        # at 0.5 drowned the cost at 99% - a rigged trial). lambda_e stays
-        # the weight of that excess.
+        # energy excess above the coherent-futures level, otherwise the
+        # energy term drowns the cost.
         if lambda_e > 0:
             e = energy(model, ctx, x.unsqueeze(0), standalone, grad=True)[0]
             loss = cost + lambda_e * torch.relu(e - plan.e_ref)

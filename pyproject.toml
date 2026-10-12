@@ -32,6 +32,7 @@ dependencies = [
     # HuggingFace. Base dependencies, not optional - the install cost does not
     # justify the complexity of a conditional import.
     "datasets>=3.0.0",
+    "safetensors>=0.4",
     "huggingface-hub>=0.26.0",
 ]
 
@@ -51,6 +52,15 @@ ttm = [
 ]
 cluster = [
     "deepspeed",        
+]
+# Third-party forecasters behind the GIFT harness (RateIN on public models,
+# src/timejepa/evaluation/external.py): Chronos-Bolt / Chronos-2 and t0-alpha.
+# Both resolve on the current stack (torch 2.10, transformers 5.x, numpy 2.3,
+# checked 2026-09-13). toto-ts is deliberately absent: it pins torch 2.7 and
+# transformers 4.x. Install: uv pip install -e ".[external]"
+external = [
+    "chronos-forecasting>=2.3",
+    "tfc-t0>=0.5",
 ]
 
 [build-system]

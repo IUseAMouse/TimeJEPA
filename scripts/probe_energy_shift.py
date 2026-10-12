@@ -1,0 +1,188 @@
+"""
+Energy sensitivity to a level shift of the candidate.
+
+The refinement translates the fan's center by a few hundredths of a sigma
+and asks the judge to point the way. Hypothesis: the standalone candidate
+encoder (patch projection, then LayerNorm blocks) is close to invariant to a
+constant offset, so the judge is blind to exactly the move it must guide.
+
+For each instance, the center is shifted by c (normalized units) on a grid;
+E(c) = 1 - cos(z_pred, enc(center + c)) under the standalone encoding and
+under the contextualized encoding ([ctx || candidate], where the junction
+makes an offset visible).
+
+Reports, per encoding: the mean |E(c) - E(0)| per c (flat = blind), the
+share of instances where argmin_c E(c) has the sign of the true residual
+(0.5 = coin flip), and the Spearman between E(c) and |c - c*| where c* is
+the residual mean (does the energy valley sit on the truth?).
+
+Two centers. `--center truth` (default): the true target sits at c = 0, so
+the question is whether E has a valley at the truth along the translation
+axis; works on a pretrain checkpoint, no quantile head needed. `--center fan`:
+the proposer's own median (needs a quantile head; the judge may be another
+checkpoint via --judge-checkpoint), the situation the critic loop is in.
+
+Usage:
+    # pretrain judge, truth at the center
+    python scripts/probe_energy_shift.py --checkpoint <pretrain.ckpt> \
+        --model-config lotsa_mini_v3 --configs m_dense/D/short --instances 64
+    # finetuned proposer, its own fan at the center
+    python scripts/probe_energy_shift.py --checkpoint <head8.ckpt> \
+        --model-config lotsa_mini_v3_head8_eval --center fan
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from hydra import compose, initialize_config_dir                   # noqa: E402
+
+from timejepa.evaluation import gift                                # noqa: E402
+from timejepa.evaluation import refine as refine_mod                # noqa: E402
+from timejepa.evaluation.loading import create_model_from_config, load_checkpoint  # noqa: E402
+from timejepa.training import critic                                # noqa: E402
+from evaluate_gift import prepare_context, tta_forecast             # noqa: E402
+
+GRID = (-0.5, -0.3, -0.1, -0.05, 0.0, 0.05, 0.1, 0.3, 0.5)
+
+
+def spearman(a, b):
+    ra = np.argsort(np.argsort(a)).astype(float)
+    rb = np.argsort(np.argsort(b)).astype(float)
+    if ra.std() == 0 or rb.std() == 0:
+        return float("nan")
+    return float(np.corrcoef(ra, rb)[0, 1])
+
+
+def energies_for_shift(model, ctx_norm, center_norm, z_pred, c, contextualized):
+    cand = center_norm + c
+    z_y = critic.encode_candidate(model, ctx_norm, cand, contextualized=contextualized)
+    return critic.energy_per_item(z_y, z_pred, "cos")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("--checkpoint", required=True)
+    ap.add_argument("--model-config", default="lotsa_tiny_mix_eval")
+    ap.add_argument("--configs", default="m_dense/D/short,loop_seattle/H/short")
+    ap.add_argument("--instances", type=int, default=64)
+    ap.add_argument("--gift-root", default="data/gift_eval")
+    ap.add_argument("--out", default="")
+    ap.add_argument("--center", choices=("truth", "fan"), default="truth")
+    ap.add_argument("--judge-checkpoint", default="",
+                    help="fan mode only: judge the proposer's fan with ANOTHER "
+                         "checkpoint (e.g. the pretrain); same patch/stride required")
+    ap.add_argument("--judge-config", default="")
+    args = ap.parse_args()
+
+    config_dir = str(Path(__file__).resolve().parents[1] / "configs" / "model")
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
+        cfg = compose(config_name=args.model_config)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = create_model_from_config(cfg)
+    load_checkpoint(model, args.checkpoint, device)
+    model.to(device).eval()
+    judge = model
+    if args.judge_checkpoint:
+        with initialize_config_dir(version_base=None, config_dir=config_dir):
+            jcfg = compose(config_name=args.judge_config or args.model_config)
+        judge = create_model_from_config(jcfg)
+        load_checkpoint(judge, args.judge_checkpoint, device)
+        judge.to(device).eval()
+        if (judge.patching.patch_size != model.patching.patch_size
+                or judge.patching.stride != model.patching.stride):
+            raise ValueError("judge patch/stride differ from the proposer's")
+    can_ctx = getattr(judge.predictor, "w_film", None) is None
+    print(f"center={args.center} judge={'self' if judge is model else args.judge_checkpoint}")
+
+    grid = np.array(GRID, dtype=np.float32)
+    results = {}
+    for config in [c.strip() for c in args.configs.split(",")]:
+        h = gift.prediction_length(config)
+        series = gift.load_series(Path(args.gift_root), config)
+        windows = gift.num_windows(config, min(len(s) for s in series))
+        E_sa, E_cx, resid = [], [], []
+        for inst in gift.iter_test_instances(series, h, windows):
+            if len(resid) >= args.instances:
+                break
+            if np.isnan(inst.target).any():
+                continue
+            ctx = prepare_context(inst.context, model.input_length,
+                                  model.patching.stride, model.patching.patch_size)
+            if ctx is None:
+                continue
+            x = torch.as_tensor(ctx, dtype=torch.float32, device=device).view(1, -1, 1)
+            with torch.no_grad():
+                y = torch.as_tensor(inst.target, dtype=torch.float32, device=device).view(1, -1, 1)
+                hj = min(h, int(judge.prediction_length))
+                if args.center == "fan":
+                    out = tta_forecast(model, x, h)
+                    fan = out["quantiles_denorm"]
+                    if fan.ndim == 4:
+                        fan = fan[..., 0]
+                    # the judge's frame (its own scalers refit on the raw context)
+                    ctx_norm, fan_norm = refine_mod.normalize_with_context(judge, x, fan)
+                    _, y_norm = refine_mod.normalize_with_context(judge, x, y)
+                    mid = fan_norm.shape[-1] // 2
+                    center = fan_norm[..., mid:mid + 1][:, :hj]
+                else:
+                    ctx_norm, y_norm = refine_mod.normalize_with_context(judge, x, y)
+                    center = y_norm[:, :hj]
+                y_norm = y_norm[:, :hj]
+                z_pred = critic.predict_latent(judge, ctx_norm, None)[0]
+                e_sa = [float(energies_for_shift(judge, ctx_norm, center, z_pred, float(c), False))
+                        for c in grid]
+                e_cx = ([float(energies_for_shift(judge, ctx_norm, center, z_pred, float(c), True))
+                         for c in grid] if can_ctx else [float("nan")] * len(grid))
+            E_sa.append(e_sa)
+            E_cx.append(e_cx)
+            resid.append(float((y_norm - center).mean()))
+        if not resid:
+            continue
+        E_sa, E_cx, resid = np.array(E_sa), np.array(E_cx), np.array(resid)
+        i0 = int(np.where(grid == 0.0)[0][0])
+
+        def summarize(E):
+            if not np.isfinite(E).all():
+                return None
+            dE = np.abs(E - E[:, i0:i0 + 1]).mean(axis=0)
+            argmin = grid[E.argmin(axis=1)]
+            nz = np.abs(resid) > 0.02
+            sign_ok = float((np.sign(argmin[nz]) == np.sign(resid[nz])).mean()) if nz.any() else float("nan")
+            stay = float((argmin == 0.0).mean())
+            # local valley at the center: both neighbours (+-0.05) higher
+            valley = float(((E[:, i0 - 1] > E[:, i0]) & (E[:, i0 + 1] > E[:, i0])).mean())
+            sp = [spearman(E[i], np.abs(grid - resid[i])) for i in range(len(E))]
+            return {"mean_abs_dE_per_c": {f"{c:+.2f}": round(float(d), 5) for c, d in zip(grid, dE)},
+                    "argmin_sign_matches_residual": round(sign_ok, 3),
+                    "argmin_stays_at_zero": round(stay, 3),
+                    "local_valley_at_center": round(valley, 3),
+                    "spearman_E_vs_dist_to_truth_mean": round(float(np.nanmean(sp)), 3),
+                    "n": int(len(E))}
+
+        results[config] = {"residual_mean_abs": round(float(np.abs(resid).mean()), 4),
+                           "standalone": summarize(E_sa),
+                           "contextualized": summarize(E_cx)}
+        print(f"\n== {config} (n={len(resid)}, mean |residual| {np.abs(resid).mean():.3f} sigma)")
+        for name in ("standalone", "contextualized"):
+            r = results[config][name]
+            if r is None:
+                print(f"  {name}: n/a"); continue
+            print(f"  {name}: |dE| per c " + " ".join(f"{k}:{v:.4f}" for k, v in r["mean_abs_dE_per_c"].items()))
+            print(f"  {name}: argmin at 0: {r['argmin_stays_at_zero']:.2f} | local valley at center: "
+                  f"{r['local_valley_at_center']:.2f} | argmin sign = residual sign "
+                  f"{r['argmin_sign_matches_residual']:.2f} | spearman(E, |c-c*|) "
+                  f"{r['spearman_E_vs_dist_to_truth_mean']:.3f}")
+    if args.out:
+        Path(args.out).write_text(json.dumps(results, indent=2))
+
+
+if __name__ == "__main__":
+    main()
