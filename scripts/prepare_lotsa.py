@@ -12,17 +12,15 @@ Converts LOTSA (HuggingFace `Salesforce/lotsa_data`) to the TimeJEPA format.
     python scripts/prepare_lotsa.py --out data/processed/lotsa --resume
 
 What the script guarantees, and why:
-* **Dense float32 output only**, by segmenting series into fixed-length
-  chunks. `object` arrays break fork's copy-on-write and already blew up the
-  project's RAM (B19); at LOTSA scale that would be fatal. Corollary: the
-  produced files are memmappable (`data.use_mmap: true`).
-* **Exclusion of evaluation datasets** by substring (`EVAL_OVERLAP_PATTERNS`).
-  The script PRINTS the excluded list: re-read it before any pretrain, since
+* Dense float32 output only, by segmenting series into fixed-length chunks:
+  `object` arrays break fork's copy-on-write and exhaust RAM at LOTSA scale.
+  The produced files are memmappable (`data.use_mmap: true`).
+* Exclusion of evaluation datasets by substring (`EVAL_OVERLAP_PATTERNS`).
+  The script prints the excluded list: re-read it before any pretrain, since
   LOTSA names are not frozen in time.
-* **Per-subset cap** (`--max-chunks-per-subset`). E10 measured two datasets
-  weighing 48.7% of the pretrain batch; the cap keeps LOTSA from reproducing
-  that imbalance at larger scale.
-* **Resume**: each subset is an independent file.
+* Per-subset cap (`--max-chunks-per-subset`), so that a couple of large
+  datasets cannot dominate the pretrain batch.
+* Resume: each subset is an independent file.
 
 Dependencies: `datasets` and `huggingface_hub`, declared in pyproject.toml.
 """
@@ -50,21 +48,26 @@ from timejepa.data.lotsa import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("prepare_lotsa")
 
-# httpx and huggingface_hub log EVERY request at INFO. On a full conversion
-# that is tens of thousands of lines drowning the only output that matters -
-# the excluded list and the progress. Raise them to WARNING: network errors
-# stay visible.
+# httpx and huggingface_hub log every request at INFO, which drowns the
+# excluded list and the progress on a full conversion. WARNING keeps network
+# errors visible.
 for _noisy in ("httpx", "httpcore", "urllib3", "huggingface_hub", "datasets",
                "fsspec", "filelock"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 REPO_ID = "Salesforce/lotsa_data"
+# Revision of the HF dataset the corpus v3 was built from. A rebuild must pin
+# it, or the corpus silently follows later pushes; the 15.85 B-observation /
+# 106-file reference in build_corpus_v3.sh assumes it.
+LOTSA_REVISION_V3 = "8191fd29eb5cf906ec55effca44d8059888b615d"
+_REVISION = None
+
 
 def list_subsets():
     """LOTSA subset names, via the HuggingFace API."""
     from huggingface_hub import list_repo_files
 
-    files = list_repo_files(REPO_ID, repo_type="dataset")
+    files = list_repo_files(REPO_ID, repo_type="dataset", revision=_REVISION)
     names = sorted({f.split("/")[0] for f in files if "/" in f})
     return names
 
@@ -75,12 +78,11 @@ def series_iter(subset: str):
 
     LOTSA stores the series in the `target` column, either 1-D (univariate)
     or 2-D (multivariate: one row per channel). The project is univariate by
-    choice, so each channel becomes an independent series - exactly the
-    treatment already applied to the current corpus's multivariate datasets.
+    choice, so each channel becomes an independent series.
     """
     from datasets import load_dataset
 
-    ds = load_dataset(REPO_ID, subset, split="train", streaming=True)
+    ds = load_dataset(REPO_ID, subset, split="train", streaming=True, revision=_REVISION)
     for row in ds:
         target = row.get("target")
         if target is None:
@@ -123,6 +125,12 @@ def main():
                          "imbalance at smaller scale.")
     ap.add_argument("--subsets", nargs="*", default=None,
                     help="Restrict to these subsets (default: all).")
+    ap.add_argument("--subsets-from", type=Path, default=None,
+                    help="File with one subset name per line (a manifest); "
+                         "converts exactly these, in this order.")
+    ap.add_argument("--revision", default=None,
+                    help="HF dataset revision (commit sha or tag). Default: main head, "
+                         "printed; the v3 rebuild passes LOTSA_REVISION_V3.")
     ap.add_argument("--list", action="store_true", help="Inventory only.")
     ap.add_argument("--resume", action="store_true",
                     help="Skip already-converted subsets.")
@@ -132,9 +140,17 @@ def main():
                          "given up rather than invented. Rejecting any chunk "
                          "with a NaN cost 100 %% of HZMETRO and SHMETRO.")
     args = ap.parse_args()
+    global _REVISION
+    _REVISION = args.revision
+    print(f"HF revision: {args.revision or 'main (unpinned)'}")
 
     logger.info(f"LOTSA subsets from {REPO_ID}...")
-    names = args.subsets or list_subsets()
+    if args.subsets_from is not None:
+        names = [ln.split()[0] for ln in args.subsets_from.read_text().splitlines()
+                 if ln.strip() and not ln.startswith("#")]
+        print(f"subsets from manifest {args.subsets_from}: {len(names)}")
+    else:
+        names = args.subsets or list_subsets()
 
     kept, excluded = [], []
     for n in names:
@@ -155,9 +171,8 @@ def main():
         print(f"  + {n}")
     print()
 
-    # Per-subset budget, reduced for large families. Computed BEFORE the
-    # --list return: this is exactly what we want to inspect before
-    # converting anything.
+    # Per-subset budget, reduced for large families. Computed before the
+    # --list return so it can be inspected before converting anything.
     family_cap = args.max_chunks_per_family or 3 * args.max_chunks_per_subset
     members = Counter(family_of(n) for n in kept)
     budget = {
@@ -191,11 +206,10 @@ def main():
 
         logger.info(f"[{i}/{len(kept)}] {subset} -> {out_path.name}")
         try:
-            # `--chunk-length` is a MAXIMUM. Sample the first series to pick
+            # `--chunk-length` is a maximum. Sample the first series to pick
             # the subset's effective length: each file is an independent
-            # dense array, nothing forces two subsets to share one. Without
-            # this, BEIJING_SUBWAY_30MIN (552 series of 1572 steps) produced
-            # nothing against a 2048 chunk.
+            # dense array. Without this, a subset of 1572-step series
+            # produced nothing against a 2048 chunk.
             stream = series_iter(subset)
             sample = []
             for series in stream:
@@ -203,12 +217,22 @@ def main():
                 if len(sample) >= 200:
                     break
 
-            effective = choose_chunk_length(
-                [len(x) for x in sample], args.chunk_length, args.min_length
-            )
+            lengths = [len(x) for x in sample]
+            if args.pad_to:
+                # Padded block: no median adaptation. Adapting to the median
+                # and then segmenting kept only the leading chunk of every
+                # series longer than the median, dropping its most recent
+                # steps. With padding a series is either kept whole
+                # (>= min_length) or rejected.
+                effective = (args.chunk_length
+                             if max(lengths, default=0) >= args.min_length
+                             else None)
+            else:
+                effective = choose_chunk_length(
+                    lengths, args.chunk_length, args.min_length)
             if effective is None:
                 logger.warning(
-                    f"    series too short (median < {args.min_length}) - "
+                    f"    series too short (< {args.min_length}) - "
                     f"subset unusable for this geometry"
                 )
                 continue
@@ -223,6 +247,10 @@ def main():
             if emit_len != effective:
                 logger.info(f"    left edge-padding: {effective} -> {emit_len}")
             stats = ChunkStats()
+            # With padding, record the real length of every row in a sidecar
+            # under _reallen/ (a subfolder, so the dataset glob '*.npy' never
+            # mistakes it for a series file).
+            real_lens = [] if args.pad_to else None
             chunks = iter_dense_chunks(
                 _chained(),
                 chunk_length=effective,
@@ -231,14 +259,19 @@ def main():
                 max_nan_fraction=args.max_nan_fraction,
                 stats=stats,
                 pad_to=args.pad_to,
+                real_lens=real_lens,
             )
             written = write_dense_npy(
                 chunks, out_path,
                 chunk_length=emit_len,
                 max_chunks=budget[subset],
             )
-            # Always logged, including (especially) when nothing is written:
-            # the only way to know WHY a subset is empty.
+            if real_lens is not None and written > 0:
+                side = Path(out_path).parent / "_reallen" / Path(out_path).name
+                side.parent.mkdir(parents=True, exist_ok=True)
+                np.save(side, np.asarray(real_lens[:written], dtype=np.int32))
+            # Always logged, especially when nothing is written: the only way
+            # to know why a subset is empty.
             logger.info(f"    {stats.summary(effective, args.min_length)}")
             total += written
         except Exception as exc:  # one broken subset must not kill the run
@@ -250,9 +283,7 @@ def main():
     print(f"Output: {args.out}")
 
     # `total` only counts files written during this run. With --resume and an
-    # already-converted corpus it is 0 and reads like a failure when nothing
-    # failed - exactly what happened when relaunching with a higher cap, and
-    # the message cost a diagnostic round-trip.
+    # already-converted corpus it is 0 and reads like a failure, so say why.
     if skipped:
         print()
         print(f"WARNING: {skipped} subsets SKIPPED (--resume): their files")

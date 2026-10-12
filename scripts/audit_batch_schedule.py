@@ -1,27 +1,20 @@
 """
-Audit of BATCH COMPOSITION over the epoch (TemperatureSampler).
+Audit of batch composition over the epoch (TemperatureSampler).
 
     python scripts/audit_batch_schedule.py --config-name lotsa_tiny_mix_zeroshot
     python scripts/audit_batch_schedule.py --config-name lotsa_tiny_mix --mode pretrain
 
-Why (2026-08-24): the assumption "batch composition is stable over the epoch"
-is FALSE by construction - `TemperatureSampler.__iter__` removes a family
-from ALL remaining batches once it hits its `max_oversample_ratio` cap (the
-`continue` in datamodule.py), and the batch SHRINKS (lost slots are not
-reallocated). Small families, oversampled by T=0.5, die out early; the end of
-the epoch is dominated by the big families. Candidate mechanism for the
-end-of-finetune GIFT drift (G7.3c: both mix runs bend at the SAME step -
-extinction is deterministic).
+Batch composition is not stable over the epoch: `TemperatureSampler.__iter__`
+drops a family from all remaining batches once it reaches its
+`max_oversample_ratio` cap, and the batch shrinks. Small oversampled families
+die out early and the end of the epoch is dominated by the big families.
 
-The script iterates the REAL sampler (no data read: it only produces
-indices) and reports:
-  * the extinction of each capped family (batch, % of the epoch);
-  * composition per epoch decile (batch size, capped vs free family share,
-    share of the 5 largest);
-  * the start/end imbalance summary.
+The script iterates the real sampler (indices only, no data read) and reports
+the extinction batch of each capped family, the composition per epoch decile,
+and the start/end imbalance summary.
 
-NB: run single-process, world_size=1 - the NUMBER of batches differs from a
-3-GPU run (/3) but the composition PROFILE in % of the epoch is identical.
+Run single-process (world_size=1): the number of batches differs from a
+multi-GPU run but the composition profile in % of the epoch is identical.
 """
 
 import argparse
@@ -73,6 +66,12 @@ def build_datamodule(cfg, is_pretrain: bool, force_ration: bool = False):
         num_workers=0,
         persistent_workers=False,
         use_mmap=bool(cfg.data.get('use_mmap', False)),
+        # Mirror train.py so the audit counts the boundary windows of short
+        # rows (finetune only).
+        short_series_windows=(not is_pretrain)
+        and bool(cfg.data.get('short_series_windows', False)),
+        short_min_context=int(cfg.data.get('short_min_context', 16)),
+        short_min_target=int(cfg.data.get('short_min_target', 4)),
     )
 
 
@@ -168,10 +167,8 @@ def main():
         print(f"  {names[i]:<42s} {first[i]:6.2%} -> {last[i]:6.2%}"
               f"  ({'capped' if capped[i] else 'free'})")
 
-    # Full table - THE instrument of the v3 sizing ("target batch first"):
-    # mean batch share over the epoch, per family, sorted. Added 2026-08-27:
-    # the audit showed neither the synthetic shares nor the long tail,
-    # exactly what step 2 of the runbook must read.
+    # Full table: mean batch share over the epoch, per family, sorted. This is
+    # the instrument used to size the corpus mix (synthetic share, long tail).
     total_counts = dec_counts.sum(axis=0)
     tot = max(total_counts.sum(), 1)
     order = np.argsort(total_counts)[::-1]

@@ -1,45 +1,23 @@
 """
-Synthetic series generation for pretraining (G8 / P2.5).
+Synthetic series generation for pretraining.
 
-Why this module exists - three measured holes no real data fills
-----------------------------------------------------------------
-1. Missing frequencies (E17): the 10T/15T configs degrade on four independent
-   datasets because the corpus has almost nothing between 5 min (PEMS) and
-   hourly. We cannot download what does not exist; we can generate it.
-2. Short series (G7.1): m1_*, monash_m3_*, tourism_* are all rejected
-   "median < 1280" - a yearly series is ~30 points. Fifteen of the 97
-   GIFT-Eval configs (A/Q/M/W) have this shape and the model has NEVER seen
-   it.
-3. Decimation geometry (G9): `_sample_resolution_factor` requires
-   `1280*f <= chunk_length`; real chunks are 2048, so even f=2 is impossible.
-   Synthetic data generates at any length - 8192 by default here, which
-   allows f in {1..6} and also provides the (r, r') pairs for
-   cross-resolution JEPA (G9.2).
+Fills three holes of the real corpus: sub-hourly frequencies between 5 min
+and hourly, short low-frequency series (yearly, quarterly, monthly), and
+chunks long enough (8192 steps) for decimation factors up to 6 and for
+cross-resolution pairs.
 
-Method - KernelSynth via random Fourier features
-------------------------------------------------
-Chronos (KernelSynth) samples GPs from compositions of {linear, RBF, periodic}
-kernels; FlowState does the same (CauKer). Exact GP sampling costs an O(N^3)
-Cholesky - prohibitive at N=8192. We use random Fourier features (Rahimi &
-Recht 2007): for a stationary kernel, summing K sinusoids with frequencies
-drawn from its spectral density converges to the GP as K grows. At K=64 per
-component the sample is indistinguishable by eye and the cost is O(N*K).
+Method: KernelSynth (Chronos) samples GPs from compositions of kernels;
+exact sampling costs an O(N^3) Cholesky, prohibitive at N=8192. Random
+Fourier features (Rahimi and Recht, 2007) approximate a stationary kernel
+with K sinusoids drawn from its spectral density, at cost O(N*K); K=64 per
+component is enough. Components (seasonalities with decaying harmonics,
+smooth RBF drift, linear or piecewise trend, Gaussian or Student-t noise,
+rare level shifts and impulses) are composed additively, sometimes with a
+multiplicative envelope.
 
-Component bank, drawn then composed additively (sometimes with a
-multiplicative envelope, like the x composition):
-  * seasonalities: 1-3 log-uniform periods in [4, 2048] steps, each with
-    decaying harmonics and random phases - covers the daily cycle seen at ALL
-    frequencies (24 steps hourly, 96 at 15 min, 144 at 10 min...);
-  * smooth drift: RBF via RFF, log-uniform lengthscale [16, 1024];
-  * trend: linear or piecewise (breakpoint);
-  * noise: Gaussian, sometimes Student-t (heavy tails - the G6 RevIN floor
-    showed the real corpus contains them);
-  * rarely: level shifts and impulses.
-
-Output is the SAME format as prepare_lotsa.py: one dense
-[n_chunks, length] float32 `.npy` per "family", memmappable, directly
-globbable by `datasets: null`. No training code to modify - to mix with the
-real corpus, just drop (or symlink) the files into the corpus directory.
+Output has the same format as prepare_lotsa.py: one dense
+[n_chunks, length] float32 `.npy` per family, memmappable, so the files
+can be dropped into the corpus directory.
 """
 
 from __future__ import annotations
@@ -59,9 +37,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _seasonal(n: int, rng: np.random.Generator,
-              period_range=(4.0, 2048.0)) -> np.ndarray:
-    """One seasonality: log-uniform period, 1-4 decaying harmonics."""
+              period_range=(4.0, 2048.0), periods: Optional[list] = None) -> np.ndarray:
+    """One seasonality: log-uniform period, 1-4 decaying harmonics. `periods`,
+    when given, receives the drawn period (season recording, no extra draw)."""
     period = np.exp(rng.uniform(np.log(period_range[0]), np.log(period_range[1])))
+    if periods is not None:
+        periods.append(float(period))
     t = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
     n_harm = rng.integers(1, 5)
@@ -124,18 +105,15 @@ def _events(x: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 @dataclass
 class SyntheticSpec:
     """
-    A synthetic "family" = a distribution over compositions.
+    A synthetic family: a distribution over compositions.
 
-    `period_range` is the frequency-coverage lever: a family with short
-    periods (24-150 steps) mimics a daily cycle seen sub-hourly, a family
-    with long periods (300-2048) mimics low frequency.
+    `period_range` is the frequency-coverage lever: short periods (24-150
+    steps) mimic a daily cycle seen sub-hourly, long periods (300-2048)
+    mimic low frequency.
 
-    `kind` (v3, 2026-08-24) dispatches the generator:
-      * "kernel"       : KernelSynth/RFF compositions (the original generator);
-      * "ops"          : bizitobs-style IT-ops - the #1 target of the E19 map
-        (the only domain still red: 10S geomean 1.387, and bizitobs also
-        loses at 5T/H against the top - a DOMAIN problem, not a grid one);
-      * "intermittent" : sparse integer demand, car_parts-style (Croston).
+    `kind` selects the generator: "kernel" (KernelSynth/RFF compositions),
+    "ops" (bizitobs-style IT operations) or "intermittent" (sparse integer
+    demand, car_parts-style).
     """
     name: str
     chunk_length: int = 8192
@@ -147,14 +125,14 @@ class SyntheticSpec:
     kind: str = "kernel"
 
 
-def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator,
+                       info: Optional[dict] = None) -> np.ndarray:
     """
-    IT-ops series: small positive floor, BURSTS with Poisson arrivals (sharp
-    rise, exponential decay, heavy-tailed amplitudes), segment zero-inflation
+    IT-ops series: small positive floor, bursts with Poisson arrivals (sharp
+    rise, exponential decay, heavy-tailed amplitudes), zero-inflated segments
     (service off), diurnal modulation of the arrival rate, optional capacity
-    saturation (bizitobs "l2c"), optional quantization (counters). Zeros stay
-    EXACTLY zero (no offset): this is the near-zero regime G8.4b and the
-    quantile head must learn to handle, not an artifact to avoid.
+    saturation, optional quantization (counters). Zeros stay exactly zero:
+    the quantile head must learn the near-zero regime.
     """
     n = spec.chunk_length
     t = np.arange(n, dtype=np.float64)
@@ -167,6 +145,8 @@ def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndar
     if rng.random() < 0.7:
         period = np.exp(rng.uniform(np.log(spec.period_range[0]),
                                     np.log(spec.period_range[1])))
+        if info is not None:
+            info["season"] = float(period)
         phase = rng.uniform(0, 2 * np.pi)
         rate_mod = np.clip(1.0 + rng.uniform(0.4, 1.0)
                            * np.sin(2 * np.pi * t / period + phase), 0.05, None)
@@ -203,12 +183,12 @@ def _sample_ops_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndar
     return x.astype(np.float32)
 
 
-def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator,
+                                info: Optional[dict] = None) -> np.ndarray:
     """
-    INTEGER intermittent demand (car_parts, hierarchical_sales): mostly zeros,
-    negative-binomial event sizes, optional occurrence seasonality, slow
-    demand drift. Integer values - the shape the quantile head must calibrate
-    on the sparse M/short configs.
+    Integer intermittent demand (car_parts, hierarchical_sales): mostly
+    zeros, negative-binomial event sizes, optional occurrence seasonality,
+    slow demand drift.
     """
     n = spec.chunk_length
     p_event = np.exp(rng.uniform(np.log(0.02), np.log(0.35)))
@@ -216,6 +196,8 @@ def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -
     if rng.random() < 0.5:                     # occurrence seasonality
         period = np.exp(rng.uniform(np.log(spec.period_range[0]),
                                     np.log(spec.period_range[1])))
+        if info is not None:
+            info["season"] = float(period)
         occ *= np.clip(1.0 + 0.8 * np.sin(
             2 * np.pi * np.arange(n) / period + rng.uniform(0, 2 * np.pi)),
             0.05, None)
@@ -229,22 +211,40 @@ def _sample_intermittent_series(spec: SyntheticSpec, rng: np.random.Generator) -
     return (x * unit).astype(np.float32)
 
 
-def sample_series(spec: SyntheticSpec, rng: np.random.Generator) -> np.ndarray:
+def sample_series(spec: SyntheticSpec, rng: np.random.Generator,
+                  info: Optional[dict] = None) -> np.ndarray:
+    """One series. `info` (optional dict) receives `season`: the period, in
+    steps, of the series' reference cycle (the seasonal component with the
+    largest weight for the kernel kind, the modulation period for ops and
+    intermittent), or 0.0 when the series has none. Recording draws no random
+    number, so the seasons of an existing file can be read back by replaying
+    its seed (scripts/build_season_sidecars.py)."""
+    if info is not None:
+        info["season"] = 0.0
     if spec.kind == "ops":
-        return _sample_ops_series(spec, rng)
+        return _sample_ops_series(spec, rng, info)
     if spec.kind == "intermittent":
-        return _sample_intermittent_series(spec, rng)
+        return _sample_intermittent_series(spec, rng, info)
     n = spec.chunk_length
     parts = []
+    seasonal = []                                 # (weight, period) of each seasonal component
     if rng.random() < spec.p_seasonal:
         for _ in range(rng.integers(1, 4)):
-            parts.append(rng.uniform(0.5, 2.0) * _seasonal(n, rng, spec.period_range))
+            # draw order: the weight, then the component's own draws
+            weight = rng.uniform(0.5, 2.0)
+            periods = []
+            parts.append(weight * _seasonal(n, rng, spec.period_range, periods))
+            seasonal.append((weight, periods[0]))
     if rng.random() < spec.p_smooth:
         parts.append(rng.uniform(0.5, 2.0) * _smooth_gp(n, rng))
     if rng.random() < spec.p_trend:
         parts.append(rng.uniform(0.5, 2.0) * _trend(n, rng))
     if not parts:                                 # never an empty series
-        parts.append(_seasonal(n, rng, spec.period_range))
+        periods = []
+        parts.append(_seasonal(n, rng, spec.period_range, periods))
+        seasonal.append((1.0, periods[0]))
+    if info is not None and seasonal:
+        info["season"] = max(seasonal)[1]
 
     x = np.sum(parts, axis=0)
     if rng.random() < 0.25:                       # multiplicative composition
@@ -275,41 +275,31 @@ def write_synthetic_family(out_path: Path, spec: SyntheticSpec, n_chunks: int,
     return out_path
 
 
-# The three default families, one per measured hole. Names start with
-# `synthetic_` so they are recognizable in sampler logs and excludable from a
-# real-corpus glob if needed (negative pattern).
+# Names start with `synthetic_` so they are recognizable in sampler logs and
+# excludable from a real-corpus glob.
 DEFAULT_FAMILIES = (
-    # Short cycles (24-150 steps): the daily cycle seen sub-hourly - E17.
+    # Short cycles (24-150 steps): the daily cycle seen sub-hourly.
     SyntheticSpec("synthetic_subhourly", chunk_length=8192,
                   period_range=(24.0, 150.0)),
     # General-purpose KernelSynth: wide periods, the diversity baseline.
     SyntheticSpec("synthetic_broadband", chunk_length=8192,
                   period_range=(4.0, 2048.0)),
-    # Low frequency: periods 4-52 - the SHAPE of yearly/quarterly/monthly
-    # series (G7.1). Audit 2026-08-20 (T4): the 1280-chunk version was
-    # decorative - 1 window per chunk, so 25k windows, the 3x oversampling
-    # cap exhausted at ~2% of the epoch (at max LR, nothing retained), and
-    # ineligible for any k1>1 pair. At 8192: 865 windows/chunk, sampler
-    # weight comparable to the other families, and the family joins
-    # cross-resolution learning. Cycles stay short (4-52 steps): the period
-    # makes the "low frequency", not the chunk length.
+    # Low frequency: periods 4-52 steps, the shape of yearly, quarterly and
+    # monthly series. The chunk stays at 8192 so the family has as many
+    # windows per chunk as the others and is eligible for decimation; the
+    # period, not the chunk length, makes the low frequency.
     SyntheticSpec("synthetic_lowfreq", chunk_length=8192,
                   period_range=(4.0, 52.0), p_trend=0.8),
 )
 
-# v3 families (roadmap S2, E19 map of 2026-08-24): the three v1 families
-# PLUS the two regimes that the champion's per-config map flagged as the
-# corpus's remaining holes. Per-family sizing at generation time ("target
-# batch first" principle - balance audit after mixing, as always).
+# The default families plus two domain regimes the real corpus lacks.
 V3_FAMILIES = DEFAULT_FAMILIES + (
-    # bizitobs-style IT-ops - THE still-red domain of E19 (10S 1.387, and
-    # x1.7-2.8 against the top up to 5T/H). No public data exists at 10S:
-    # synthetic data has NO alternative here. Periods 256-4096 steps: the
-    # diurnal cycle seen at 10S-5T grids at the 8192-chunk scale.
+    # bizitobs-style IT operations; no public data exists at 10 s. Periods
+    # 256-4096 steps: the diurnal cycle on 10S to 5T grids.
     SyntheticSpec("synthetic_ops_bursty", chunk_length=8192,
                   period_range=(256.0, 4096.0), kind="ops"),
-    # Integer intermittent demand (car_parts 0.98 CRPS ratio, sparse
-    # M/short). Short periods: yearly seasonality seen monthly.
+    # Integer intermittent demand (car_parts-style). Short periods: yearly
+    # seasonality seen monthly.
     SyntheticSpec("synthetic_intermittent", chunk_length=8192,
                   period_range=(6.0, 52.0), kind="intermittent"),
 )

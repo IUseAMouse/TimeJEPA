@@ -1,9 +1,6 @@
 """
-LEGACY PATH - superseded by GIFT-Eval (src/timejepa/evaluation/gift.py); still
-imported by scripts/evaluate.py and scripts/evaluate_energy.py. Kept per the
-no-delete policy.
-
-Nixtla Long-Horizon benchmark datasets adapter.
+Nixtla Long-Horizon benchmark datasets adapter. Superseded by GIFT-Eval
+(src/timejepa/evaluation/gift.py); still used by scripts/evaluate.py.
 
 Downloads datasets via datasetsforecast and converts to .npy format
 compatible with the existing TimeSeriesDataset/MonashDataModule.

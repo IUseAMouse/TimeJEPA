@@ -1,33 +1,26 @@
 """
-Converts the USEFUL subsets of the Chronos corpus to the TimeJEPA format.
+Converts the useful subsets of the Chronos corpus to the TimeJEPA format.
 
-    # inventory: what is admitted, what is excluded and WHY
+    # inventory: what is admitted, what is excluded and why
     python scripts/prepare_chronos.py --list
 
     # conversion (4 datasets, a few minutes)
     python scripts/prepare_chronos.py --out data/processed/chronos_extras
 
-Why so few, and why bother anyway: verified 2026-08-19,
-`Salesforce/GiftEvalPretrain` is byte-identical to LOTSA minus the 18 GIFT
-eval datasets - the "corpus lever" we hoped to find there is empty, we
-already train on it. Of the Chronos corpus (`autogluon/chronos_datasets`, 53
-subsets), everything that is not a LOTSA duplicate or an evaluation leak fits
-in a four-name ALLOWLIST - hence an explicit allowlist rather than exclusion
-patterns: for 4 fixed datasets, enumerating what we admit is safer than
-enumerating what we refuse.
+Of the Chronos corpus (`autogluon/chronos_datasets`, 53 subsets), everything
+that is neither a LOTSA duplicate nor an evaluation leak fits in a four-name
+allowlist, so the script enumerates what it admits rather than what it
+refuses.
 
-`--chunk-length 8192` by default, and that is this corpus's real value:
-multi-resolution decimation requires `1280*f <= chunk_length`, so the 2048
-LOTSA chunks allow NO factor f >= 2. These files (and the synthetic corpus)
-are the only 8192 chunks, i.e. the fuel of the cross-resolution arm (G9.2).
-`choose_chunk_length` shortens automatically when series are too short
-(dominick is weekly, ~350 steps: probably rejected by --min-length - the
-summary will say).
+`--chunk-length 8192` by default: multi-resolution decimation requires
+`1280*f <= chunk_length`, which the 2048-step LOTSA chunks never satisfy for
+f >= 2. `choose_chunk_length` shortens automatically when series are too
+short.
 
-Mixing with an existing corpus is done by SYMLINKING the .npy files into the
-target corpus directory, never by generating inside it (repo doctrine, cf.
-generate_synthetic.py). Files prefixed `chronos_`: readable provenance in the
-coverage logs, zero name collision.
+Mixing with an existing corpus is done by symlinking the .npy files into the
+target corpus directory, never by generating inside it (see
+generate_synthetic.py). Files are prefixed `chronos_` for readable provenance
+and no name collision.
 """
 
 import argparse
@@ -49,13 +42,16 @@ for _noisy in ("httpx", "httpcore", "urllib3", "huggingface_hub", "datasets",
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 CHRONOS_REPO = "autogluon/chronos_datasets"
+# Revision the corpus v3 extras were built from.
+CHRONOS_REVISION_V3 = "eeecad0b82a8c237e212ce6f8d1abecb513e2cec"
+_REVISION = None
 
-# The allowlist: the only subsets both NEW relative to LOTSA and free of
-# overlap with the project's three evaluation suites (GIFT-Eval 97 configs,
-# Nixtla, local Monash). Checked one by one on 2026-08-19.
+# The only subsets both new relative to LOTSA and free of overlap with the
+# project's three evaluation suites (GIFT-Eval, Nixtla, local Monash),
+# checked one by one.
 CHRONOS_ALLOWLIST = ("dominick", "ercot", "mexico_city_bikes", "ushcn_daily")
 
-# The rest of the corpus, with the reason - printed by --list for audit.
+# The rest of the corpus, with the reason, printed by --list for audit.
 # '*' patterns cover whole groups.
 CHRONOS_EXCLUDED = {
     "exchange_rate": "IS the Nixtla `exchange` eval",
@@ -74,8 +70,8 @@ CHRONOS_EXCLUDED = {
                        "sources above, so leakage by construction",
 }
 
-# ushcn_daily has no `target` column: each weather variable is a column. Each
-# becomes an independent series - the project's standard univariate treatment.
+# ushcn_daily has no `target` column: each weather variable is a column and
+# becomes an independent series, the project's standard univariate treatment.
 USHCN_VALUE_COLUMNS = ("PRCP", "SNOW", "SNWD", "TMAX", "TMIN")
 
 
@@ -83,7 +79,7 @@ def series_iter_chronos(subset: str):
     """Stream of 1-D float32 series from one Chronos subset."""
     from datasets import load_dataset
 
-    ds = load_dataset(CHRONOS_REPO, subset, split="train", streaming=True)
+    ds = load_dataset(CHRONOS_REPO, subset, split="train", streaming=True, revision=_REVISION)
     for row in ds:
         if subset == "ushcn_daily":
             for col in USHCN_VALUE_COLUMNS:
@@ -116,10 +112,14 @@ def main():
                     help="Required window (ctx 1024 + horizon 256).")
     ap.add_argument("--max-chunks-per-subset", type=int, default=200_000)
     ap.add_argument("--max-nan-fraction", type=float, default=0.05)
+    ap.add_argument("--revision", default=None, help="HF dataset revision (sha or tag).")
     ap.add_argument("--list", action="store_true", help="Inventory only.")
     ap.add_argument("--resume", action="store_true",
                     help="Skip already-converted subsets.")
     args = ap.parse_args()
+    global _REVISION
+    _REVISION = args.revision
+    print(f"HF revision: {args.revision or 'main (unpinned)'}")
 
     print()
     print("=" * 72)

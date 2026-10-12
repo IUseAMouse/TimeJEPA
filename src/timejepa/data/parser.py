@@ -98,13 +98,9 @@ class TSFileParser:
     
     def _parse_line(self, line: str) -> Optional[np.ndarray]:
         """Parse a single line into a time series array."""
-        # Split by colon to separate metadata from time series data
+        # Colons separate metadata from the values, which come last
         parts = line.split(':')
-        
-        # The last part typically contains the time series values
         ts_string = parts[-1].strip()
-        
-        # Split by comma to get individual values
         values = ts_string.split(',')
         
         ts_array = []
@@ -112,17 +108,16 @@ class TSFileParser:
             val = val.strip()
             
             if val == '?' or val == '':
-                # Missing value
                 if self.handle_missing == 'nan':
                     ts_array.append(np.nan)
                 elif self.handle_missing == 'zero':
                     ts_array.append(0.0)
-                # 'drop' means skip this value
+                # 'drop' skips the value
             else:
                 try:
                     ts_array.append(float(val))
                 except ValueError:
-                    # Not a number, might be a class label - skip
+                    # Not a number (a class label, for instance): skip
                     pass
         
         if ts_array:
@@ -210,17 +205,16 @@ def save_processed_data(
     logger.info(f"  - Length range: [{stats['min_len']}, {stats['max_len']}]")
     logger.info(f"  - Mean/Median length: {stats['mean_len']:.1f} / {stats['median_len']:.1f}")
     
-    # Stack or keep as object array
+    # Dense when lengths agree, object array otherwise
     if len(set(lengths)) == 1:
         final_data = np.stack(data)
     else:
         final_data = np.array(data, dtype=object)
-    
-    # Save JUST the data array (not a dict)
+
     if compress:
         np.savez_compressed(output_path.with_suffix('.npz'), data=final_data)
     else:
-        np.save(output_path, final_data)  # save just the array
+        np.save(output_path, final_data)
     
     logger.info(f"Saved to {output_path}")
     

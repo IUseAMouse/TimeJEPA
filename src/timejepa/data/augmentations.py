@@ -49,26 +49,21 @@ class AugmentationConfig:
     trend_magnitude: float = 0.1
     p_trend: float = 0.2
 
-    # --- TiRex-style augmentations (v3, 2026-08-24) --------------------------
-    # THE biggest item of the TiRex ablation (CRPS 0.411 -> 0.430 without
-    # them, ahead of CPM and ahead of the backbone choice). All DISABLED by
-    # default: existing configs are bit-identical; the v3 pretrain enables
-    # them. Unlike random_scale (INERT under arcsinh - median/MAD are
-    # 1-homogeneous, audit T5), these three change the SHAPE of the signal
-    # and therefore survive robust normalization.
-    # Amplitude modulation: multiplication by a piecewise-linear trend (the
-    # signal level drifts - amplitude non-stationarity).
+    # TiRex-style augmentations, all disabled by default so existing configs
+    # are unchanged. Unlike random scaling, which robust (median/MAD)
+    # normalization cancels, these three change the shape of the signal.
+    # Amplitude modulation: multiplication by a piecewise-linear trend.
     amplitude_mod_enabled: bool = False
     amplitude_mod_knots: Tuple[int, int] = (2, 6)
     amplitude_mod_range: Tuple[float, float] = (0.5, 1.5)
     p_amplitude_mod: float = 0.5
     # Censoring: clipping at a random quantile of the window (saturated
-    # sensors, capacities - the bizitobs "l2c" regime).
+    # sensors, capacities).
     censor_enabled: bool = False
     censor_quantile_range: Tuple[float, float] = (0.85, 0.99)
     p_censor: float = 0.5
-    # Sparse PERIODIC spike injection (hence predictable - applied jointly
-    # to context+target so the world stays coherent).
+    # Sparse periodic spikes, applied to context and target together so the
+    # pattern stays predictable.
     spike_enabled: bool = False
     spike_amp_range: Tuple[float, float] = (3.0, 10.0)
     p_spike: float = 0.05
@@ -100,10 +95,10 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Apply random scaling to both context and target.
-        
-        Uses log-uniform distribution for balanced scaling across magnitudes.
-        E.g., scale_range=(0.5, 2.0) gives equal probability to 0.5-1.0 and 1.0-2.0
+        Scale context and target by the same random factor.
+
+        Log-uniform by default: scale_range=(0.5, 2.0) gives equal
+        probability to 0.5-1.0 and 1.0-2.0.
         """
         if not self.config.scale_enabled:
             return context, target
@@ -114,7 +109,6 @@ class TimeSeriesAugmentations:
         low, high = self.config.scale_range
         
         if self.config.scale_log_uniform:
-            # Log-uniform: more balanced across scales
             log_low, log_high = np.log(low), np.log(high)
             log_scale = torch.empty(1).uniform_(log_low, log_high)
             scale = torch.exp(log_scale).item()
@@ -136,7 +130,6 @@ class TimeSeriesAugmentations:
             return x
         
         if self.config.jitter_relative:
-            # Relative to signal's std (more adaptive)
             noise_std = self.config.jitter_std * x.std().item()
         else:
             noise_std = self.config.jitter_std
@@ -164,14 +157,12 @@ class TimeSeriesAugmentations:
         total_len = context.shape[-1] + target.shape[-1]
         n_knots = self.config.magnitude_warp_knots
         
-        # Generate random knot values
         knot_values = torch.randn(n_knots) * self.config.magnitude_warp_sigma + 1.0
-        
-        # Interpolate to full length using linear (simple and effective)
+
+        # Linear interpolation between knots
         knot_positions = torch.linspace(0, 1, n_knots)
         full_positions = torch.linspace(0, 1, total_len)
-        
-        # Simple linear interpolation between knots
+
         warp_curve = torch.zeros(total_len)
         for i in range(n_knots - 1):
             mask = (full_positions >= knot_positions[i]) & (full_positions <= knot_positions[i + 1])
@@ -200,10 +191,9 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TiRex-style: multiplication by a PIECEWISE-LINEAR trend (random
-        breakpoints, not a regular grid like the magnitude warp) - the signal
-        level drifts by regimes. Continuous curve over [context + target],
-        applied to both.
+        TiRex-style amplitude modulation: multiply by a piecewise-linear
+        curve with random breakpoints (the magnitude warp uses a regular
+        grid). One continuous curve over context + target, applied to both.
         """
         if not self.config.amplitude_mod_enabled:
             return context, target
@@ -237,9 +227,8 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TiRex-style: clipping at quantile q ~ U(censor_quantile_range) of the
-        full window - saturated sensor, capacity reached. Same threshold for
-        context and target (the ceiling is a property of the world).
+        TiRex-style censoring: clip at quantile q ~ U(censor_quantile_range)
+        of the full window, with the same threshold for context and target.
         """
         if not self.config.censor_enabled:
             return context, target
@@ -257,10 +246,8 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TiRex-style: sparse PERIODIC spikes - the period continues from the
-        context into the target, so the pattern is predictable and applied to
-        both (a random spike in the target alone would be unlearnable noise;
-        a periodic pattern is a signal).
+        TiRex-style sparse periodic spikes. The period continues from the
+        context into the target, so the pattern is predictable.
         """
         if not self.config.spike_enabled:
             return context, target
@@ -292,26 +279,16 @@ class TimeSeriesAugmentations:
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        TTM-style Diverse Resolution Sampling.
+        TTM-style Diverse Resolution Sampling: downsample by a random factor,
+        then interpolate back to the same length.
 
-        Downsamples by a random factor, then interpolates BACK TO THE SAME
-        LENGTH. Read carefully what that does: it is a smoothing / low-pass
-        operation that simulates a coarser *sensor*. The window still covers the
-        same time span, so a seasonal cycle still spans the same number of
-        timesteps, and the period-to-patch ratio is unchanged.
+        This is a low-pass operation that simulates a coarser sensor. The
+        window still covers the same time span, so the period-to-patch ratio
+        is unchanged. To change the sampling frequency itself, see
+        `TimeSeriesDataset.get_item(allow_multi_resolution=True)`, which reads
+        a longer raw stretch and decimates it.
 
-        It therefore CANNOT address the failure mode measured in
-        `scripts/diagnose_ettm.py`, where skill is governed by the seasonal
-        period expressed in patch positions. For that, see
-        `TimeSeriesDataset.get_item(allow_multi_resolution=True)`, which reads a
-        longer raw stretch and decimates it, genuinely changing the sampling
-        frequency.
-
-        Both are useful, for different reasons - this one for sensor-quality
-        robustness, the other for temporal-scale generalization.
-
-        Note: This is applied to both context and target together
-        to maintain temporal consistency.
+        Applied to context and target together.
         """
         if not self.config.drs_enabled:
             return context, target
@@ -367,11 +344,7 @@ class TimeSeriesAugmentations:
         context: torch.Tensor, 
         target: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Add synthetic linear or polynomial trend.
-        
-        Helps model learn to handle non-stationary data.
-        """
+        """Add a synthetic linear trend, scaled by the context std."""
         if not self.config.trend_enabled:
             return context, target
             
@@ -380,12 +353,9 @@ class TimeSeriesAugmentations:
         
         total_len = context.shape[-1] + target.shape[-1]
         
-        # Random slope
         slope = (torch.rand(1).item() * 2 - 1) * self.config.trend_magnitude
-        
-        # Linear trend
         t = torch.linspace(0, 1, total_len)
-        trend = slope * t * context.std().item()  # Scale by signal magnitude
+        trend = slope * t * context.std().item()
         
         ctx_len = context.shape[-1]
         trend_ctx = trend[:ctx_len].to(context.device)
@@ -423,10 +393,8 @@ class TimeSeriesAugmentations:
         context, target = self.diverse_resolution_sampling(context, target)
         context, target = self.random_scale(context, target)
         context, target = self.magnitude_warp(context, target)
-        # TiRex-style (v3) - off by default, enabled by the v3 pretrain:
-        # amplitude modulation, then spikes (in the signal), then censoring
-        # (the ceiling clips everything before it, spikes included - like a
-        # real saturated sensor).
+        # TiRex-style, off by default: amplitude modulation, then spikes, then
+        # censoring (the ceiling clips everything before it, spikes included).
         context, target = self.amplitude_modulation(context, target)
         context, target = self.spike_injection(context, target)
         context, target = self.censor(context, target)

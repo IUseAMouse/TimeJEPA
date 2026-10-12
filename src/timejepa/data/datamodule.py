@@ -48,21 +48,27 @@ class TemperatureSampler(Sampler):
         seed: int = 42,
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
-        # G10.2 - cap RATIONING (2026-08-24). By default (False), the
-        # max_oversample_ratio cap is consumed AT THE START of the epoch: as
-        # soon as a family hits it, it disappears from ALL remaining batches
-        # (the `continue` in __iter__) and the batch shrinks. Measured
-        # (scripts/audit_batch_schedule.py, mix corpus, finetune): 16 families
-        # extinguished before 1% of the epoch, capped families' share
-        # 46.6% -> 35.7% of the batch between first and last decile, batch
-        # 493 -> 409. Composition therefore DRIFTS toward the big families -
-        # candidate mechanism for the end-of-finetune GIFT drift (G7.3c).
-        # With ration_oversample=True, the same max_samples[i] budget is
-        # spread UNIFORMLY over the epoch (fractional per-batch quota,
-        # rounded by accumulation): same total exposure per family, near
-        # constant composition and batch size. Strict opt-in: False =
-        # iteration bit-identical to existing.
+        # By default the max_oversample_ratio budget is consumed at the start
+        # of the epoch: once a family hits it, it disappears from the remaining
+        # batches and the batch composition drifts toward the big families.
+        # With ration_oversample=True the same budget is spread uniformly over
+        # the epoch (fractional per-batch quota, rounded by accumulation), so
+        # exposure per family is unchanged and composition stays near constant.
         ration_oversample: bool = False,
+        # Cap on the realized batch, rationed mode only. With more families
+        # than batch_size the fractional quotas can fire together at the same
+        # batch index and produce a burst large enough to OOM. Beyond the cap,
+        # the families with the smallest backlog are deferred to the next
+        # batch (their allowance is kept). None = no cap.
+        max_batch_size: Optional[int] = None,
+        # The integer allocation floors p_i x batch_size and clamps it at >= 1
+        # per family, so with more families than batch_size every family gets
+        # exactly 1 and the temperature has no effect. With
+        # fractional_batch=True the share p_i x batch_size is kept as a float
+        # and realized by accumulation (a family at 0.3/batch contributes 3
+        # windows every 10 batches), with the backlog bounded at one batch's
+        # share + 1. The realized batch then averages batch_size.
+        fractional_batch: bool = False,
     ):
         """
         Args:
@@ -78,11 +84,8 @@ class TemperatureSampler(Sampler):
             shuffle: Shuffle within datasets
             seed: Random seed
         """
-        # No argument: `Sampler.__init__` used to take an (unused, deprecated)
-        # `data_source`, and newer torch removed it entirely - at which point
-        # the call falls through to `object.__init__`, which accepts nothing:
-        #     TypeError: object.__init__() takes exactly one argument
-        # Calling with no argument is correct on both.
+        # No argument: older torch took an unused `data_source`, newer torch
+        # falls through to `object.__init__`, which accepts nothing.
         super().__init__()
 
         self.dataset_sizes = dataset_sizes
@@ -91,6 +94,9 @@ class TemperatureSampler(Sampler):
         self.temperature = temperature
         self.max_oversample_ratio = max_oversample_ratio
         self.ration_oversample = bool(ration_oversample)
+        self.max_batch_size = int(max_batch_size) if max_batch_size else None
+        if self.max_batch_size is not None and not self.ration_oversample:
+            raise ValueError("max_batch_size needs ration_oversample=True")
         self.drop_last = drop_last
         self.shuffle = shuffle
         self.seed = seed
@@ -107,9 +113,8 @@ class TemperatureSampler(Sampler):
             self.rank = rank
             self.world_size = world_size
         
-        # Compute temperature-smoothed sampling probabilities
-        # FIXED: sizes^T (not sizes^(1/T))
-        # T=0.5 -> sqrt, T->0 -> uniform, T=1 -> proportional
+        # Temperature-smoothed sampling probabilities: sizes^T
+        # (T=0.5 -> sqrt, T->0 -> uniform, T=1 -> proportional)
         sizes = torch.tensor(dataset_sizes, dtype=torch.float32)
         
         if temperature == 0:
@@ -143,8 +148,15 @@ class TemperatureSampler(Sampler):
         
         self.samples_per_dataset = self.samples_per_dataset.tolist()
         self.actual_batch_size = sum(self.samples_per_dataset)
+        self.fractional_batch = bool(fractional_batch)
+        # Float share per family; integer path keeps the legacy allocation.
+        self.expected_per_dataset = ((self.sampling_probs * batch_size).tolist()
+                                     if self.fractional_batch else
+                                     [float(v) for v in self.samples_per_dataset])
+        if self.fractional_batch:
+            self.actual_batch_size = float(batch_size)
         
-        # Store offsets only - NOT all indices (memory efficient!)
+        # Store offsets only, never the full index list
         self.dataset_offsets = [0]
         for size in dataset_sizes[:-1]:
             self.dataset_offsets.append(self.dataset_offsets[-1] + size)
@@ -161,10 +173,10 @@ class TemperatureSampler(Sampler):
         """Compute number of batches and effective sampling ratios."""
         max_size = max(self.dataset_sizes)
         largest_idx = self.dataset_sizes.index(max_size)
-        samples_for_largest = self.samples_per_dataset[largest_idx]
+        samples_for_largest = self.expected_per_dataset[largest_idx]
         
         if samples_for_largest > 0:
-            batches_for_largest = max_size // samples_for_largest
+            batches_for_largest = int(max_size / samples_for_largest)
         else:
             batches_for_largest = max_size
         
@@ -176,7 +188,7 @@ class TemperatureSampler(Sampler):
         self.oversample_ratios = []
         
         for i, size in enumerate(self.dataset_sizes):
-            effective = self._num_batches * self.samples_per_dataset[i] * self.world_size
+            effective = self._num_batches * self.expected_per_dataset[i] * self.world_size
             ratio = effective / size if size > 0 else 1.0
             
             if ratio > self.max_oversample_ratio:
@@ -208,41 +220,70 @@ class TemperatureSampler(Sampler):
             else:
                 status = "balanced"
             
+            # Fractional mode: the realized share is p_i x batch_size (a float).
+            per_batch = (f"{self.expected_per_dataset[i]:>5.2f}" if self.fractional_batch
+                         else f"{samples_batch:>3}")
             logger.info(
                 f"  [{i}] {size:>12,} samples | "
-                f"{samples_batch:>3}/batch ({prob:>5.1%}) | "
+                f"{per_batch}/batch ({prob:>5.1%}) | "
                 f"was {original_frac:>5.1%} | {status}"
             )
     
     def __iter__(self):
         """
-        Memory-efficient iterator using on-the-fly random sampling.
-        
-        Instead of materializing 500M indices (~14GB+), we generate
-        random indices per batch using numpy RNG (~few KB).
+        Generate random indices per batch with a numpy RNG instead of
+        materializing every index of the epoch (hundreds of millions for
+        LOTSA-scale corpora).
         """
         # Deterministic seed: reproducible across restarts, varies by epoch/rank
         rng = np.random.default_rng(self.seed + self.epoch * 1000 + self.rank)
-        
-        # Track samples drawn per dataset for max_oversample enforcement
+
         samples_drawn = [0] * self.num_datasets
         max_samples = [int(size * self.max_oversample_ratio) for size in self.dataset_sizes]
 
-        # G10.2 - per-batch quota in rationed mode: the family's budget spread
-        # uniformly over the epoch, accumulated fractionally (a family at 0.4
-        # samples/batch contributes 2 samples every 5 batches instead of
-        # burning its budget early then disappearing).
+        # Rationed mode: the family's budget spread uniformly over the epoch,
+        # accumulated fractionally.
         if self.ration_oversample:
             per_batch_quota = [m / max(self._num_batches, 1) for m in max_samples]
             allowance = [0.0] * self.num_datasets
+        expected = self.expected_per_dataset
+        share = [0.0] * self.num_datasets          # fractional mode only
+
+        def wanted(i):
+            # Family i's share of this batch: the integer allocation, or the
+            # accumulated fractional share.
+            if self.fractional_batch:
+                return int(share[i] + expected[i])
+            return self.samples_per_dataset[i]
 
         for batch_idx in range(self._num_batches):
             batch = []
 
+            deferred = ()
+            if self.max_batch_size is not None:
+                # What each family would take in this batch, then keep the
+                # largest backlogs up to the cap and defer the others.
+                would = [min(wanted(i), int(allowance[i] + per_batch_quota[i]),
+                             max(max_samples[i] - samples_drawn[i], 0))
+                         for i in range(self.num_datasets)]
+                if sum(would) > self.max_batch_size:
+                    order = sorted(range(self.num_datasets),
+                                   key=lambda i: -(allowance[i] + per_batch_quota[i]))
+                    room, grant = self.max_batch_size, {}
+                    for i in order:
+                        k = min(would[i], room)
+                        grant[i] = k
+                        room -= k
+                    deferred = grant
+
             for i in range(self.num_datasets):
-                n_samples = self.samples_per_dataset[i]
                 dataset_size = self.dataset_sizes[i]
                 offset = self.dataset_offsets[i]
+                if self.fractional_batch:
+                    share[i] += expected[i]
+                    n_samples = int(share[i])
+                else:
+                    n_samples = self.samples_per_dataset[i]
 
                 # Enforce max_oversample_ratio
                 remaining = max_samples[i] - samples_drawn[i]
@@ -253,13 +294,19 @@ class TemperatureSampler(Sampler):
                     allowance[i] += per_batch_quota[i]
                     quota_now = int(allowance[i])
                     actual_samples = min(n_samples, quota_now, remaining)
+                    if deferred:
+                        actual_samples = min(actual_samples, deferred[i])
                     allowance[i] -= actual_samples
-                    if actual_samples <= 0:
-                        continue
                 else:
                     actual_samples = min(n_samples, remaining)
-                
-                # Generate random indices on-the-fly (NOT stored!)
+                if self.fractional_batch:
+                    # Consume the realized share; a budget-bound family keeps
+                    # at most one batch's share + 1 of backlog, so there is no
+                    # burst when the budget frees up.
+                    share[i] = min(share[i] - actual_samples, expected[i] + 1.0)
+                if actual_samples <= 0:
+                    continue
+
                 local_indices = rng.integers(0, dataset_size, size=actual_samples)
                 batch.extend((offset + local_indices).tolist())
                 samples_drawn[i] += actual_samples
@@ -307,6 +354,10 @@ class MonashDataModule(pl.LightningDataModule):
         p_multi_resolution: float = 0.0,
         cross_resolution: bool = False,
         use_mmap: bool = False,
+        short_series_windows: bool = False,
+        short_min_context: int = 16,
+        short_min_target: int = 4,
+        season_length: Optional[float] = None,
         seed: int = 42
     ):
         """
@@ -348,8 +399,12 @@ class MonashDataModule(pl.LightningDataModule):
         self.multi_resolution_factors = multi_resolution_factors
         self.p_multi_resolution = p_multi_resolution
         self.cross_resolution = cross_resolution
-        # LOTSA-scale corpora only; False keeps every existing config identical.
         self.use_mmap = bool(use_mmap)
+        # Short-series windows (see dataset.py).
+        self.short_series_windows = bool(short_series_windows)
+        self.short_min_context = int(short_min_context)
+        self.short_min_target = int(short_min_target)
+        self.season_length = season_length
         self.seed = seed
         
         self.normalizer: Optional[Normalizer] = None
@@ -396,6 +451,10 @@ class MonashDataModule(pl.LightningDataModule):
                 p_multi_resolution=self.p_multi_resolution,
                 cross_resolution=self.cross_resolution,
                 use_mmap=self.use_mmap,
+                short_series_windows=self.short_series_windows,
+                short_min_context=self.short_min_context,
+                short_min_target=self.short_min_target,
+                season_length=self.season_length,
             )
             
             self.normalizer = self._full_dataset.get_normalizer()
@@ -471,7 +530,6 @@ class MonashDataModule(pl.LightningDataModule):
         pass
 
 
-# Unused (no call sites); kept per the no-delete policy.
 class MultiHorizonDataModule(MonashDataModule):
     """DataModule for multi-horizon forecasting."""
     
@@ -576,9 +634,10 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         balanced_sampling: bool = True,
         sampling_temperature: float = 0.5,  # sqrt sampling by default
         max_oversample_ratio: float = 5.0,  # cap repetitions
-        # G10.2: spreads the cap uniformly over the epoch instead of
-        # consuming it at the start (see TemperatureSampler.ration_oversample).
+        # See TemperatureSampler for the three options below.
         ration_oversample: bool = False,
+        max_batch_size: Optional[int] = None,
+        fractional_batch: bool = False,
         # Standard params
         batch_size: int = 64,
         stride: int = 1,
@@ -597,7 +656,14 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         p_multi_resolution: float = 0.0,
         cross_resolution: bool = False,
         use_mmap: bool = False,
+        short_series_windows: bool = False,
+        short_min_context: int = 16,
+        short_min_target: int = 4,
         dataset_overrides: Optional[Dict[str, Any]] = None,
+        # Corpus frequency table (data/frequency.py, YAML: file stem -> freq).
+        # When set, every item carries 'season' and a file missing from the
+        # table is an error.
+        frequency_table: Optional[str] = None,
         seed: int = 42
     ):
         """
@@ -630,6 +696,8 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.sampling_temperature = sampling_temperature
         self.max_oversample_ratio = max_oversample_ratio
         self.ration_oversample = bool(ration_oversample)
+        self.max_batch_size = max_batch_size
+        self.fractional_batch = bool(fractional_batch)
         self.context_length = context_length
         self.prediction_length = prediction_length
         self.batch_size = batch_size
@@ -648,8 +716,12 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         self.multi_resolution_factors = multi_resolution_factors
         self.p_multi_resolution = p_multi_resolution
         self.cross_resolution = cross_resolution
-        # LOTSA-scale corpora only; False keeps every existing config identical.
         self.use_mmap = bool(use_mmap)
+        # Short-series windows (see dataset.py).
+        self.short_series_windows = bool(short_series_windows)
+        self.short_min_context = int(short_min_context)
+        self.short_min_target = int(short_min_target)
+        self.frequency_table = frequency_table
         self.dataset_overrides = dataset_overrides or {}
         self.seed = seed
         
@@ -713,11 +785,26 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
         if self.exclude_datasets:
             logger.info(f"Excluded: {self.exclude_datasets}")
     
+    def _seasons(self) -> Optional[Dict[str, float]]:
+        """stem -> season for the discovered files, or None without a table."""
+        if self.frequency_table is None:
+            return None
+        from .frequency import load_frequency_table
+        table = load_frequency_table(self.frequency_table)
+        missing = sorted(set(self.dataset_files) - set(table))
+        if missing:
+            raise ValueError(
+                f"{self.frequency_table}: {len(missing)} corpus file(s) have no entry "
+                f"({', '.join(missing[:8])}{'...' if len(missing) > 8 else ''}). Add them, "
+                "with `null` for a file without a frequency.")
+        return table
+
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
             train_datasets = []
             val_datasets = []
             test_datasets = []
+            seasons = self._seasons()
             
             # Reset tracking
             self.train_dataset_sizes = []
@@ -752,6 +839,10 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     p_multi_resolution=self.p_multi_resolution,
                 cross_resolution=self.cross_resolution,
                     use_mmap=self.use_mmap,
+                    short_series_windows=self.short_series_windows,
+                    short_min_context=self.short_min_context,
+                    short_min_target=self.short_min_target,
+                    season_length=None if seasons is None else seasons[dataset_name],
                     seed=self.seed
                 )
                 
@@ -759,11 +850,9 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                     dm.prepare_data()
                     dm.setup(stage)
                 except SeriesTooShortError as e:
-                    # A dataset whose series cannot host a single window is a
-                    # configuration mismatch, not a fatal error: at
-                    # context_length=512 the weekly and most monthly Monash
-                    # datasets simply do not qualify. Skip it loudly and keep
-                    # the other 22 datasets training.
+                    # A dataset whose series cannot host a single window
+                    # (weekly and most monthly Monash datasets at
+                    # context_length=512) is skipped with a warning.
                     skipped.append((dataset_name, e))
                     logger.warning(
                         f"  SKIPPING {dataset_name}: {e}"
@@ -832,20 +921,21 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
                         batch_size=self.batch_size,
                         temperature=self.sampling_temperature,
                         max_oversample_ratio=self.max_oversample_ratio,
-                        # G10.2: opt-in, False by default - existing runs are
-                        # bit-identical.
                         ration_oversample=self.ration_oversample,
+                        max_batch_size=self.max_batch_size,
+                        fractional_batch=self.fractional_batch,
                         drop_last=True,
                         shuffle=True,
                         seed=self.seed
                     )
                     
-                    # Val sampler: T=1.0 (proportional) for fair evaluation
+                    # Validation: proportional sampling, no oversampling
                     self._val_sampler = TemperatureSampler(
                         dataset_sizes=self.val_dataset_sizes,
                         batch_size=self.batch_size,
-                        temperature=1.0,  # Proportional for validation
-                        max_oversample_ratio=1.0,  # No oversampling for val
+                        temperature=1.0,
+                        max_oversample_ratio=1.0,
+                        fractional_batch=self.fractional_batch,
                         drop_last=False,
                         shuffle=False,
                         seed=self.seed

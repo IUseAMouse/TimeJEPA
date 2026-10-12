@@ -1,19 +1,12 @@
 """
 Normalizers for time series data with reversible transformations.
 
-IMPORTANT: Remember to specify IdentityNormalizer for RevIN usage
+Models with RevIN normalize per instance in the forward pass and expect raw
+data: use IdentityNormalizer with them. StandardScaler and MinMaxScaler are
+for models without RevIN.
 
-RevIN is designed to receive raw data and handles normalization
-internally with instance-level statistics computed during the forward pass.
-
-Use StandardScaler/MinMaxScaler only if you disable/remove RevIN
-
-For multi-dataset training with domain generalization,
-always use IdentityNormalizer and let RevIN handle normalization.
-
-Supports both:
-- Fixed-length data: np.ndarray of shape (n_series, seq_len) or (n_series, seq_len, n_features)
-- Variable-length data: list[np.ndarray] where each array has different length
+Supports both fixed-length data (np.ndarray of shape (n_series, seq_len) or
+(n_series, seq_len, n_features)) and variable-length data (list[np.ndarray]).
 """
 
 from abc import ABC, abstractmethod
@@ -22,22 +15,19 @@ import numpy as np
 from loguru import logger
 
 
-# Type alias for data that can be either fixed or variable length
+# Fixed-length array or list of variable-length arrays
 DataType = Union[np.ndarray, list[np.ndarray]]
 
 
-# No external call sites; kept per the no-delete policy.
 def robust_clip(
     series: np.ndarray,
     n_sigma: float = 5.0,
     use_mad: bool = True
 ) -> np.ndarray:
     """
-    Clip outliers beyond n_sigma from center.
-    
-    Uses median and MAD (Median Absolute Deviation) by default,
-    which are more robust to outliers than mean/std.
-    
+    Clip outliers beyond n_sigma from the center, using median and MAD
+    (median absolute deviation) by default.
+
     Args:
         series: Input array of any shape
         n_sigma: Number of standard deviations for clipping threshold
@@ -49,13 +39,12 @@ def robust_clip(
     if use_mad:
         center = np.median(series)
         mad = np.median(np.abs(series - center))
-        # Scale MAD to approximate std (for normal distribution)
+        # MAD to std for a normal distribution
         std_estimate = mad * 1.4826
     else:
         center = np.mean(series)
         std_estimate = np.std(series)
-    
-    # Avoid zero std
+
     if std_estimate < 1e-8:
         return series
     
@@ -65,7 +54,6 @@ def robust_clip(
     return np.clip(series, lower, upper)
 
 
-# No external call sites; kept per the no-delete policy.
 def robust_clip_dataset(
     data: DataType,
     n_sigma: float = 5.0,
@@ -85,7 +73,6 @@ def robust_clip_dataset(
     if isinstance(data, list):
         return [robust_clip(series, n_sigma, use_mad) for series in data]
     else:
-        # Apply per-series for arrays
         return np.array([robust_clip(series, n_sigma, use_mad) for series in data])
 
 
@@ -141,14 +128,8 @@ class Normalizer(ABC):
 
 class IdentityNormalizer(Normalizer):
     """
-    No-op normalizer that returns data unchanged.
-    
-    Use this when:
-    - Your model has RevIN layers
-    - You want to train on raw data
-    - You're doing multi-dataset training with domain generalization
-    
-    This normalizer is always fitted (is_fitted=True) since it requires no statistics.
+    No-op normalizer for models with RevIN or for training on raw data.
+    Always fitted, since it needs no statistics.
     """
     
     def __init__(self, clip_outliers: bool = False, clip_sigma: float = 5.0):
@@ -182,14 +163,8 @@ class IdentityNormalizer(Normalizer):
 
 class StandardScaler(Normalizer):
     """
-    Standardization: (x - mean) / std
-
-    Normalizes each time series to zero mean and unit variance.
-    Can operate per-series or globally across all series.
-
-    Supports both fixed-length arrays and variable-length lists.
-
-    WARNING: Do not use with RevIN-based models (use IdentityNormalizer instead).
+    Standardization: (x - mean) / std, per series or globally.
+    Not for RevIN-based models (use IdentityNormalizer).
     """
     
     def __init__(
@@ -213,11 +188,10 @@ class StandardScaler(Normalizer):
         self.clip_outliers = clip_outliers
         self.clip_sigma = clip_sigma
         
-        # Statistics storage - can be arrays (fixed length) or lists (variable length)
+        # Arrays for fixed-length data, lists for variable-length data
         self.mean: Optional[Union[np.ndarray, list[float]]] = None
         self.std: Optional[Union[np.ndarray, list[float]]] = None
-        
-        # Global stats (for mode="global")
+
         self.global_mean: Optional[float] = None
         self.global_std: Optional[float] = None
     
@@ -342,17 +316,10 @@ class StandardScaler(Normalizer):
         return result
 
 
-# No external call sites; kept per the no-delete policy.
 class MinMaxScaler(Normalizer):
     """
-    Min-Max scaling: (x - min) / (max - min) -> [0, 1]
-
-    Scales each time series to [0, 1] range.
-    Can operate per-series or globally.
-
-    Supports both fixed-length arrays and variable-length lists.
-
-    WARNING: Do not use with RevIN-based models (use IdentityNormalizer instead).
+    Min-max scaling to `feature_range`, per series or globally.
+    Not for RevIN-based models (use IdentityNormalizer).
     """
     
     def __init__(
@@ -378,12 +345,10 @@ class MinMaxScaler(Normalizer):
         self.clip_outliers = clip_outliers
         self.clip_sigma = clip_sigma
         
-        # Statistics storage
         self.data_min: Optional[Union[np.ndarray, list[float]]] = None
         self.data_max: Optional[Union[np.ndarray, list[float]]] = None
         self.data_range: Optional[Union[np.ndarray, list[float]]] = None
-        
-        # Global stats
+
         self.global_min: Optional[float] = None
         self.global_max: Optional[float] = None
         self.global_range: Optional[float] = None
@@ -541,17 +506,6 @@ def get_normalizer(
     
     Returns:
         Normalizer instance
-    
-    Example:
-        >>> norm = get_normalizer("identity")
-        >>> norm = get_normalizer("identity", clip_outliers=True, clip_sigma=5.0)
-        >>> norm = get_normalizer("standard", mode="per_series")
-        >>> norm = get_normalizer("minmax", mode="global", feature_range=(-1, 1))
-        
-        # With variable-length data:
-        >>> data = [np.random.randn(100), np.random.randn(150), np.random.randn(80)]
-        >>> norm = get_normalizer("standard", mode="per_series")
-        >>> normalized = norm.fit_transform(data)  # Returns list of normalized arrays
     """
     normalizer_type = normalizer_type.lower()
     
