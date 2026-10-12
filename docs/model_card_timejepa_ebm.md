@@ -104,7 +104,7 @@ that can fire its proposer.
 ## Usage
 
 ```bash
-pip install git+https://github.com/IUseAMouse/TimeJEPA.git@sota-roadmap
+pip install git+https://github.com/IUseAMouse/TimeJEPA.git
 ```
 
 ```python
