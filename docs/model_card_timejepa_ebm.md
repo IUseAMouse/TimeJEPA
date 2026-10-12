@@ -140,7 +140,8 @@ predictor layers, d_ff 512; 1.1M parameters without the moving-average copy.
 
 - Weights: `model.safetensors` with `config.json` (read by `timejepa.hub.from_pretrained`)
   and the original pretraining checkpoint `epoch01_valloss0.6420.ckpt`.
-- Code: [TimeJEPA](https://github.com/IUseAMouse/TimeJEPA), MIT. Weights under MIT as well.
+- Code: [TimeJEPA](https://github.com/IUseAMouse/TimeJEPA), MIT. Weights: Apache-2.0 (the
+  `LICENSE` file next to them).
 
 ## Citation
 

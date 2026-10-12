@@ -30,7 +30,7 @@ from timejepa.judge import energy  # noqa: E402
 HERE = Path(__file__).resolve().parents[1]
 
 HF_HEADER = """---
-license: mit
+license: apache-2.0
 library_name: timejepa
 pipeline_tag: time-series-forecasting
 tags:
@@ -51,6 +51,8 @@ def main():
                     help="the checkpoint's pretrain encoded targets alone (contextualized_targets: false)")
     ap.add_argument("--card", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--weights-license", default=None,
+                    help="license file copied next to the weights as LICENSE (the header says apache-2.0)")
     args = ap.parse_args()
 
     with initialize_config_dir(version_base=None, config_dir=str(HERE / "configs" / "model")):
@@ -61,6 +63,8 @@ def main():
     shutil.copy(args.checkpoint, out / Path(args.checkpoint).name)
     card = (HERE / args.card).read_text()
     (out / "README.md").write_text(HF_HEADER + card)
+    if args.weights_license:
+        shutil.copy(args.weights_license, out / "LICENSE")
     assets = HERE / "docs" / "assets"
     for name in sorted(p.name for p in assets.iterdir() if f"assets/{p.name}" in card):
         (out / "assets").mkdir(exist_ok=True)
