@@ -1,11 +1,11 @@
 """
 Tests for the horizon extension (workstream 2, grow_future_query_table).
 
-The predictor's query table is the ONLY model parameter whose shape depends
-on prediction_length. The extension must: preserve the learned rows bit for
+The predictor's query table is the only model parameter whose shape depends
+on prediction_length. The extension must preserve the learned rows bit for
 bit, initialize only the new ones, refuse merges that make no sense, and stay
-STRICTLY opt-in - without the flag, a mismatch remains a loud failure (the
-P3.2 refusal), never a silent random table.
+opt-in: without the flag, a mismatch remains a loud failure, never a silent
+random table.
 """
 
 import sys
@@ -65,7 +65,7 @@ def _save_pretrain_ckpt(model, path):
 
 
 def test_finetune_512_without_flag_raises(tmp_path):
-    """Historical path preserved: an unintentional mismatch = loud failure."""
+    """Without the flag, an unintentional mismatch is a loud failure."""
     ckpt = tmp_path / "p96.ckpt"
     _save_pretrain_ckpt(_model(96), ckpt)
     module = FinetuneModule(model=_model(512))
@@ -96,12 +96,9 @@ def test_finetune_512_with_flag_loads_clean(tmp_path):
 
 def test_ctor_with_pretrained_path_loads_before_horizon_attr(tmp_path):
     """
-    Regression (2026-08-22): __init__ called load_pretrained_encoder BEFORE
-    setting self.extend_horizon_queries, which the loader reads -
-    AttributeError on EVERY finetune launched with
-    +training.pretrained_encoder_path, i.e. the standard protocol. Never
-    caught because the tests built the module without a path. This test
-    follows the exact path of the mix finetune crash.
+    __init__ must set self.extend_horizon_queries before calling
+    load_pretrained_encoder, which reads it; otherwise every finetune launched
+    with +training.pretrained_encoder_path fails with AttributeError.
     """
     import torch
     from timejepa.models import JEPATST

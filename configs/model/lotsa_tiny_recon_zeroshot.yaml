@@ -1,30 +1,17 @@
 # @package _global_
 #
-# G6 - zero-shot FINETUNE of the RECONSTRUCTION arm.
+# Zero-shot finetune of the reconstruction arm.
 #
 #   python scripts/train.py --config-name lotsa_tiny_recon_zeroshot \
 #       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny_recon/pretrain_True/<ckpt> \
 #       wandb.run_name=recon-zeroshot
 #
-# Why this config exists when it only changes a name
-# -------------------------------------------------------------
-# `scripts/train.py:262` derives the checkpoint directory from `model.name`:
-#
-#   checkpoints/{model.name}/pretrain_{True|False}/
-#
-# Finetuning both arms with `lotsa_tiny_zeroshot` gives them the SAME
-# `model.name` (timejepa_lotsa_tiny_zs) and the same output directory. The
-# two arms' checkpoints mix there, distinguished by nothing but the epoch and
-# val_loss in the filename - and at evaluation, no way left to know which
-# pretrain the loaded weights come from.
-#
-# For an experiment whose only deliverable is a COMPARISON between two arms,
-# confusing their outputs is the costliest failure mode possible: it produces
-# no error, just a wrong result.
-#
-# Nothing else is redeclared: the finetune protocol must stay rigorously that
-# of the JEPA arm, otherwise the comparison no longer measures the
-# pretraining objective.
+# This config only changes a name: `scripts/train.py` derives the checkpoint
+# directory from `model.name` (checkpoints/{model.name}/pretrain_{True|False}/).
+# Finetuning both arms with `lotsa_tiny_zeroshot` would mix their checkpoints
+# in one directory, with no way at evaluation to know which pretrain the
+# loaded weights come from. Nothing else is redeclared: the finetune protocol
+# must stay that of the JEPA arm.
 defaults:
   - lotsa_tiny_zeroshot
   - _self_

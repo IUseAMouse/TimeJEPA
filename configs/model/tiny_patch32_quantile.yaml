@@ -1,39 +1,29 @@
 # @package _global_
 #
-# P2.1 - quantile head (decoder fed by the context)
+# Quantile head (decoder fed by the context).
 #
-# FINETUNE ONLY. Only changes the decoder, so it reuses the existing pretrain
-# checkpoint as is - no pretrain to rerun. To compare against the Huber
-# finetune launched from the SAME checkpoint.
+# Finetune only. Only changes the decoder, so it reuses the existing pretrain
+# checkpoint as is. Compare against the Huber finetune launched from the same
+# checkpoint.
 #
 #   python scripts/train.py --config-name tiny_patch32_quantile \
 #       training.mode=finetune \
 #       +training.pretrained_encoder_path=<the same pretrain ckpt> \
 #       wandb.run_name=p2-quantile
 #
-# Why non-parametric
-# -------------------------
-# GIFT-Eval ranks on CRPS, approximated by WQL - which IS an average of
-# pinball over a quantile grid. Predicting the grid therefore optimizes the
-# ranking metric directly. And no distribution shape is imposed: the datasets
-# we lose on (exchange, bitcoin, ETTm) are noisy, asymmetric, heavy-tailed.
+# Why non-parametric: GIFT-Eval ranks on CRPS, approximated by WQL, which is
+# an average of pinball over a quantile grid. Predicting the grid optimizes
+# the ranking metric directly, and no distribution shape is imposed (the
+# datasets we lose on are noisy, asymmetric, heavy-tailed). MASE is based on
+# MAE, minimized by the median; pinball gives the conditional median at q=0.5.
 #
-# Side benefit on MASE: it is based on MAE, minimized by the MEDIAN. Huber
-# gives something between mean and median; pinball gives the exact conditional
-# median at q=0.5.
-#
-# Why the context feeds the decoder (B rather than A)
-# ----------------------------------------------------------
-# The predictor is trained under MSE against the target latent: it converges
-# to E[z_target | z_context], a conditional mean by construction (measured on
-# a real run: pred_var 0.6 vs target_var 0.95). The dispersion information
-# lives in the residual, which the model never sees at inference. Two contexts
-# with the same conditional mean but different volatilities can thus project
-# to the same place. Cross-attention to the context embeddings gives the
-# decoder direct access to that signature again.
-#
-# `scripts/probe_uncertainty.py` measures, on a given checkpoint, whether this
-# actually brings something - run it first, to know what to expect.
+# Why the context feeds the decoder: the predictor is trained under MSE
+# against the target latent, so it converges to E[z_target | z_context]
+# (measured: pred_var 0.6 vs target_var 0.95). The dispersion information
+# lives in the residual, which the model never sees at inference.
+# Cross-attention to the context embeddings gives the decoder direct access
+# to that signature. `scripts/probe_uncertainty.py` measures, on a given
+# checkpoint, whether this brings something.
 defaults:
   - tiny_patch32_ftall
   - _self_
@@ -46,7 +36,7 @@ model:
 training:
   loss:
     # Ignored when the decoder is probabilistic: the loss becomes pinball over
-    # the whole grid. Keeping it explicit avoids believing Huber applies.
+    # the whole grid.
     finetune_type: "huber"
 
 wandb:

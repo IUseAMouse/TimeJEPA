@@ -1,14 +1,14 @@
 """
-G9.3 - the xres pretrain -> finetune transition (2026-08-31).
+The xres pretrain -> finetune transition.
 
-Protected invariants:
-1. INERT DEFAULTS: without the new keys (lambda_anchor=0, no w), the
-   finetune is bit-identical to the existing one - the repo's doctrine.
+Invariants:
+1. Inert defaults: without the new keys (lambda_anchor=0, no w), the
+   finetune is bit-identical to the existing one.
 2. w traverses forecast() and forward_finetune(): identity at init
    (zero-init FiLM), real effect once the FiLM is perturbed.
 3. The anchor: lambda>0 moves the encoder in full_finetune, refuses
-   linear_probe, and the target really is the copy of the loaded online
-   encoder (never the random deepcopy from construction - trap #1).
+   linear_probe, and the target is the copy of the loaded online encoder,
+   never the random deepcopy from construction.
 """
 
 import sys
@@ -49,8 +49,7 @@ def _moved(before, module, prefix):
 
 
 def _step(module):
-    # Bare optimizer (configure_optimizers requires a Trainer for the
-    # scheduler) - same approach as test_p0_regressions.
+    # Bare optimizer: configure_optimizers requires a Trainer for the scheduler.
     opt = torch.optim.AdamW(module.model.parameters(), lr=1e-3)
     module.model.train()
     loss, _, _ = module._forward_and_loss(torch.randn(4, 512, 1),
@@ -103,7 +102,7 @@ def test_forecast_w_identity_at_init_then_real_after_noise():
         diff = model.forecast(x, w=w2)["forecast"]
         still = model.forecast(x, w=torch.ones(3))["forecast"]
     assert not torch.allclose(base, diff)
-    assert torch.allclose(base, still)          # w=1 stays the T2 regime
+    assert torch.allclose(base, still)          # w=1 stays the identity
 
 
 def test_forecast_w_rejected_without_film():
@@ -141,9 +140,8 @@ def test_anchor_refuses_linear_probe():
 
 
 def test_anchor_targets_loaded_online_not_random_copy(tmp_path):
-    # A saved "pretrain", reloaded at finetune with lambda>0: the target must
-    # be the copy of the LOADED ONLINE encoder (trap #1 - otherwise a random
-    # deepcopy).
+    # A saved pretrain reloaded at finetune with lambda>0: the target must be
+    # the copy of the loaded online encoder, not a random deepcopy.
     src = _model()
     ckpt = tmp_path / "pre.ckpt"
     torch.save({"state_dict": {f"model.{k}": v
@@ -155,7 +153,7 @@ def test_anchor_targets_loaded_online_not_random_copy(tmp_path):
 
 
 def test_anchor_zero_keeps_target_random_copy_semantics(tmp_path):
-    # lambda=0: NO new behavior, not even the target copy.
+    # lambda=0: no new behavior, not even the target copy.
     src = _model()
     ckpt = tmp_path / "pre.ckpt"
     torch.save({"state_dict": {f"model.{k}": v

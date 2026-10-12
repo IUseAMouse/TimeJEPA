@@ -1,36 +1,19 @@
 # @package _global_
 #
-# G7.4 - PRETRAIN of the MINI (~3.5M trainable) on the V3 RECIPE, user
-# decision 2026-08-31 after the triple convergence (mix 0.5959 / esjepa
-# 0.5981 / v3 0.5983 xflip, whole v3 plateau at 0.597 +/- 0.002).
+# Pretrain of the mini (~3.5M trainable) on the v3 recipe.
 #
 #   python scripts/train.py --config-name lotsa_mini_v3 wandb.run_name=mini-v3
 #   # then: lotsa_mini_v3_zeroshot (1-epoch finetune) and lotsa_mini_v3_eval
 #
-# THE question this run settles: is capacity the binding constraint at 1.1M?
-# ONE variable - size (d_model 192, enc 4 / pred 3 layers, d_ff 768) against
-# the lotsa_tiny_v3 control. Everything else is the v3 bundle unchanged:
-# lotsa_v3 corpus (106 families, 54.0% synthetic, audit recorded), rationing
-# at pretrain+finetune, TiRex augmentations, LR 3e-4 (NOT lotsa_mini's 4e-4 -
-# the scale duel demands the same LR), 2-epoch budget, save_top_k -1
-# (last.ckpt trap), standalone targets.
+# One variable against the lotsa_tiny_v3 control: size (d_model 192, enc 4 /
+# pred 3 layers, d_ff 768). Everything else is the v3 bundle unchanged:
+# lotsa_v3 corpus (106 families, 54.0% synthetic), rationing at
+# pretrain+finetune, TiRex augmentations, LR 3e-4 (not lotsa_mini's 4e-4, so
+# both scales share the same LR), 2-epoch budget, save_top_k -1, standalone
+# targets.
 #
-# PREDICTIONS RECORDED (registry 2026-08-31, before the first step):
-#   * P-mini.1 (success)  : CRPS xflip <= 0.580 at the finetune's best
-#     checkpoint; central 0.570 +/- 0.010; stretch < 0.555.
-#   * P-mini.2 (body)     : the gain lives in the BODY (81 configs outside the
-#     tail), not the tail - capacity is a diffuse lever, like the gap.
-#   * P-mini.3 (health)   : effective-rank plateau HIGHER than tiny-v3
-#     (G7.4: tiny's saturation must show as a dip here).
-#   * P-mini.4 (judge)    : early peak of the probe-judge (4th observation =>
-#     the law holds across scales), rank <= 0.21.
-#   * FAILURE-DIAGNOSTIC  : xflip > 0.593 => capacity WAS NOT the wall, the
-#     "triple convergence = capacity ceiling" reading is refuted and the
-#     suspect is back to the recipe/objective. Final.
-#
-# DECLARED DEVIATION (inherited from lotsa_mini, 24 GB memory): batch 384x3
-# GPUs = 1152 effective vs 1536 for tiny - accepted bundle item, to recall if
-# the duel comes down to < 1 pt.
+# Known deviation inherited from lotsa_mini (24 GB memory): batch 384 x 3 GPUs
+# = 1152 effective vs 1536 for tiny.
 defaults:
   - lotsa_mini_mix
   - _self_
@@ -39,8 +22,7 @@ model:
   name: "timejepa_lotsa_mini_v3"
 
 checkpoint:
-  # Keep everything at pretrain (last.ckpt trap + probe-judge series, cf.
-  # lotsa_tiny_v3): ~40 ckpts x ~45 MB at this size, negligible cost.
+  # Keep every pretrain checkpoint (as in lotsa_tiny_v3): ~40 ckpts x ~45 MB.
   save_top_k: -1
 
 data:
@@ -49,7 +31,7 @@ data:
 
 augmentations:
   pretrain:
-    # TiRex-style, identical to lotsa_tiny_v3 (the bundle, not a variable).
+    # TiRex-style, identical to lotsa_tiny_v3.
     amplitude_mod_enabled: true
     p_amplitude_mod: 0.5
     censor_enabled: true

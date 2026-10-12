@@ -1,10 +1,7 @@
 # @package _global_
 #
-# Eval of the h512 checkpoints (workstream 2). The geometry MUST carry the
-# 512: the eval builds the model from this config, and a wrong horizon would
-# only warn before outputting silently wrong numbers (the documented trap of
-# the geometry round) - which is exactly why loading.py now refuses core
-# mismatches (P3.2).
+# Eval of the h512 checkpoints. The geometry must carry the 512: the eval
+# builds the model from this config, and loading.py refuses core mismatches.
 defaults:
   - lotsa_tiny_eval
   - _self_

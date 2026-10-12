@@ -1,32 +1,29 @@
 # @package _global_
 #
-# G8 - tiny PRETRAIN on LOTSA + chronos_extras. ONE variable: the corpus.
+# Tiny pretrain on LOTSA + chronos_extras. One variable: the corpus.
 #
 #   # 1. conversion (once, CPU, a few minutes)
 #   python scripts/prepare_chronos.py --out data/processed/chronos_extras
 #
-#   # 2. mixed directory via symlinks (NEVER generate into a corpus in place)
+#   # 2. mixed directory via symlinks (never generate into a corpus in place)
 #   mkdir -p data/processed/lotsa_chronos
 #   ln -s $(pwd)/data/processed/lotsa/*.npy data/processed/lotsa_chronos/
 #   ln -s $(pwd)/data/processed/chronos_extras/*.npy data/processed/lotsa_chronos/
-#   # then the BALANCE AUDIT on the mixed directory (lotsa_tiny_full header)
+#   # then the balance audit on the mixed directory (lotsa_tiny_full header)
 #
 #   # 3. pretrain
 #   python scripts/train.py --config-name lotsa_tiny_chronos wandb.run_name=chronos-pretrain
 #
-# Why this corpus, and why it is small
-# --------------------------------------------
-# Verified (2026-08-19): GiftEvalPretrain = LOTSA minus the 18 eval datasets,
-# byte-identical - that lever is empty. From the Chronos corpus, only
-# dominick / ercot / mexico_city_bikes / ushcn_daily are both new and
-# leak-free (allowlist audited in prepare_chronos.py). The main contribution
-# is not volume: these files are converted into 8192 chunks, the first in the
-# real corpus where multi-resolution decimation is POSSIBLE
-# (1280*f <= 8192 -> f <= 6, versus NO f >= 2 on the 2048 chunks). That is
-# the real fuel of the cross-resolution arm (lotsa_tiny_xres).
+# Why this corpus: GiftEvalPretrain is byte-identical to LOTSA minus the 18
+# eval datasets. From the Chronos corpus, only dominick / ercot /
+# mexico_city_bikes / ushcn_daily are both new and leak-free (allowlist
+# audited in prepare_chronos.py). These files are converted into 8192 chunks,
+# the first in the corpus where multi-resolution decimation is possible
+# (1280*f <= 8192 -> f <= 6, versus no f >= 2 on the 2048 chunks), which is
+# what the cross-resolution arm (lotsa_tiny_xres) needs.
 #
-# The clean comparison is against lotsa_tiny (capped corpus, E14/E16): same
-# geometry, same budget, corpus + chronos_extras.
+# The clean comparison is against lotsa_tiny (capped corpus): same geometry,
+# same budget, corpus + chronos_extras.
 defaults:
   - lotsa_tiny
   - _self_

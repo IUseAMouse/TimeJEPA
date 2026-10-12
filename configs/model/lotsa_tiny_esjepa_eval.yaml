@@ -4,12 +4,10 @@
 #   python scripts/evaluate_gift.py --config-name lotsa_tiny_esjepa_eval \
 #       '+checkpoint_path="checkpoints/timejepa_lotsa_tiny_esjepa_zs/pretrain_False/<ckpt>"'
 #
-# WARNING: error_signal MUST be re-carried here (lotsa_tiny_xres_eval
-# precedent): the z head is a WEIGHT of the predictor (predictor.z_head.*) -
-# without the flag, model construction would lack the keys and the P3.2
-# refusal would trigger (intended: evaluating an ESJEPA checkpoint with its z
-# pathway amputated would be silently wrong). robust_scale is inherited from
-# lotsa_tiny_mix_eval.
+# error_signal must be carried here (as in lotsa_tiny_xres_eval): the z head
+# is a predictor weight (predictor.z_head.*), and without the flag the model
+# lacks the keys and loading refuses the checkpoint. robust_scale is
+# inherited from lotsa_tiny_mix_eval.
 defaults:
   - lotsa_tiny_mix_eval
   - _self_

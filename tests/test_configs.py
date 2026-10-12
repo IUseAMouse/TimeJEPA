@@ -1,11 +1,9 @@
 """
-Tests for the Hydra CONFIG GRID (extracted from test_p0_regressions.py,
-2026-08-19 audit - moved verbatim, no test rewritten).
+Tests for the Hydra config grid.
 
-Covers: composition of every experiment config (B21), lotsa_* scale
-dimensions against their references, geo arms differing only by their
-declared variable, checkpoint names without '=' (B21). These are the slowest
-tests in the suite (Hydra composition): marked `slow`.
+Covers: lotsa_* scale dimensions against their references, geo arms differing
+only by their declared variable, checkpoint names without '='. Hydra
+composition makes these the slowest tests in the suite.
 """
 
 import sys
@@ -58,9 +56,8 @@ def test_lotsa_scale_configs_match_their_reference_dimensions(size, reference):
 @pytest.mark.parametrize("size", ["tiny", "mini", "base"])
 def test_lotsa_eval_config_matches_the_trained_model(size):
     """
-    A shape mismatch at eval time only WARNS before producing silently wrong
-    numbers - the trap already hit on the p32 arm. Capacity must match too, not
-    just geometry.
+    A shape mismatch at eval time only warns before producing silently wrong
+    numbers. Capacity must match as well as geometry.
     """
     zs = _compose(f"lotsa_{size}_zeroshot")
     ev = _compose(f"lotsa_{size}_eval")
@@ -72,7 +69,7 @@ def test_lotsa_eval_config_matches_the_trained_model(size):
             assert ev.model[block][key] == zs.model[block][key], f"eval/{block}.{key}"
     assert ev.model.decoder.type == zs.model.decoder.type
 
-    # The eval config reads the HELD-OUT corpus, never LOTSA
+    # The eval config reads the held-out corpus, never LOTSA
     assert "lotsa" not in str(ev.data.data_dir).lower()
     assert ev.data.get("use_mmap", False) is False
 
@@ -117,7 +114,7 @@ def test_lotsa_configs_do_not_disturb_existing_ones():
     assert ft.data.get("use_mmap", False) is False
     assert len(ft.data.datasets_finetune) == len(base.data.datasets_finetune)
 
-    # The zero-shot arm - the primary protocol - must train its decoder on LOTSA
+    # The zero-shot arm (the primary protocol) must train its decoder on LOTSA
     # only, so that Monash and Nixtla stay unseen at every stage.
     zs = _compose("lotsa_tiny_zeroshot")
     assert zs.training.mode == "finetune"
@@ -127,9 +124,8 @@ def test_lotsa_configs_do_not_disturb_existing_ones():
     assert zs.data.use_mmap is True
     assert zs.model.name != ft.model.name         # separate checkpoint trees
 
-    # The eval config must carry the TRAINING geometry but the EVALUATION data.
-    # If the two ever diverge, this breaks here rather than silently producing
-    # wrong numbers: at eval time a geometry mismatch only WARNS.
+    # The eval config must carry the training geometry but the evaluation data:
+    # at eval time a geometry mismatch only warns.
     ev = _compose("lotsa_tiny_eval")
     for key in ("seq_length", "prediction_length", "patch_length", "stride"):
         assert ev.model[key] == zs.model[key], f"eval/{key} drifted from the trained model"
@@ -151,13 +147,10 @@ def _compose(name):
                                          "tiny_geo_vicreg", "tiny_geo_scratch"])
 def test_checkpoint_filename_has_no_equals_sign(config_name):
     """
-    B21. auto_insert_metric_name lived in the config but was never forwarded to
-    ModelCheckpoint, so Lightning kept its default (True) and prefixed each
-    metric name on top of the template's own text:
-    'epochepoch=00_val_lossval_loss=0.3445.ckpt'. Hydra's override grammar
-    treats '=' as a separator, so every downstream finetune and eval command
-    needed quoting gymnastics - and one of them failed outright with backslashes
-    surviving literally into the path.
+    auto_insert_metric_name must reach ModelCheckpoint, otherwise Lightning
+    prefixes each metric name ('epochepoch=00_val_lossval_loss=0.3445.ckpt').
+    Hydra's override grammar treats '=' as a separator, so such paths break
+    every downstream finetune and eval command.
     """
     cfg = _compose(config_name)
     assert "=" not in cfg.checkpoint.filename
@@ -167,7 +160,7 @@ def test_checkpoint_filename_has_no_equals_sign(config_name):
 def test_geo_arms_differ_only_in_their_declared_variable():
     """
     Each arm of the geometry grid is a named config, not a pile of overrides:
-    a forgotten `model.patch_length=32` at EVAL time only warns
+    a forgotten `model.patch_length=32` at eval time only warns
     ('re-initialising patching.*') and yields silently wrong numbers.
     Everything except the arm's own variable must match the base.
     """

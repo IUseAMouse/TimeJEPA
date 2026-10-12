@@ -1,19 +1,14 @@
 # @package _global_
-# Zero-shot finetune of the ESJEPA arm - G7.3c protocol (1 epoch, cosine
-# annealed within it), identical to the mix control's protocol so the duel
-# stays one-variable.
+# Zero-shot finetune of the ESJEPA arm (1 epoch, cosine annealed within it),
+# identical to the mix control's protocol so the comparison stays one-variable.
 #
 #   python scripts/train.py --config-name lotsa_tiny_esjepa_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_esjepa/pretrain_True/last.ckpt"'
 #
 # The quantile decoder (inherited) receives z via the zero-init spread gate:
-# the finetune starts EXACTLY from the baseline fan, modulation only appears
-# if the gradient asks for it. Sterility witness: esjepa/gate_absmean ~0 at
-# the end of finetune = the decoder ignores z - an interpretable negative
-# result (context cross-attention suffices), not a silent failure.
-# Predictions stated before the run: P2 = val_wql down vs control at equal
-# val_mase (+/-0.5%, near guaranteed by the gate); P3 = wider fan on windows
-# with large realized residual, bitbrains tail flares down.
+# the finetune starts from the baseline fan, and modulation only appears if
+# the gradient asks for it. esjepa/gate_absmean ~0 at the end of finetune
+# means the decoder ignores z (context cross-attention suffices).
 defaults:
   - lotsa_tiny_esjepa
   - _self_
@@ -27,10 +22,8 @@ training:
   max_epochs: 1
 
 checkpoint:
-  # G7.3c doctrine: selection by intermediate GIFT eval, never by val_loss
-  # (E20: even a clean, monotone val picks the wrong checkpoint) - keep
-  # everything. Rationing is inherited from lotsa_tiny_esjepa (protocol
-  # since E20).
+  # Selection by intermediate GIFT eval, never by val_loss, so keep every
+  # checkpoint. Rationing is inherited from lotsa_tiny_esjepa.
   save_top_k: -1
 
 data:

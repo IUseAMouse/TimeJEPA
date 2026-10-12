@@ -1,43 +1,34 @@
 # @package _global_
 #
-# WORKSTREAM 2 - NATIVE HORIZON 512 by EXTENDING the lotsa_tiny checkpoint.
+# Native horizon 512 by extending the lotsa_tiny checkpoint.
 #
-#   # zero-shot finetune from the EXISTING lotsa_tiny pretrain (no new pretrain)
+#   # zero-shot finetune from the existing lotsa_tiny pretrain (no new pretrain)
 #   python scripts/train.py --config-name lotsa_tiny_h512_zeroshot \
 #       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt> \
 #       wandb.run_name=h512-zeroshot
 #
-#   # GIFT eval (compare SPECIFICALLY the medium/long terms to the rollout baseline)
+#   # GIFT eval (compare the medium/long terms to the rollout baseline)
 #   python scripts/evaluate_gift.py --config-name lotsa_tiny_h512_eval \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_h512_zs/pretrain_False/<ckpt>
 #
-# The measured variable, and why NOT a from-scratch 512 pretrain
-# -----------------------------------------------------------------
 # 42 of the 97 GIFT configs are medium/long, and that is where the model
-# degrades (per-term ratios: 0.914 short / 1.056 medium / 1.084 long - E16).
-# The suspected mechanism is the autoregressive rollout: h=720 = 3 rollouts of
-# 256, each rollout feeding a trajectory back, bias compounding measured since
-# the geometry round. Native horizon 512 => h=720 in 2 rollouts, h=480 in 1.
+# degrades (per-term ratios: 0.914 short / 1.056 medium / 1.084 long). The
+# suspected mechanism is the autoregressive rollout: h=720 = 3 rollouts of
+# 256, each feeding a trajectory back. Native horizon 512 => h=720 in 2
+# rollouts, h=480 in 1. A from-scratch 512 pretrain would change two extra
+# variables (the dataset window 1280 -> 1536 and the budget); extending the
+# existing checkpoint changes only the finetune's native horizon.
 #
-# A from-scratch 512 pretrain would change TWO extra hidden variables: the
-# dataset window (1280 -> 1536, -33% of positions per 2048 chunk) and the
-# budget. Extending the existing checkpoint isolates the question: same
-# pretrain, same corpus - only the finetune's native horizon changes.
+# Mechanics: the only model parameter whose shape depends on the horizon is
+# the predictor's query table ([1, 50, d] -> [1, 98, d]). Without the flag
+# below it would be refused at load time; `extend_horizon_queries: true`
+# copies the 50 pretrained rows and initializes the 48 new ones
+# (grow_future_query_table). The extended horizon_lengths + p_random_horizon
+# give them gradient. The quantile decoder is horizon-independent.
 #
-# Mechanics of the extension
-# ------------------------
-# The ONLY model parameter whose shape depends on the horizon is the
-# predictor's query table ([1, 50, d] -> [1, 98, d]). Without the flag below
-# it would be dropped at load time (loud failure since P3.2);
-# `extend_horizon_queries: true` copies the 50 pretrained rows and only
-# initializes the 48 new ones (grow_future_query_table). The extended
-# horizon_lengths + p_random_horizon give them gradient: the repo's proven
-# train-by-randomization mechanism, applied to fresh rows. The quantile
-# decoder is horizon-independent (per-patch projection), nothing else moves.
-#
-# WARNING: finetune window = 1024 + 512 = 1536: on the first run, read the
-# "N/M dataset(s) skipped" setup line - LOTSA datasets with chunks < 1536
-# leave the finetune, which is part of the arm's measured cost.
+# Finetune window = 1024 + 512 = 1536: on the first run, read the
+# "N/M dataset(s) skipped" setup line. LOTSA datasets with chunks < 1536
+# leave the finetune, which is part of the arm's cost.
 defaults:
   - lotsa_tiny_zeroshot
   - _self_

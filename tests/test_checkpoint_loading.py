@@ -1,15 +1,14 @@
 """
-Tests for the `load_checkpoint` refusal contract (P3.2, 2026-08-19 audit).
+Tests for the `load_checkpoint` refusal contract.
 
-The targeted failure mode is precise: a checkpoint whose geometry does not
-match the model had its core keys dropped by `filter_loadable`, then the eval
-ran on freshly initialized weights while emitting a mere warning - silently
-wrong numbers. Measured on the prediction_length 256->512 case
-(`predictor.future_position_embedding` dropped). Since P3.2, this case
-REFUSES.
+Failure mode guarded against: a checkpoint whose geometry does not match the
+model had its core keys dropped by `filter_loadable`, and the eval then ran on
+freshly initialized weights with only a warning (for example prediction_length
+256->512, which drops `predictor.future_position_embedding`). This case now
+raises.
 
-The only legitimate mismatch - the decoder head swap (point vs quantile) -
-must keep passing: it is the real workflow of the geometry round.
+The one legitimate mismatch, the decoder head swap (point vs quantile), must
+keep passing.
 """
 
 import sys
@@ -41,8 +40,7 @@ def _save_lightning_style(model, path):
 def test_load_refuses_predictor_shape_mismatch(tmp_path):
     """
     An h=96 checkpoint loaded into an h=512 model: the predictor's query
-    table changes shape. Before P3.2: warning + random table + wrong numbers.
-    Expected: an explicit RuntimeError.
+    table changes shape. Expected: an explicit RuntimeError.
     """
     ckpt = tmp_path / "h96.ckpt"
     _save_lightning_style(_model(pred_len=96), ckpt)
@@ -67,7 +65,7 @@ def test_load_still_tolerates_decoder_swap(tmp_path):
 
 
 def test_load_tolerates_expected_missing(tmp_path):
-    """target_encoder and the RevIN buffers are ALWAYS missing - never a refusal."""
+    """target_encoder and the RevIN buffers are always missing: never a refusal."""
     m = _model()
     sd = {f"model.{k}": v for k, v in m.state_dict().items()
           if "target_encoder" not in k and not k.endswith((".mean", ".std"))}

@@ -1,13 +1,13 @@
 """
-G4.2 tests - uniform conformal calibration of the quantiles.
+Uniform conformal calibration of the quantiles.
 
-Invariants, by severity:
-1. gamma = 1 everywhere: BIT-IDENTICAL output (flag-on inert by default).
-2. The median (point forecast) is NEVER modified, whatever gamma - the
-   MASE-invariant contract, the equivalent of the ESJEPA gate.
+Invariants:
+1. gamma = 1 everywhere: bit-identical output.
+2. The median (point forecast) is never modified, whatever gamma, so MASE
+   is invariant.
 3. gamma > 0 preserves fan monotonicity.
 4. gamma_for_level recovers the exact factor on an artificially narrowed
-   Gaussian fan: q_k = 0.5*(true q_k) => gamma ~ 2 (the calibration works).
+   Gaussian fan: q_k = 0.5*(true q_k) gives gamma ~ 2.
 """
 
 import sys
@@ -95,8 +95,8 @@ def test_gamma_for_level_small_sample_is_neutral():
 
 
 # ---------------------------------------------------------------------------
-# Integration: the collection loop itself (2026-08-26 bug - accumulator state
-# leaked between datasets, only the first was initialized).
+# Integration: the collection loop itself (accumulator state must not leak
+# between datasets).
 # ---------------------------------------------------------------------------
 
 from types import SimpleNamespace                                    # noqa: E402
@@ -129,7 +129,7 @@ def _items(seed, n=64, L=64, h=16):
 def test_calibrate_dataset_two_datasets_no_state_leak():
     m = _NarrowFanOracle()
     dev = torch.device("cpu")
-    for seed in (0, 1):                       # TWO successive datasets
+    for seed in (0, 1):                       # two successive datasets
         items = _items(seed)
         levels, stats = calibrate_dataset(
             m, lambda j: items[int(j)], np.arange(len(items)), h=16,

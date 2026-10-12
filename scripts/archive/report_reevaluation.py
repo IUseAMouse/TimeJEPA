@@ -1,6 +1,6 @@
 # ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
-Build the P0.8 before/after report from re-evaluation JSONs.
+Build the before/after report from re-evaluation JSONs.
 
 Answers three questions, in order of importance:
 

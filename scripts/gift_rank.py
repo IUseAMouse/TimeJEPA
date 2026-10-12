@@ -1,13 +1,12 @@
-# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round (CLI
-# ladder over the 2026-08-24 leaderboard snapshot); kept per the no-delete policy.
+# Deprecated: one-shot script over the vendored leaderboard snapshot, kept for reference.
 """
-A checkpoint's position on the GIFT-Eval leaderboard - CLI visual.
+A checkpoint's position on the GIFT-Eval leaderboard, as a CLI ladder.
 
     python scripts/gift_rank.py --crps 0.6134 --mase 0.8914
     python scripts/gift_rank.py --crps 0.6134 --mase 0.8914 --name "mix1ep3e4@25%" --window 10
 
 Uses the local snapshot (docs/assets/gift_leaderboard/<date>/leaderboard.csv,
-produced by fetch_gift_leaderboard.py) - cited ranks stay verifiable even if
+produced by fetch_gift_leaderboard.py), so cited ranks stay verifiable when
 the online leaderboard moves. Bar scale: CRPS within the shown window
 (shorter = better). The "next rung" deltas give the immediate numeric target.
 """
@@ -22,8 +21,8 @@ HL = "\033[1;92m"      # highlight (bold green)
 DIM = "\033[2m"
 RST = "\033[0m"
 
-# CURATED provenance (substring, case-insensitive -> organization).
-# Deliberately conservative: only actors identifiable with certainty are
+# Curated provenance (substring, case-insensitive -> organization).
+# Conservative on purpose: only actors identifiable with certainty are
 # labeled; community/anonymous submissions stay empty rather than guessed.
 # The classic baselines (tft, n-beats, patchtst, itransformer...) are run by
 # the leaderboard team.

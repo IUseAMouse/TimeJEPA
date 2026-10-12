@@ -1,49 +1,35 @@
 # @package _global_
 #
-# G5 - PRETRAIN ON LOTSA. Geometry identical to tiny_geo, corpus swapped.
+# Pretrain on LOTSA. Geometry identical to tiny_geo, corpus swapped.
 #
-#   # 1. conversion (once) - re-read the EXCLUDED list it prints
+#   # 1. conversion (once); re-read the excluded list it prints
 #   python scripts/prepare_lotsa.py --list
 #   python scripts/prepare_lotsa.py --out data/processed/lotsa
 #
 #   # 2. pretrain
 #   python scripts/train.py --config-name lotsa_tiny wandb.run_name=lotsa-pretrain
 #
-#   # 3. finetune - on the usual Monash corpus, NOT on LOTSA
+#   # 3. finetune, on the usual Monash corpus, not on LOTSA
 #   python scripts/train.py --config-name lotsa_tiny_finetune \
 #       +training.pretrained_encoder_path=checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>
 #
-# Why LOTSA, and why now
-# --------------------------------------
-# E12 established that pretraining improves TRANSFER outside the downstream
-# domain (-8.7% MASE), not the fit to that domain - where scratch does better.
-# LOTSA is the experiment that directly extends this result, with a falsifiable
-# prediction: if the gain really is a transfer gain, a corpus ~1000x larger AND
-# truly diverse must widen it. If it does not move, the ceiling is not in the
-# data.
+# Why LOTSA: pretraining was found to improve transfer outside the downstream
+# domain rather than the fit to it, and the Monash corpus is only diverse on
+# the surface (wind-farms-minutely and london-smart-meters weigh 48.7% of the
+# batch). LOTSA covers all frequencies, and the conversion caps each subset
+# to avoid reproducing that imbalance.
 #
-# E10 gives the second reason: the current corpus is only diverse on the
-# surface - wind-farms-minutely and london-smart-meters weigh 48.7% of the
-# batch, both very high frequency. LOTSA covers all frequencies, and the
-# conversion caps each subset to avoid reproducing that imbalance.
-#
-# What changes vs tiny_geo, and nothing else
-# ----------------------------------------------------
+# What changes vs tiny_geo, and nothing else:
 # 1. `data.data_dir` points to the converted corpus.
 # 2. `data.datasets: null` => all `.npy` in the directory (dataset_pattern).
-# 3. `data.use_mmap: true` => files read without going through RAM. Required:
-#    the files are GB-sized. This flag is ABSENT from every other config, so
-#    their behavior is bit-for-bit unchanged.
+# 3. `data.use_mmap: true` => files read without going through RAM (the files
+#    are GB-sized). The flag is absent from every other config.
 # 4. `datasets_finetune` stays the Monash corpus: pretrain on LOTSA, finetune
 #    on in-domain data, like Moirai/Chronos. See lotsa_tiny_finetune.
-# 5. Multi-resolution disabled: LOTSA already covers frequencies natively;
-#    synthetic decimation would be redundant and costs windows.
+# 5. Multi-resolution disabled: LOTSA already covers frequencies natively.
 #
-# WARNING - evaluation contamination, before launching
-# --------------------------------------------------
-# LOTSA CONTAINS ETT, electricity, traffic, weather. `prepare_lotsa.py`
-# excludes them by substring and prints the list: re-read it. Pretraining on an
-# evaluation benchmark would invalidate every number in the project.
+# Evaluation contamination: LOTSA contains ETT, electricity, traffic, weather.
+# `prepare_lotsa.py` excludes them by substring and prints the list; re-read it.
 defaults:
   - tiny_geo
   - _self_
@@ -52,40 +38,23 @@ model:
   name: "timejepa_lotsa_tiny"
 
 training:
-  # THE MOST IMPORTANT SETTING IN THIS CONFIG, and the least obvious.
-  #
-  # The scheduler is a cosine calibrated on `max_epochs`. The default inherited
-  # from tiny.yaml is 40 - at 6h per epoch on this corpus, TEN DAYS. The first
-  # LOTSA run did 3 of them, so the LR only decayed from 0.000749 to 0.000740
-  # in 400,000 steps: the model ran at maximal LR from start to finish.
-  #
-  # A model at constant maximal LR does not converge, it oscillates. Measured
-  # on that run: val_loss bouncing between 0.345 and 0.445 with no trend, while
-  # train_loss_epoch went down cleanly (0.47 -> 0.395) - so the "best
-  # checkpoint" landed on a noise dip, systematically around the middle of
-  # epoch 1.
-  #
-  # `max_epochs` must reflect the REAL BUDGET. At 5, the cosine decays to ~0
-  # and the end of the run becomes a real convergence.
-  #
-  # Corollary for checkpoint selection: with proper annealing, take the LAST
-  # one. Without annealing, neither the last nor the best val_loss is
-  # legitimate - several must be evaluated (see E13 in the registry).
+  # The cosine scheduler is calibrated on `max_epochs`, so it must reflect the
+  # real budget. The inherited default of 40 (about 6 h per epoch here) left a
+  # 3-epoch run at maximal LR throughout, with val_loss oscillating between
+  # 0.345 and 0.445 and no convergence. At 5 the cosine decays to ~0, and the
+  # last checkpoint is the one to take.
   max_epochs: 5
 
 data:
   data_dir: "data/processed/lotsa"
 
-  # Measured on 3x RTX 3090: at batch 256, only 3 GB of VRAM (11%) and 53-74%
-  # GPU occupancy - the bottleneck is loading, not compute. A bigger batch
-  # amortizes the per-iteration cost and fills the cards, and 512 lands exactly
-  # on the effective batch 1536 of the reference runs (3 GPUs).
-  # To revalidate with a short run: ~6 GB expected, margin remains.
+  # On 3x RTX 3090, batch 256 used only 3 GB of VRAM at 53-74% GPU occupancy:
+  # the bottleneck is loading. 512 fills the cards and gives the effective
+  # batch 1536 of the reference runs (3 GPUs).
   batch_size: 512
 
-  # 3 GPUs x 8 = 24 workers. At 11% VRAM and 60% occupancy, the worker count is
-  # the limit, not memory. Keep persistent_workers at false (default): that is
-  # what got a run killed by the OOM killer (B19).
+  # 3 GPUs x 8 = 24 workers. Keep persistent_workers at false (default):
+  # persistent workers got a run killed by the OOM killer.
   num_workers: 8
   # null => take every .npy in the directory, so no list to maintain across
   # LOTSA versions.
@@ -93,29 +62,21 @@ data:
   dataset_pattern: "*.npy"
   use_mmap: true
 
-  # The per-subset cap is applied at CONVERSION time (--max-chunks-per-subset);
+  # The per-subset cap is applied at conversion time (--max-chunks-per-subset);
   # temperature remains the second guardrail.
   sampling_temperature: 0.5
 
   # 6.0 was the tiny.yaml default, calibrated for 24 Monash datasets. On 112
-  # LOTSA subsets, the log shows datasets of 648 samples replayed SIX times per
-  # epoch - 18 passes in 3 epochs. E13b measured clear overfitting (train going
-  # down, val going up, from about one epoch on); this oversampling is a direct
-  # and free-to-remove contributor.
+  # LOTSA subsets it replayed 648-sample datasets six times per epoch, a direct
+  # contributor to the overfitting observed after about one epoch.
   max_oversample_ratio: 3.0
 
-  # Stride must follow chunk length, which is NOT 8192.
-  # The conversion picks the length per subset (median of the series, capped)
-  # and mostly outputs ~2048, because a fixed 8192 chunk dropped whole
-  # subsets - alibaba lost 108,852 of its 116,818 series.
-  #
-  # Windows per chunk = (length - 1280) / stride:
-  #   chunk 2048, stride 64  ->  12   <- the epoch would be 5x SMALLER than Monash
-  #   chunk 2048, stride  8  ->  96   <- comparable to Monash's 50M windows
-  #
-  # So 8 is the right setting here, and the "huge corpus, so wide stride"
-  # reasoning no longer holds: the per-family caps sample ~12% of LOTSA, i.e.
-  # ~10x Monash in observations, not 1000x.
+  # Stride must follow chunk length. The conversion picks the length per
+  # subset (median of the series, capped) and mostly outputs ~2048, because a
+  # fixed 8192 chunk dropped whole subsets (alibaba lost 108,852 of its
+  # 116,818 series). Windows per chunk = (length - 1280) / stride: at 2048,
+  # stride 64 gives 12 and stride 8 gives 96, comparable to Monash's 50M
+  # windows. The per-family caps sample ~12% of LOTSA, about 10x Monash.
   stride: 8
 
   # Multi-resolution off: LOTSA provides the frequencies natively.
@@ -123,13 +84,10 @@ data:
   p_multi_resolution: 0.0
 
 trainer:
-  # Effective batch = batch_size x accumulation x GPU count.
-  #   512 x 1 x 3 GPUs = 1536  <- exactly the regime of the reference runs
-  #   512 x 1 x 4 GPUs = 2048
-  # tiny_geo used accumulation 6 because it ran on 1 or 2 cards; inheriting
-  # that value gave 6144 here, an LR regime unrelated to any previous run, and
-  # forced an override on every command.
-  # WARNING: on 1 GPU, set accumulate_grad_batches=3 again.
+  # Effective batch = batch_size x accumulation x GPU count:
+  # 512 x 1 x 3 GPUs = 1536, the regime of the reference runs. tiny_geo used
+  # accumulation 6 because it ran on 1 or 2 cards. On 1 GPU, set
+  # accumulate_grad_batches=3.
   accumulate_grad_batches: 1
 
 wandb:

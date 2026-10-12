@@ -1,10 +1,10 @@
 """
-Tests for the v3 data package (roadmap S2): ops/intermittent synthetic
-families, TiRex-style augmentations, decimation.
+Tests for the v3 data package: ops/intermittent synthetic families,
+TiRex-style augmentations, decimation.
 
-Invariants, by severity:
-1. Flag off = nothing: the new augmentations, disabled by default, are EXACT
-   pass-throughs; the DEFAULT families are unchanged.
+Invariants:
+1. Flag off changes nothing: the new augmentations, disabled by default, are
+   exact pass-throughs; the default families are unchanged.
 2. The physics of the new families: ops = positive, exact zeros, heavy-tailed
    bursts; intermittent = integers, mostly zeros.
 3. Active augmentations do what they say (common context/target curve,
@@ -173,9 +173,9 @@ def test_decimate_mean_pools_and_refuses_short(tmp_path):
 
 
 def test_pad_to_left_pads_and_keeps_target_side_real():
-    """Short series (G7.1): LEFT edge padding - the real data occupies the
-    end of the chunk (target side), the prefix is flat, exactly the eval
-    condition for short series (prepare_context)."""
+    """Short series: left edge padding. The real data occupies the end of
+    the chunk (target side), the prefix is flat, exactly the eval condition
+    for short series (prepare_context)."""
     from timejepa.data.lotsa import iter_dense_chunks
     series = [np.arange(100, 600, dtype=np.float32),   # 500 steps, >= 384
               np.arange(50, dtype=np.float32)]          # 50 steps, < min: rejected

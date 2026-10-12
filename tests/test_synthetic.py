@@ -1,11 +1,10 @@
 """
-Tests for the synthetic generator (G8 / P2.5, src/timejepa/data/synthetic.py).
+Tests for the synthetic generator (src/timejepa/data/synthetic.py).
 
-Two categories: the output CONTRACT (format identical to converted corpora,
-otherwise the datamodule breaks silently), and the statistical PROPERTIES the
-generator claims to have - a "sub-hourly" family must really put its spectral
-energy in periods 24-150, otherwise it does not fill the E17 hole and nobody
-would notice before a full GIFT eval.
+Two categories: the output contract (format identical to converted corpora,
+otherwise the datamodule breaks silently), and the statistical properties the
+generator claims to have (a "sub-hourly" family must put its spectral energy
+in periods 24-150).
 """
 
 import sys
@@ -47,7 +46,7 @@ def test_generation_is_reproducible():
 
 
 def test_series_are_diverse_not_templates():
-    """Two draws must not be correlated - otherwise we generate the same series N times."""
+    """Two draws must not be correlated, otherwise the same series is generated N times."""
     rng = np.random.default_rng(0)
     spec = SyntheticSpec("t", chunk_length=2048)
     xs = [sample_series(spec, rng) for _ in range(12)]
@@ -84,7 +83,7 @@ def _dominant_period(x: np.ndarray) -> float:
 
 def test_subhourly_family_puts_energy_in_short_periods():
     """
-    The family meant to fill the 10T/15T hole (E17) must have its dominant
+    The family meant to fill the 10T/15T hole must have its dominant
     period in [24, 150] steps most of the time. Tolerance: trend and smooth
     drift may dominate on a few draws, by design.
     """
@@ -97,10 +96,9 @@ def test_subhourly_family_puts_energy_in_short_periods():
 
 def test_lowfreq_family_has_long_chunks_and_short_cycles():
     """
-    Audit 2026-08-20 (T4): at 1280, the family gave 1 window/chunk and ran out
-    at ~2% of the epoch. At 8192 it weighs like the others AND becomes
-    eligible for k1>1 pairs. It is the short PERIODS (4-52) that carry the
-    "low frequency", not the chunk length.
+    At 1280, the family gave 1 window/chunk and ran out at ~2% of the epoch.
+    At 8192 it weighs like the others and becomes eligible for k1>1 pairs.
+    The short periods (4-52) carry the "low frequency", not the chunk length.
     """
     spec = next(f for f in DEFAULT_FAMILIES if f.name == "synthetic_lowfreq")
     assert spec.chunk_length == 8192
@@ -112,9 +110,8 @@ def test_lowfreq_family_has_long_chunks_and_short_cycles():
 
 def test_long_chunks_unlock_decimation_factors():
     """
-    The point of length 8192 (G9): decimation requires 1280*f <= L.
-    At 2048 (real chunks), no f>=2 is possible; at 8192, f up to 6.
-    Since the T4 audit, ALL THREE families are at 8192 - all eligible.
+    Decimation requires 1280*f <= L. At 2048 (real chunks), no f>=2 is
+    possible; at 8192, f up to 6. All three families are at 8192.
     """
     for spec in DEFAULT_FAMILIES:
         assert spec.chunk_length == 8192, f"{spec.name} should be at 8192 (T4)"

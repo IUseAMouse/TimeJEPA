@@ -47,25 +47,22 @@ model:
     momentum_final: 1.0
   
   # Model size stats
-  params_millions: ~1.6  # Approximate
+  params_millions: ~1.6
 
 training:
   mode: "pretrain"
   finetune_mode: "gradual_unfreeze"
   unfreeze_after_epoch: 1
 
-  # I-JEPA-style targets: encode [context ‖ target] with the EMA encoder and
-  # slice the target positions, instead of encoding the future window alone.
-  # Encoding it alone gave the target encoder ~11 patches while the online
-  # encoder saw ~47 - a distribution shift between two networks that are meant
-  # to be an EMA pair - and produced nearly context-free targets.
+  # I-JEPA-style targets: encode [context, target] with the EMA encoder and
+  # slice the target positions. Encoding the future window alone gave the
+  # target encoder ~11 patches while the online encoder saw ~47, a distribution
+  # shift between the two networks of an EMA pair.
   contextualized_targets: true
 
   # Input-geometry randomization, sampled once per batch (keeps tensors
-  # rectangular; the encoder is length-agnostic thanks to RoPE).
-  # scripts/diagnose_ettm.py: skill peaks exactly at the training context length
-  # and collapses either side (electricity +28.5% at ctx=384, -103.8% at 768).
-  # The model had memorized a fixed patch count; this is the direct fix.
+  # rectangular; the encoder is length-agnostic thanks to RoPE). With a fixed
+  # context, skill peaked at the training length and collapsed either side.
   context_lengths: [128, 192, 256, 320, 384, 448, 512]
   p_random_context: 0.5
   horizon_lengths: [32, 64, 96, 128]
@@ -83,12 +80,8 @@ training:
     covariance_loss_weight: 1.0
 
     # --- SIGReg (LeJEPA, arXiv 2511.08544). Used when type: "sigreg".
-    # Single hyperparameter `lambda`. Alternative to VICReg, kept selectable so
-    # the two can be ablated head to head.
-    # Note they are complementary, not redundant: SIGReg flags bimodal /
-    # heavy-tailed embeddings that VICReg declares healthy, while VICReg's
-    # covariance term catches single-direction anisotropy that random 1D
-    # projections rarely hit.
+    # Single hyperparameter `lambda`; kept selectable so VICReg and SIGReg can
+    # be ablated head to head.
     sigreg:
       lambda: 1.0
       apply_to: "context"      # context | predictions | both
@@ -97,9 +90,8 @@ training:
       t_max: 5.0
       max_tokens: 8192
 
-    # Regularize the ENCODER output, not just the predictor output. The encoder
-    # output is what the decoder and any linear probe actually consume; it was
-    # previously left completely unconstrained.
+    # Also regularize the encoder output, which is what the decoder and any
+    # linear probe consume.
     regularize_context: true
   
   # Optimization
@@ -133,13 +125,13 @@ training:
   
   # Logging
   log_every_n_steps: 50
-  log_histograms: false  # Log weight histograms (careful expensive)
+  log_histograms: false  # Log weight histograms (expensive)
 
 data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-weekly", "london-smart-meters", "fred-md", "wind-farms-minutely", "rideshare"] # This load alls
+  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-weekly", "london-smart-meters", "fred-md", "wind-farms-minutely", "rideshare"]
   datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count"]
   datasets_eval: ["electricity-hourly", "traffic-hourly", "m4-hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin", "nn5-daily", "solar-10-minute-dataset", "saugeenday"]
   combine_mode: "concatenate"
@@ -155,21 +147,16 @@ data:
   train_val_test_split: [0.96, 0.02, 0.02]
   seed: 420
 
-  # TRUE multi-resolution sampling (train split only): reads a longer raw
-  # stretch and decimates it, so the seasonal period expressed in patch
-  # positions genuinely varies during pretraining.
-  # Distinct from augmentations.drs, which downsamples then interpolates back to
-  # the same length (a smoothing op that leaves the period/patch ratio intact).
-  # Motivated by scripts/diagnose_ettm.py: ECL interpolated x4 drops from +28.5%
-  # to -136% skill purely from that ratio changing.
+  # Multi-resolution sampling (train split only): reads a longer raw stretch
+  # and decimates it, so the seasonal period in patch positions varies during
+  # pretraining. Distinct from augmentations.drs, which downsamples then
+  # interpolates back to the same length and leaves the period/patch ratio intact.
   multi_resolution_factors: [1, 2, 3, 4]
   p_multi_resolution: 0.35
 
-  # Dataloader workers. Every dataset is held in memory and several are numpy
-  # object arrays, whose per-element refcount updates defeat fork's
-  # copy-on-write - so worker count multiplies RSS rather than sharing it.
-  # 8 train + 8 persistent validation workers got a run OOM-killed by the host
-  # kernel (bare "Killed", no traceback). Raise only if RSS allows.
+  # Dataloader workers. Datasets are held in memory as numpy object arrays,
+  # whose refcount updates defeat fork's copy-on-write, so worker count
+  # multiplies RSS. 8 train + 8 persistent validation workers were OOM-killed.
   num_workers: 4
   persistent_workers: false
 
@@ -236,10 +223,9 @@ checkpoint:
   mode: "min"
   save_top_k: 3
   save_last: true
-  # No '=' anywhere in the name: Hydra's override grammar treats '=' as a
-  # separator, so a checkpoint path containing one cannot be passed to
-  # +training.pretrained_encoder_path or +checkpoint_path without quoting
-  # gymnastics. Underscores keep every downstream command copy-pasteable.
+  # No '=' in the name: Hydra's override grammar treats '=' as a separator, so
+  # a checkpoint path containing one cannot be passed on the command line
+  # without quoting.
   filename: "epoch{epoch:02d}_valloss{val_loss:.4f}"
   auto_insert_metric_name: false
 
@@ -259,19 +245,17 @@ trainer:
   accumulate_grad_batches: 3  # Gradient accumulation steps
   val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
 
-  # The validation split is 2% of the windows - over a MILLION samples on the
-  # full corpus, i.e. 2109 batches. At val_check_interval=0.1 that is ~21k
-  # validation batches per epoch, more compute than the training itself, and it
-  # keeps a second set of dataloader workers alive. 300 batches (~150k samples)
-  # give a val_loss stable far below the differences we are comparing.
+  # The validation split is 2% of the windows (2109 batches on the full corpus);
+  # at val_check_interval=0.1 that would cost more compute than training.
+  # 300 batches (~150k samples) give a stable val_loss.
   limit_val_batches: 300
   limit_train_batches: null
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
-  deterministic: false  # Set to true for reproducibility 
+  deterministic: false
   strategy: "ddp_find_unused_parameters_true" 
   enable_progress_bar: true
   enable_model_summary: true
-  use_distributed_sampler: false # Don't do this because my own sampler handles this
+  use_distributed_sampler: false # the project's own sampler shards the data
 
 wandb:
   project: "TimeJEPA"

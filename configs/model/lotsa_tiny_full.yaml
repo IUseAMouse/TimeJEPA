@@ -1,53 +1,34 @@
 # @package _global_
 #
-# G5 - PRETRAIN on the FULL LOTSA corpus (conversion caps disabled).
+# Pretrain on the full LOTSA corpus (conversion caps disabled).
 #
-#   # 1. conversion without caps - 80 to 150 GB, check df -h first
-#   #    WARNING: convert into a FRESH directory, not data/processed/lotsa. See below.
+#   # 1. conversion without caps: 80 to 150 GB, check df -h first.
+#   #    Convert into a fresh directory, not data/processed/lotsa (see below).
 #   python scripts/prepare_lotsa.py --out data/processed/lotsa_full \
 #       --max-chunks-per-subset 1000000 --resume
 #
 #   # 2. pretrain
 #   make train CONFIG=lotsa_tiny_full ARGS="wandb.run_name=lotsa-full"
 #
-# Why a SEPARATE directory instead of reconverting in place
-# --------------------------------------------------------------
-# `make lotsa-download` hardcodes `--resume`. Re-running with a higher cap on
-# data/processed/lotsa does NOTHING: every file exists, all are skipped, and the
-# script prints "0 chunks" - which reads like a failure when the corpus simply
-# stayed at its original size.
+# Why a separate directory: `make lotsa-download` hardcodes `--resume`, so
+# re-running with a higher cap on data/processed/lotsa skips every existing
+# file and prints "0 chunks". More importantly, data/processed/lotsa is the
+# control corpus of the objective ablation (lotsa_tiny_recon), which only
+# makes sense if both arms share the same data. The two corpora coexist, and
+# `--resume` lets the long conversion pick up where it stopped.
 #
-# But the real reason is scientific, not ergonomic. data/processed/lotsa is the
-# corpus E14 was obtained on, AND the control corpus of the objective ablation
-# (lotsa_tiny_recon). Overwriting it would make E14 irreproducible and break the
-# G6 comparison, which only makes sense if both arms share exactly the same
-# data. So the two corpora coexist, and `--resume` stays useful here: it lets
-# the long conversion pick up where it stopped.
+# Why this regime: two successive pretrains on the capped corpus picked their
+# best checkpoint at ~250k steps, about one epoch, then overfit. The 83M
+# windows of the capped corpus come from only ~800k distinct chunks (stride 8
+# on chunks of 2048 yields 97 largely redundant windows per chunk), so the
+# answer is more distinct data, not more epochs.
 #
-# Why this regime exists
-# -------------------------
-# E13b: TWO successive pretrains (one at constant LR, one annealed) independently
-# pick their best checkpoint at ~250k steps, about ONE epoch, then diverge -
-# train going down, val going up. The model exhausts the corpus in one pass.
+# max_epochs = 1: on the full corpus one epoch is already ~10x the capped
+# corpus. The cosine scheduler is stretched over `max_epochs`, so annealing
+# happens over the single pass, the standard foundation-model regime.
 #
-# The 83M windows of the capped corpus are misleading: they come from only
-# ~800k distinct chunks (stride 8 on chunks of 2048 yields 97 largely redundant
-# windows per chunk). The truly independent content is much smaller than the
-# window count suggests.
-#
-# So the answer is not more epochs, it is more distinct data.
-#
-# max_epochs = 1
-# -------------
-# On the full corpus one epoch is already ~10x the capped corpus, i.e. several
-# tens of hours. The cosine scheduler is stretched over `max_epochs`, so leaving
-# it at 5 would reproduce exactly the E13a defect: an LR that never decays. At
-# 1, annealing happens over the single pass - which is also the standard
-# foundation-model regime, trained once on a corpus they never revisit.
-#
-# WARNING: after conversion, AUDIT the balance before launching. Without the
-# caps, nothing guarantees one family does not dominate - precisely the defect
-# E10 measured on Monash (two datasets at 48.7% of the batch):
+# After conversion, audit the balance before launching: without the caps,
+# nothing guarantees one family does not dominate.
 #
 #   python -c "
 #   import numpy as np, glob, os, re
@@ -71,61 +52,34 @@ model:
   name: "timejepa_lotsa_tiny_full"
 
 data:
-  # Full corpus, in its own directory. `Path.glob` is NOT recursive
-  # (datamodule.py:636), so this directory and data/processed/lotsa are
-  # strictly sealed off from each other - and both are sealed off from the
-  # Monash .npy files, which live one level up in data/processed/.
+  # Full corpus, in its own directory. `Path.glob` is not recursive, so this
+  # directory, data/processed/lotsa and the Monash .npy files one level up
+  # never mix.
   data_dir: "data/processed/lotsa_full"
 
 training:
-  # ONE epoch, and it is the standard "foundation model" regime: Chronos,
-  # TimesFM and Moirai essentially do one pass over a huge corpus.
+  # One epoch, the standard foundation-model regime (Chronos, TimesFM and
+  # Moirai do one pass over a huge corpus). Repeating the same chunks overfits,
+  # and `max_epochs` also drives the cosine: at 1, annealing ends with the
+  # epoch, so the last checkpoint is the right one.
   #
-  # It is not just a compute constraint, it is what the registry measures.
-  # E13b: TWO independent pretrains pick their best checkpoint at ~250k steps -
-  # about one epoch of the CAPPED corpus - then diverge, train going down and
-  # val going up. Repeating the same chunks overfits. The full corpus being
-  # ~8x bigger, one epoch here is ~8x more DISTINCT data than the epoch that
-  # was already saturating.
-  #
-  # `max_epochs` also drives the cosine (E13a): at 1, annealing ends exactly at
-  # the end of the epoch. That is the intended behavior, and the reason the
-  # LAST checkpoint is the right one here - not the best val_loss, which picked
-  # the wrong model in E12.
-  #
-  # WARNING: "ONE epoch" is NOT "one pass over the corpus". `_compute_epoch_plan`
-  # (datamodule.py:145) sets epoch length to one pass over the LARGEST FILE:
-  # `num_batches = size_of_largest // slots_allocated_to_it`. Total corpus size
-  # does not enter this computation. Measured on the full corpus (anchor =
-  # buildings_900k, 1 file of 10^6 chunks): the epoch is ~2.4 passes on
-  # average, with era5 and cmip6 hitting the 3x cap. Since the cap is applied
-  # mid-iteration, the 38 small files run out around 48% of the epoch and the
-  # batch drops from 512 to ~463.
-  # Behavior UNCHANGED since the beginning, so cross-run comparisons stay
-  # valid - but do not read "max_epochs: 1" as "one pass".
-  # Proper fix: G10 in the plan.
+  # "One epoch" is not "one pass over the corpus": `_compute_epoch_plan` sets
+  # the epoch length to one pass over the largest file. On the full corpus
+  # (anchor = buildings_900k, 10^6 chunks) the epoch is ~2.4 passes on
+  # average, with era5 and cmip6 hitting the 3x cap; the 38 small files run
+  # out around 48% of the epoch and the batch drops from 512 to ~463.
   max_epochs: 1
 
 trainer:
-  # 0.1 on an epoch of ~2M steps would only validate 10 times, and the first
-  # point would land after ~200k steps - on a single-pass run, too late to see
-  # anything coming. At 0.05 we get ~20 points, including one at ~100k steps.
-  # The cost stays marginal: validation is a fixed subset, not a fraction of
-  # the train set.
+  # 0.1 on an epoch of ~2M steps would only validate 10 times, the first after
+  # ~200k steps. At 0.05 there are ~20 points, including one at ~100k steps;
+  # validation is a fixed subset, so the cost stays marginal.
   val_check_interval: 0.05
 
 early_stopping:
-  # DISABLED on single-pass runs, deliberately.
-  #
-  # The cosine is stretched over `max_epochs: 1`: the model's value is at the
-  # END of the pass, when annealing completes. Stopping early ships a model
-  # that was never annealed - the exact defect E13a measured.
-  #
-  # With val_check_interval=0.05 there are only ~20 validations, so patience=25
-  # would never trigger anyway: better to write it down than to depend on that
-  # coincidence. Anyone refining validation (0.01 -> 100 points) would
-  # otherwise re-enable stopping on a noise dip, which E12 already paid for
-  # once - its val_loss picked the model that generalizes the LEAST well.
+  # Disabled on single-pass runs: the cosine is stretched over `max_epochs: 1`,
+  # so the model's value is at the end of the pass, when annealing completes.
+  # Stopping early on a val_loss dip ships a model that was never annealed.
   enabled: false
 
 wandb:

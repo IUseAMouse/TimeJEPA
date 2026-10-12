@@ -1,10 +1,10 @@
 """
-RateIN (rate canonicalization at inference) - pinned invariants:
+RateIN (rate canonicalization at inference), pinned invariants:
 
-  1. k=1 is a STRICT NO-OP (decimate/reinterp identities) - the harness
-     default stays bit-identical, the repo's "inert default" pattern.
+  1. k=1 is a strict no-op (decimate/reinterp identities), so the harness
+     default stays bit-identical.
   2. The detector finds a clean period, refuses white noise and too-short
-     histories (< 2 periods) - on noise, k stays 1.
+     histories (< 2 periods); on noise, k stays 1.
   3. Decimation is right-aligned (the forecast origin does not move).
   4. Re-interpolation preserves shapes, fan monotonicity and phase (a
      decimated/reinterpolated sinusoid stays correlated > 0.99).
@@ -41,9 +41,9 @@ def test_short_history_gives_none():
 
 
 def test_smallest_significant_period_wins():
-    # Two real cycles (daily 24 DOMINATED by weekly 168): the correct decision
-    # is the SMALLEST significant period - 24, already in band, so k=1 (the
-    # electricity/H case measured in the 2026-08-31 smoke test).
+    # Two real cycles (daily 24 dominated by weekly 168): the correct decision
+    # is the smallest significant period, 24, already in band, so k=1 (the
+    # electricity/H case).
     t = np.arange(4096)
     x = (3.0 * np.sin(2 * np.pi * t / 168) + 1.0 * np.sin(2 * np.pi * t / 24)
          + 0.05 * np.random.default_rng(7).normal(size=4096))
@@ -91,7 +91,7 @@ def test_decimate_right_aligned():
     x = np.arange(10, dtype=np.float64)            # len 10, k=3 -> 3 blocks
     d = decimate(x, 3)
     assert len(d) == 3
-    # blocks [1,2,3],[4,5,6],[7,8,9] - the last native point stays covered
+    # blocks [1,2,3],[4,5,6],[7,8,9]: the last native point stays covered
     assert d[-1] == pytest.approx((7 + 8 + 9) / 3)
     assert d[0] == pytest.approx((1 + 2 + 3) / 3)  # the excess (0) is on the left
 
@@ -136,7 +136,7 @@ def test_reinterp_preserves_phase():
 
 def test_harness_k1_bit_identical():
     """The evaluate_config path with ratein active but k=1 everywhere (white
-    noise -> mute detector) must produce the SAME model inputs as the
+    noise -> mute detector) must produce the same model inputs as the
     flag-less path: decimation and reinterp are strict identities."""
     rng = np.random.default_rng(6)
     x = rng.normal(size=2048)

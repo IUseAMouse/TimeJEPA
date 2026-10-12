@@ -1,15 +1,10 @@
 """
-Regression tests for the P0 fixes.
+Regression tests for bugs that silently corrupted results.
 
-Each test here pins down a bug that silently corrupted results before. They are
-cheap and should stay green forever; if one fails, a real invariant broke.
-
-Covered:
-  B1  package imports (patchtst_encoder removal left dangling imports)
-  B2  normalization contract of `forecast()` (global z-score != instance norm)
-  B3  RevIN affine consistency between the target space and denormalization
-  B10 rolling forecast: `revin.freeze()` existed nowhere; spaces were mixed
-  P0.4/P0.5 baselines and scale-free metrics
+Covered: package imports, RevIN affine consistency between the target space
+and denormalization, the rolling forecast, the quantile head, the decoder
+stride, collapse diagnostics, the predictor query table, contextualized
+targets, and the reconstruction ablation.
 """
 
 import sys
@@ -39,7 +34,7 @@ from timejepa.training.utils.metrics import (                            # noqa:
 
 
 # =============================================================================
-# B1 - package is importable
+# Package is importable
 # =============================================================================
 
 def test_package_imports():
@@ -52,7 +47,7 @@ def test_package_imports():
 
 
 # =============================================================================
-# B3 - RevIN spaces
+# RevIN spaces
 # =============================================================================
 
 @pytest.fixture
@@ -67,8 +62,8 @@ def revin():
 def test_denormalize_target_space_is_exact_inverse(revin):
     """
     The decoder is trained against a plain z-scored target, so its inverse must
-    NOT undo the RevIN affine. `_denormalize` does undo it - that mismatch is a
-    ~6-10% scale error plus a constant offset on every forecast.
+    not undo the RevIN affine. `_denormalize` does undo it; that mismatch is a
+    6-10% scale error plus a constant offset on every forecast.
     """
     x = torch.randn(4, 100, 1) * 5 + 3
     _ = revin(x, mode="norm")
@@ -76,7 +71,7 @@ def test_denormalize_target_space_is_exact_inverse(revin):
     z_target = (x - revin.mean) / revin.std
     assert torch.allclose(revin.denormalize_target_space(z_target), x, atol=1e-4)
 
-    # And the buggy path is measurably different - this is the bug, pinned.
+    # The affine denorm path is measurably different.
     wrong = revin(z_target, mode="denorm")
     assert not torch.allclose(wrong, x, atol=1e-2)
 
@@ -90,7 +85,7 @@ def test_to_input_frame_matches_normalize(revin):
 
 
 def test_revin_freeze_pins_statistics(revin):
-    """`freeze()` did not exist, so any rolling forecast raised AttributeError."""
+    """A rolling forecast needs frozen RevIN statistics."""
     x = torch.randn(4, 100, 1) * 5 + 3
     _ = revin(x, mode="norm")
     mean0, std0 = revin.mean.clone(), revin.std.clone()
@@ -108,7 +103,7 @@ def test_revin_freeze_pins_statistics(revin):
 
 
 # =============================================================================
-# B10 - rolling forecast
+# Rolling forecast
 # =============================================================================
 
 @pytest.fixture(scope="module")
@@ -168,113 +163,7 @@ def test_single_shot_and_rolling_agree_on_first_window(small_model):
 
 
 # =============================================================================
-# P0.4 - baselines
-# =============================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# =============================================================================
-# P0.5 - scale-free metrics
-# =============================================================================
-
-
-
-
-
-
-
-
-
-
-
-# =============================================================================
-# B17 - a too-short dataset must not kill a multi-dataset run
-# =============================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# =============================================================================
-# G5 - LOTSA integration must be purely additive
-# =============================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# =============================================================================
-# B22 - uniform-length survivors of the length filter became object arrays
-# =============================================================================
-
-
-
-
-
-
-
-
-
-# =============================================================================
-# B21 / config hygiene - the experiment grid must be declarative
-# =============================================================================
-
-
-
-
-
-
-
-# =============================================================================
-# B20 - gradual_unfreeze never actually trained anything but the decoder
+# gradual_unfreeze must train more than the decoder
 # =============================================================================
 
 def _step(module, optimizer):
@@ -296,12 +185,10 @@ def _moved(model, before):
 
 def test_optimizer_registers_frozen_params_so_unfreezing_works():
     """
-    THE B20 bug. The optimizer is created once, at epoch 0, when
-    gradual_unfreeze has everything frozen. Filtering on requires_grad at that
-    moment meant the later unfreeze flipped the flag and gradients flowed, but
-    optimizer.step() silently never touched those weights: gradual_unfreeze
-    trained the decoder alone for the entire run - in every run that used it,
-    including the historical best checkpoints.
+    The optimizer is created once, at epoch 0, when gradual_unfreeze has
+    everything frozen. Filtering on requires_grad at that moment means the
+    later unfreeze flips the flag and gradients flow, but optimizer.step()
+    never touches those weights, so only the decoder trains.
     """
     torch.manual_seed(0)
     mod = _finetune_module(finetune_mode="gradual_unfreeze", unfreeze_after_epoch=0,
@@ -315,7 +202,7 @@ def test_optimizer_registers_frozen_params_so_unfreezing_works():
     assert all(id(p) in in_opt for p in m.patching.parameters())
     assert not any(id(p) in in_opt for p in m.target_encoder.parameters())
 
-    # Phase 1 - still frozen: a step must move the decoder and nothing else
+    # Phase 1, still frozen: a step must move the decoder and nothing else
     enc0 = _snapshot(m, "online_encoder")
     pred0 = _snapshot(m, "predictor")
     dec0 = _snapshot(m, "decoder")
@@ -324,7 +211,7 @@ def test_optimizer_registers_frozen_params_so_unfreezing_works():
     assert not _moved(m, enc0)
     assert not _moved(m, pred0)
 
-    # Phase 2 - the epoch hook fires (detached module: current_epoch == 0)
+    # Phase 2, the epoch hook fires (detached module: current_epoch == 0)
     mod.on_train_epoch_start()
     enc1 = _snapshot(m, "online_encoder")
     pred1 = _snapshot(m, "predictor")
@@ -348,7 +235,7 @@ def test_linear_probe_still_trains_only_the_decoder():
 
 
 # =============================================================================
-# Geometry round - finetune-side context randomization
+# Finetune-side context randomization
 # =============================================================================
 
 def _finetune_module(**kw):
@@ -362,13 +249,13 @@ def _finetune_module(**kw):
 
 
 def test_finetune_crops_context_from_the_left():
-    """Keep the most recent history - what a short context contains at inference."""
+    """Keep the most recent history, as a short context at inference would."""
     mod = _finetune_module(context_lengths=[128, 256], p_random_context_finetune=1.0)
     torch.manual_seed(0)
     ctx = torch.arange(512.0).view(1, 512, 1).repeat(3, 1, 1)
     cropped = mod._maybe_crop_context(ctx)
     assert cropped.shape[1] in (128, 256)
-    # Left crop: the LAST timestep must survive
+    # Left crop: the last timestep must survive
     assert torch.equal(cropped[:, -1], ctx[:, -1])
 
 
@@ -394,7 +281,7 @@ def test_finetune_crop_never_upsamples():
 
 
 # =============================================================================
-# P2.1 - quantile head, and backward compatibility with pre-quantile models
+# Quantile head, and backward compatibility with pre-quantile models
 # =============================================================================
 
 def _model(decoder_type="mlp"):
@@ -433,7 +320,7 @@ def test_quantile_head_is_monotone_by_construction():
     """
     Independently regressed quantiles can cross. The head predicts the median
     plus softplus widths accumulated outward, so sorting is a property of the
-    parameterization - checked here under deliberately extreme raw outputs.
+    parameterization, checked here under deliberately extreme raw outputs.
     """
     m = _model("quantile")
     head = m.decoder.decoder
@@ -468,11 +355,11 @@ def test_pinball_is_minimised_by_the_true_quantiles():
 
 def test_pre_quantile_checkpoint_loads_into_a_quantile_model():
     """
-    THE compatibility case. A point decoder and the quantile head both own
+    A point decoder and the quantile head both own
     `decoder.decoder.unpatching.projection`, sized patch*1 versus patch*9.
-    load_state_dict(strict=False) tolerates missing keys but NOT shape
-    mismatches, so this combination raised outright - blocking the very workflow
-    the head exists for: reuse a pretrained encoder, relearn the head.
+    load_state_dict(strict=False) tolerates missing keys but not shape
+    mismatches, so the loader must filter them out to reuse a pretrained
+    encoder and relearn the head.
     """
     from timejepa.models.jepa_tst import filter_loadable
     old_sd = _model("mlp").state_dict()
@@ -503,10 +390,9 @@ def test_transferred_encoder_is_bit_identical():
 @pytest.mark.parametrize("n", [48, 96, 128, 192, 336, 720])
 def test_quantile_fan_survives_truncation_and_rollout(n):
     """
-    Two ways the fan used to be lost. Single-shot truncated `forecast` to n but
-    left `quantiles` at prediction_length, silently mismatching them; and the
-    rollout collected only the median, so every horizon past 128 had no fan at
-    all - leaving nothing to compute a real WQL from.
+    Single-shot must truncate `quantiles` along with `forecast`, and the
+    rollout must collect the fan, not only the median; otherwise horizons past
+    prediction_length have nothing to compute a real WQL from.
     """
     m = _model("quantile")
     m.eval()
@@ -523,15 +409,12 @@ def test_quantile_fan_survives_truncation_and_rollout(n):
 
 def test_sampled_rollout_accumulates_uncertainty():
     """
-    The measured defect: median feedback makes every later roll see a context
-    smoother than real data, so intervals SHRINK with horizon (exchange h720:
-    width 0.267 where truth grows as sqrt(h)).
-
-    The plumbing is validated with a stub decoder that conditions on the level
-    of the path it is fed (persistence + a fixed [-1, +1] fan). Under the
-    comonotonic coupling the spread must accumulate LINEARLY - widths 2, 4, 6, 8
-    across four rolls - while median feedback stays flat at 2. An untrained real
-    model cannot show this because its fan does not depend on its input.
+    Median feedback makes every later roll see a context smoother than real
+    data, so intervals shrink with horizon. The plumbing is validated with a
+    stub decoder that conditions on the level of the path it is fed
+    (persistence plus a fixed [-1, +1] fan): under the comonotonic coupling the
+    spread must accumulate linearly (widths 2, 4, 6, 8 across four rolls) while
+    median feedback stays flat at 2.
     """
     m = _model("quantile")
     m.eval()
@@ -559,7 +442,7 @@ def test_sampled_rollout_accumulates_uncertainty():
     assert widths(sampled) == [2.0, 4.0, 6.0, 8.0]
     assert widths(median) == [2.0, 2.0, 2.0, 2.0]
 
-    # Deterministic: the quantile levels ARE the stratified sample, no RNG.
+    # Deterministic: the quantile levels are the stratified sample, no RNG.
     with torch.no_grad():
         again = m.forecast(ctx, n=512, skip_revin=True, sample_paths=True)
     assert torch.equal(sampled["quantiles"], again["quantiles"])
@@ -622,18 +505,15 @@ def test_quantile_head_requires_context_when_configured_for_it():
 
 
 # =============================================================================
-# B13 - JEPATST built its decoder on the wrong stride
+# JEPATST must build its decoder on the right stride
 # =============================================================================
 
 @pytest.mark.parametrize("patch,stride", [(16, 8), (32, 16), (64, 32), (8, 8)])
 def test_internal_decoder_emits_the_full_horizon(patch, stride):
     """
-    JEPATST created ForecastingHead without forwarding `stride`, so UnPatching
-    reassembled on a default grid of 8. With patch_size=32 the forecast came out
-    80 timesteps long instead of 128 - truncated silently, no error.
-
-    Masked in practice because train.py and evaluate.py replace model.decoder,
-    but any direct use of JEPATST (the packaged forecast API) got the broken one.
+    If `stride` is not forwarded to ForecastingHead, UnPatching reassembles
+    on a default grid of 8 and with patch_size=32 the forecast comes out 80
+    timesteps long instead of 128, with no error.
     """
     m = JEPATST(input_length=512, prediction_length=128,
                 patch_size=patch, stride=stride,
@@ -661,7 +541,7 @@ def test_internal_decoder_emits_the_full_horizon(patch, stride):
                                          "lotsa_tiny_full"])
 def test_experiment_configs_are_runnable(config_name):
     """
-    Every shipped config must build a model whose geometry works at the NOMINAL
+    Every shipped config must build a model whose geometry works at the nominal
     size and at every randomized context/horizon it declares. Changing
     patch_length silently makes some of those combinations degenerate (zero
     target patches crashes; too few is meaningless), so this is checked rather
@@ -697,13 +577,7 @@ def test_experiment_configs_are_runnable(config_name):
 
 
 # =============================================================================
-# B18 - torch version drift in the sampler
-# =============================================================================
-
-
-
-# =============================================================================
-# P1.9 - collapse diagnostics must never kill a run
+# Collapse diagnostics must never kill a run
 # =============================================================================
 
 def _pretrain_module(loss_type="sigreg"):
@@ -730,12 +604,10 @@ def test_effective_rank_detects_collapse():
 
 def test_effective_rank_works_under_bf16_autocast():
     """
-    Casting the input to float32 is NOT enough: the matmul sits inside the
-    bf16-mixed autocast region, so torch casts it straight back to bfloat16 and
-    eigvalsh dies with
-        "linalg_eigh_cuda" not implemented for 'BFloat16'
-    Observed on the first GPU run - the guard turned it into a warning, so the
-    metric was silently never reported. autocast has to be disabled explicitly.
+    Casting the input to float32 is not enough: inside a bf16 autocast region
+    torch casts the matmul back to bfloat16 and eigvalsh fails with
+    "linalg_eigh_cuda" not implemented for 'BFloat16'. autocast has to be
+    disabled explicitly.
     """
     mod = _pretrain_module()
     torch.manual_seed(0)
@@ -749,7 +621,6 @@ def test_effective_rank_works_under_bf16_autocast():
 
 def test_effective_rank_survives_degenerate_input():
     """
-    Iterative eigensolvers genuinely fail on degenerate matrices - verified:
     torch raises "failed to converge (error code: 30)" on all-NaN input. A
     monitoring metric that crashes exactly when the monitored failure occurs
     would be worse than no metric.
@@ -761,7 +632,7 @@ def test_effective_rank_survives_degenerate_input():
 def test_context_std_catches_positional_collapse():
     """
     Effective rank pools positions, so a per-position collapse keeps it high.
-    `collapse/context_std` is the metric that catches it - they are
+    `collapse/context_std` is the metric that catches it; the two are
     complementary, which is why both are logged.
     """
     mod = _pretrain_module()
@@ -772,15 +643,14 @@ def test_context_std_catches_positional_collapse():
 
 
 # =============================================================================
-# B16 - predictor future-query table
+# Predictor future-query table
 # =============================================================================
 
 def test_predictor_refuses_to_truncate_future_queries():
     """
-    The table used to be a hard 16. Slicing past it returned fewer rows, and the
-    downstream `x[:, -num_targets:]` then silently substituted the last CONTEXT
-    embeddings for the missing predictions - which were trained and scored as if
-    they were real. Affected large.yaml (23 target patches) and base.yaml (32).
+    Slicing past the table returns fewer rows, and the downstream
+    `x[:, -num_targets:]` then silently substitutes the last context
+    embeddings for the missing predictions.
     """
     from timejepa.models.predictors.transformer_predictor import TransformerPredictor
     p = TransformerPredictor(d_model=16, num_layers=1, num_heads=2, d_ff=32,
@@ -807,13 +677,13 @@ def test_jepatst_sizes_the_query_table_for_its_horizon(pred_len, patch, stride):
 
 
 # =============================================================================
-# P1.5 - contextualized targets
+# Contextualized targets
 # =============================================================================
 
 def test_contextualized_targets_align_with_standalone_patches():
     """
     Encoding [context ‖ target] and slicing the last N patches must cover the
-    exact same timesteps as patching the target alone - otherwise the target
+    exact same timesteps as patching the target alone, otherwise the target
     representations are shifted relative to what the predictor is asked for.
     """
     from timejepa.models.components.patching import Patching
@@ -836,43 +706,19 @@ def test_contextualized_targets_change_the_representation(small_model):
     assert not torch.allclose(a, b, atol=1e-4)
 
 
-# =============================================================================
-# P1.1 / P1.2 - anti-collapse regularizers
-# =============================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
-# G6 - objective ablation: reconstruction vs latent extrapolation.
+# Objective ablation: reconstruction vs latent extrapolation.
 #
 # The reconstruction arm re-unrolls the future patches by hand in the pretrain
 # module, because `Patching` projects to d_model and never returns the raw
-# values. Two sources of truth for patch geometry is exactly what drifts
-# silently - hence these tests.
+# values. Two sources of truth for patch geometry can drift, hence these tests.
 # ---------------------------------------------------------------------------
 
-# Horizons ALIGNED to the patch step only. On an unaligned horizon (e.g. 100
+# Horizons aligned to the patch step only. On an unaligned horizon (e.g. 100
 # with patch 16 / stride 8), `Patching` pads and returns 12 patches while
-# `model.num_target_patches`, computed at construction without padding,
-# announces 11 - and the predictor, whose query table is sized on that count,
-# refuses the geometry. PRE-EXISTING model constraint, unrelated to this
-# ablation; all real configs (96, 128, 192, 256) are aligned.
+# `model.num_target_patches`, computed without padding, announces 11, and the
+# predictor refuses the geometry. All real configs (96, 128, 192, 256) are
+# aligned.
 @pytest.mark.parametrize("pred_len,patch,stride", [
     (96, 16, 8), (256, 16, 8), (128, 32, 16), (192, 16, 8), (96, 16, 16),
 ])
@@ -889,9 +735,8 @@ def test_reconstruction_patches_match_patching_geometry(pred_len, patch, stride)
                                 loss_type='mse')
 
     target = torch.randn(4, pred_len, 1)
-    # Go through the REAL path rather than a fabricated prediction: it is
-    # `outputs['predictions']` that `_scored_pair` receives in production, and
-    # its patch count comes from patching at runtime.
+    # Go through the real path: `_scored_pair` receives `outputs['predictions']`
+    # in production, and its patch count comes from patching at runtime.
     outputs = model.forward_pretrain(torch.randn(4, 384, 1), target)
     preds, patches = module._scored_pair(target, outputs)
 
@@ -905,7 +750,7 @@ def test_reconstruction_patches_match_patching_geometry(pred_len, patch, stride)
 
 def test_reconstruction_targets_live_in_revin_space():
     """
-    Raw targets must be normalized with the CONTEXT stats, as
+    Raw targets must be normalized with the context stats, as
     `forward_pretrain` does. Otherwise the loss follows each series' scale
     instead of its shape.
     """
@@ -951,7 +796,7 @@ def test_jepa_arm_is_untouched_by_the_ablation_flag():
 
 
 def test_reconstruction_loss_bypasses_the_anti_collapse_terms():
-    """In reconstruction mode, the loss is a bare Huber - no SIGReg."""
+    """In reconstruction mode, the loss is a bare Huber, no SIGReg."""
     from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
     import torch.nn.functional as F
 
@@ -978,7 +823,7 @@ def test_reconstruction_loss_is_robust_to_the_revin_epsilon_floor():
     RevIN normalizes with sqrt(var + 1e-5). On a near-constant context the
     floor is 0.00316, and the normalized target goes to thousands of sigma.
     Under MSE, such a batch crushes all others in the gradient and the
-    objective becomes that of the degenerate windows - which would confound G6.
+    objective becomes that of the degenerate windows.
     """
     from timejepa.training.jepa_pretrain_module import JEPAPretrainModule
     import torch.nn.functional as F
@@ -999,11 +844,9 @@ def test_reconstruction_loss_is_robust_to_the_revin_epsilon_floor():
     outlier_loss, components = module._compute_loss(preds, outlier, {})
     huber_ratio = (outlier_loss / sane_loss).item()
 
-    # The quantity that matters is not an absolute threshold - it depends on
-    # batch size - but the ratio to what MSE would have done: quadratic vs
-    # linear. On this 704-element mini-batch, MSE amplifies ~56,000x, Huber
-    # ~22x; on a real batch (90k elements) the outlier's contribution drops to
-    # ~0.07, so negligible.
+    # The quantity that matters is the ratio to what MSE would have done
+    # (quadratic vs linear), since an absolute threshold depends on batch size.
+    # On this 704-element mini-batch, MSE amplifies ~56,000x, Huber ~22x.
     mse_ratio = (F.mse_loss(preds, outlier) / F.mse_loss(preds, sane)).item()
 
     assert huber_ratio < mse_ratio / 100, (
@@ -1012,19 +855,4 @@ def test_reconstruction_loss_is_robust_to_the_revin_epsilon_floor():
     )
     assert components['target_absmax'] > 6000, \
         "target amplitude must stay observable despite the robust loss"
-
-
-
-# ---------------------------------------------------------------------------
-# G8.1 - targeted readmission of LOTSA subsets (E17).
-#
-# The exclusion patterns are coarse substrings; EVAL_SAFE_OVERRIDES readmits
-# homonyms unrelated to the eval. This is the area of the project where one
-# mistake invalidates ALL numbers at once - hence a test pinning both
-# directions: what must stay out, and what must be let back in.
-# ---------------------------------------------------------------------------
-
-
-
-
 

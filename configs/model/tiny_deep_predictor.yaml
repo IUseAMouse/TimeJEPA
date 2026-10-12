@@ -1,30 +1,21 @@
 # @package _global_
 #
-# EXPERIMENT - deeper predictor, patching UNCHANGED (16 / 8)
+# Experiment: deeper predictor, patching unchanged (16 / 8).
 #
-# The control for the patch-size experiments. The diagnostic established THAT
-# skill tracks the seasonal period in patch positions; the MECHANISM I proposed
-# for it is a conjecture:
+# Control for the patch-size experiments. The diagnostic established that
+# skill tracks the seasonal period in patch positions; whether the cause is
+# the ratio itself or the 2-layer predictor's limited range is untested. If
+# the bottleneck is predictor capacity, deepening the predictor should
+# recover ETTm1 skill while leaving the patch size alone.
 #
-#   "at 3 positions/cycle the pattern repeats 16x across the 47 context patches
-#    and is easy to lock onto; at 12 positions it repeats only 4x and needs a
-#    longer-range dependency than the 2-layer predictor has"
-#
-# That second clause is untested. If the bottleneck is predictor capacity rather
-# than patch geometry, deepening the predictor should recover ETTm1 skill while
-# leaving the patch size alone.
-#
-# Run this ALONGSIDE tiny_patch32/64, not instead of them - together they
-# separate two explanations that the ETTm diagnostic cannot distinguish:
-#
+# Run it alongside tiny_patch32/64: together they separate two explanations.
 #   patch32/64 improves, this does not  -> the ratio is the driver
 #   this improves, patch32/64 does not  -> predictor capacity is the driver
 #   both improve                        -> both contribute
 #   neither improves                    -> the mechanism is something else
 #
-# Cost: the predictor goes from 2 to 4 layers, so roughly +0.4M parameters on a
-# 1.6M model. Not free, and a confound to keep in mind - a gain could be raw
-# capacity rather than depth specifically.
+# Cost: the predictor goes from 2 to 4 layers, roughly +0.4M parameters on a
+# 1.6M model, so a gain could be raw capacity rather than depth.
 defaults:
   - tiny
   - _self_

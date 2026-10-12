@@ -1,10 +1,7 @@
-# DEPRECATED (2026-08-19 audit) - ORPHANED root, do not use. Measured drift
-# vs tiny.yaml: stale dataset list, missing multi-resolution/context_lengths
-# keys, copied blocks never resynced. Kept per the no-delete policy (P2.9);
-# use lotsa_mini / lotsa_base (which inherit from lotsa_tiny and redefine the
-# dimensions).
+# Deprecated orphaned root, do not use: stale dataset list, missing
+# multi-resolution and context_lengths keys. Use lotsa_mini / lotsa_base
+# (which inherit from lotsa_tiny and redefine the dimensions).
 # @package _global_
-# configs/model/timejepa_mini.yaml
 
 model:
   name: "timejepa_mini"
@@ -100,7 +97,7 @@ data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-weekly", "london-smart-meters", "fred-md", "wind-farms-minutely", "rideshare"] # This load alls
+  datasets: ["electricity-hourly", "traffic-hourly", "rain-temperature", "weather", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "bitcoin", "kdd-cup-2018", "saugeenday", "solar-power-4-seconds", "sunspot-daily", "solar-10-minute-dataset", "us-births", "windpower-4-seconds", "nn5-daily", "melbourne-pedestrian-count", "wikipedia-web-traffic-weekly", "london-smart-meters", "fred-md", "wind-farms-minutely", "rideshare"]
   datasets_finetune: ["electricity-hourly", "traffic-hourly", "weather", "australian-weather", "m4-hourly", "australian-electricity-demand", "electricity-demand", "melbourne-pedestrian-count"]
   datasets_eval: ["electricity-hourly", "traffic-hourly", "m4-hourly", "london-smart-meters", "wikipedia-web-traffic-extended", "melbourne-pedestrian-count", "bitcoin", "nn5-daily", "solar-10-minute-dataset", "saugeenday"]
   combine_mode: "concatenate"
@@ -135,7 +132,7 @@ augmentations:
   pretrain:
     enabled: true
     
-    # Random scaling - CRUCIAL for MAPE
+    # Random scaling
     scale_enabled: true
     scale_range: [0.5, 2.0]
     scale_log_uniform: true
@@ -199,11 +196,11 @@ trainer:
   accumulate_grad_batches: 3  # Gradient accumulation steps
   val_check_interval: 0.1  # Validate every epoch (1.0) or every N steps (int)
   log_every_n_steps: ${training.log_every_n_steps}  # Reference from training
-  deterministic: false  # Set to true for reproducibility (slower)
+  deterministic: false  # true is slower
   strategy: "ddp_find_unused_parameters_true" # Distributed data parallelism
   enable_progress_bar: true
   enable_model_summary: true
-  use_distributed_sampler: false # Don't do this because my own sampler handles this
+  use_distributed_sampler: false # the project's own sampler shards the data
 
 wandb:
   project: "TimeJEPA"

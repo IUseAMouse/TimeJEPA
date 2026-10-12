@@ -1,25 +1,22 @@
 """
-Decimation of dense families to coarser grids (v3 corpus, S2).
+Decimation of dense families to coarser grids (v3 corpus).
 
     # make 10T and 15T from the 5T families
     python scripts/decimate_corpus.py --src data/processed/lotsa_full \\
         --dst data/processed/decimated --factors 2,3 \\
         --families largest_2017 largest_2018 largest_2019 largest_2021
 
-The IBM/TTM trick, quantified by their ablations: build frequency coverage
-from the same bytes. A 5T chunk mean-pooled by 2 becomes a LEGITIMATE 10T
-chunk (downward aggregation is physically correct - upward interpolation is
-what would fabricate information). E19 target: reinforce 10T/15T
-(electricity/15T/long still at 1.206) with REAL data on top of the synthetic.
+Following TTM (IBM), frequency coverage is built from the same bytes: a 5T
+chunk mean-pooled by 2 is a legitimate 10T chunk, since downward aggregation
+is physically correct (upward interpolation would fabricate information).
 
 Contracts:
 * mean-pooling in blocks of `factor` (remainder truncated);
 * the decimated length must stay >= min_len (default 1280 = ctx+pred),
-  otherwise the family is SKIPPED for that factor (stated, not silent);
-* output `<family>_dec<f>.npy` in a SEPARATE directory - mixing is done by
-  symlink + balance audit, never by generating into a corpus in place (same
-  rule as generate_synthetic.py);
-* never overwrite: existing file = skipped.
+  otherwise the family is skipped for that factor, with a warning;
+* output `<family>_dec<f>.npy` goes to a separate directory; mixing into a
+  corpus is done by symlink plus balance audit, never in place;
+* existing files are never overwritten, they are skipped.
 """
 
 import argparse

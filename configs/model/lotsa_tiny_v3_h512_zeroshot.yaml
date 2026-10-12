@@ -1,21 +1,15 @@
 # @package _global_
-# H512 on the v3 lineage - S3's horizon ablation, taken WITHOUT a new
-# pretrain (decision 2026-08-27, user question at minute 2 of the v3
-# pretrain: "h512 directly in the pretrain?" - no: the h512 design is a
-# FINETUNE lever via grow_future_query_table, one v3 pretrain feeds BOTH
-# h256/h512 finetunes and the gap measures the lever with its free control).
+# H512 on the v3 lineage, without a new pretrain: the h512 design is a
+# finetune lever via grow_future_query_table, so one v3 pretrain feeds both
+# the h256 and h512 finetunes and the gap measures the lever.
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3_h512_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/<latest named ckpt>"'
 #
-# Mechanics and predictions: see lotsa_tiny_h512_zeroshot.yaml (the original,
-# mix lineage) - same deltas, only the base changes. Per-config criterion
-# (E19 + E20b): medium/long down, short unchanged; if the gain lives mostly
-# in multi-rollout configs, the "rollout boundaries" hypothesis (E20b) is
-# confirmed.
-# WARNING: finetune window 1024+512 = 1536: the 1280 chunks (lotsa_short)
-# leave the finetune - measured cost of the arm, read the "skipped" line at
-# setup.
+# Mechanics: see lotsa_tiny_h512_zeroshot.yaml (same deltas, only the base
+# changes). Expected: medium/long down, short unchanged.
+# Finetune window 1024+512 = 1536: the 1280 chunks (lotsa_short) leave the
+# finetune; read the "skipped" line at setup.
 defaults:
   - lotsa_tiny_v3_zeroshot
   - _self_

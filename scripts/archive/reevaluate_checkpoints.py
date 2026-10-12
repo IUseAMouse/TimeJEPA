@@ -1,17 +1,16 @@
 # ARCHIVED - not wired to live code, do not import (see scripts/archive/README.md).
 """
-Re-evaluate existing checkpoints under the corrected protocol (P0.7).
+Re-evaluate existing checkpoints under the corrected protocol.
 
 Purpose
 -------
 Every number in ../TimeJEPA_2ndbatch_results/ was produced with `skip_revin=True`
-on the Nixtla long-horizon benchmarks. Those datasets are z-scored GLOBALLY with
-train statistics, which is NOT the per-window instance normalization the model
-was trained under. The encoder therefore saw out-of-distribution inputs and its
-output was scored in the wrong space - visible as a constant level offset in the
-h96 forecast plots.
+on the Nixtla long-horizon benchmarks. Those datasets are z-scored globally with
+train statistics, not the per-window instance normalization the model was
+trained under, so the encoder saw out-of-distribution inputs and its output was
+scored in the wrong space (a constant level offset in the h96 forecast plots).
 
-This script re-runs the same checkpoints on the same data in BOTH modes:
+This script re-runs the same checkpoints on the same data in both modes:
 
     legacy : skip_revin=True   (reproduces the old numbers, sanity check)
     fixed  : skip_revin=False  (RevIN on, the regime the model was trained in)
@@ -239,8 +238,7 @@ def main():
     # Load every model up front. Building a MonashDataModule is by far the most
     # expensive step (traffic alone generates ~25k window indices over 862
     # series), so the loop order is dataset -> horizon -> checkpoint: each
-    # DataModule is constructed ONCE and reused across all checkpoints, instead
-    # of being rebuilt per checkpoint.
+    # DataModule is constructed once and reused across all checkpoints.
     models = []
     for pair in pairs:
         name = f"{pair['model_name']}/{pair['ckpt_name']}"

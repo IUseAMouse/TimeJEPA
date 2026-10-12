@@ -1,16 +1,15 @@
 # @package _global_
 #
-# G5 - FINETUNE on MONASH of an encoder pretrained on LOTSA.
-#      ALTERNATIVE ARM - see lotsa_tiny_zeroshot for the main protocol.
+# Finetune on Monash of an encoder pretrained on LOTSA. Alternative arm; see
+# lotsa_tiny_zeroshot for the main protocol.
 #
-# WARNING - KNOWN CONTAMINATION. The Monash corpus contains the evaluation
-# benchmarks: `electricity-hourly` IS the Nixtla `electricity` (5260/26304 =
-# the last 20%), `traffic-hourly` IS `traffic` (3508/17544). The
-# train/val/test split is sequential on per-series grouped indices, so this
-# finetune sees those series over their whole span, WITH supervised targets.
-# The traffic and electricity numbers from this arm are therefore NOT
-# publishable - it serves as an upper bound ("what domain adaptation would
-# give"), not as a result.
+# Known contamination: the Monash corpus contains the evaluation benchmarks.
+# `electricity-hourly` is the Nixtla `electricity` (5260/26304 = the last
+# 20%), `traffic-hourly` is `traffic` (3508/17544). The train/val/test split
+# is sequential on per-series grouped indices, so this finetune sees those
+# series over their whole span with supervised targets. The traffic and
+# electricity numbers from this arm are not publishable; the arm serves as
+# an upper bound on domain adaptation.
 #
 #   python scripts/train.py --config-name lotsa_tiny_finetune \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>"' \
@@ -19,24 +18,15 @@
 #   python scripts/evaluate.py --config-name lotsa_tiny_finetune \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_ft/pretrain_False/<ckpt>
 #
-# The finetune goes back to the MONASH corpus, not LOTSA
-# -------------------------------------------------
-# It is the foundation-model scheme (Moirai, Chronos): pretrain broad, adapt
-# on the domain. It is also the reading E12 imposes - pretraining pays in
-# TRANSFER, so the downstream domain must be distinct from the pretrain
-# corpus for the gain to be visible. Finetuning on LOTSA itself would
-# reproduce exactly the E8 setup, where a tie was the default outcome.
+# The finetune goes back to the Monash corpus, as in the foundation-model
+# scheme (Moirai, Chronos): pretrain broad, adapt on the domain. Pretraining
+# pays in transfer, so the downstream domain must be distinct from the
+# pretrain corpus for the gain to be visible.
 #
-# The comparison that matters
-# -------------------------
-# Against `tiny_geo` finetuned identically (same geometry, same downstream
-# corpus, same mode): the ONLY variable is the pretrain corpus, Monash vs
-# LOTSA. It is the direct measure of "does scaling the pretraining pay?".
-#
-# Also evaluate in the low-data regime, with `tiny_geo_lowdata`: E12 measured
-# -8.7% there for the Monash pretrain. If LOTSA widens that gap, G5's
-# prediction is confirmed; if it does not move it, the ceiling is not in the
-# data and that is information at least as useful.
+# The comparison that matters is against `tiny_geo` finetuned identically
+# (same geometry, same downstream corpus, same mode): the only variable is
+# the pretrain corpus, Monash vs LOTSA. Also evaluate in the low-data regime
+# with `tiny_geo_lowdata`, where the Monash pretrain gave -8.7% MASE.
 defaults:
   - tiny_geo
   - _self_
@@ -46,12 +36,11 @@ model:
 
 training:
   mode: "finetune"
-  # Same mode as the E11/E12 arms, so the numbers compare.
+  # Same mode as the earlier finetune arms, so the numbers compare.
   finetune_mode: "full_finetune"
 
 # data inherits entirely from tiny_geo: Monash corpus, 24 datasets, no mmap.
-# Nothing to redeclare - and above all not data_dir, which would otherwise
-# point to LOTSA.
+# Do not redeclare data_dir, which would otherwise point to LOTSA.
 
 wandb:
   tags:

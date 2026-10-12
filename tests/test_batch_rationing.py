@@ -1,13 +1,13 @@
 """
-Tests for oversampling-cap rationing (G10.2, TemperatureSampler).
+Tests for oversampling-cap rationing in TemperatureSampler.
 
-Invariants, by severity:
-1. Flag off = iteration BIT-IDENTICAL to the existing one (same indices, same
-   order) - protects reproducibility of all past runs and the mini in flight.
-2. The total budget per family is THE SAME in both modes (rationing spreads,
-   it does not change exposure) - up to a rounding residue.
-3. Under rationing, a capped family stays present until the END of the epoch
-   (no more early extinction) and the composition is near constant.
+Invariants:
+1. Flag off: the iteration is bit-identical to the unrationed one (same
+   indices, same order), which protects reproducibility of past runs.
+2. The total budget per family is the same in both modes, up to a rounding
+   residue: rationing spreads exposure, it does not change it.
+3. Under rationing, a capped family stays present until the end of the epoch
+   and the composition is near constant.
 """
 
 import sys
@@ -66,8 +66,7 @@ def test_capped_families_survive_to_epoch_end_under_rationing():
     counts_on = _per_family_counts_per_batch(_make(True))
     n = len(counts_off)
     last_decile = slice(9 * n // 10, n)
-    # without rationing: extinction (no sample from the small families in the
-    # last decile) - the measured pathology
+    # without rationing: no sample from the small families in the last decile
     assert counts_off[last_decile][:, 1:].sum() == 0
     # with rationing: both small families are still there
     assert (counts_on[last_decile][:, 1] > 0).any()

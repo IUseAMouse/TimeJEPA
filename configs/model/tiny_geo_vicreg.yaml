@@ -1,6 +1,6 @@
 # @package _global_
 #
-# VICReg ARM of the geometry round. Identical to tiny_geo except the pretrain loss.
+# VICReg arm of the geometry round. Identical to tiny_geo except the pretrain loss.
 #
 #   python scripts/train.py    --config-name tiny_geo_vicreg wandb.run_name=geo-vicreg
 #   python scripts/train.py    --config-name tiny_geo_vicreg training.mode=finetune \
@@ -8,25 +8,19 @@
 #   python scripts/evaluate.py --config-name tiny_geo_vicreg \
 #       +checkpoint_path=checkpoints/timejepa_tiny_geo_vicreg/pretrain_False/<ckpt>
 #
-# The P1.11 ablation, never finished: SIGReg was compared to nothing.
-# ------------------------------------------------------------------
-# And this is the FIRST TIME the corrected VICReg actually trains. All the old
-# "VICReg" checkpoints ran with the pooled version (variance computed after
-# reshape(-1, D), blind to positional collapse: 0.0000 vs 0.9990 measured) AND
-# variance/covariance weights at 0.0 - that is, pure MSE. This arm tests the
-# real VICReg: per-position, 25/15/1, regularization of the encoder
+# First run of the corrected VICReg: older "VICReg" checkpoints ran with the
+# pooled version (variance computed after reshape(-1, D), blind to
+# positional collapse) and variance/covariance weights at 0.0, that is, pure
+# MSE. This arm tests per-position VICReg, 25/15/1, regularizing the encoder
 # embeddings.
 #
-# What the curves must say
-# -------------------------------
-# `train_vicreg/variance` near zero = no collapse pressure, good; a hinge
-# working hard = information SIGReg was not giving. Cross-check with
-# `collapse/effective_rank` (calibration: 3.7-4.8 at init on real signal, NOT
-# 128 - the alarm is approaching 1.0) and `collapse/context_std`.
+# `train_vicreg/variance` near zero means no collapse pressure; a hinge
+# working hard means information SIGReg was not giving. Cross-check with
+# `collapse/effective_rank` (3.7-4.8 at init on real signal; the alarm is
+# approaching 1.0) and `collapse/context_std`.
 #
-# WARNING: the three arms' val_loss are NOT comparable to each other
-# (different objectives). Arbitration happens on the downstream eval, same
-# commands.
+# The arms' val_loss are not comparable to each other (different
+# objectives). Arbitration happens on the downstream eval, same commands.
 defaults:
   - tiny_geo
   - _self_

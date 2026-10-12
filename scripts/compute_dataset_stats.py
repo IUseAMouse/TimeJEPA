@@ -25,7 +25,7 @@ def main():
             print(f"{dataset_name}: NOT FOUND")
             continue
         
-        # Load
+
         data = np.load(data_path, allow_pickle=True)
         
         if isinstance(data, np.ndarray):

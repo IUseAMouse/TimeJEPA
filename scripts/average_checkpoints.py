@@ -1,5 +1,4 @@
-# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round
-# (G7.3c soup experiment); kept per the no-delete policy.
+# Deprecated: one-shot script from a closed experiment round, kept for reference.
 """
 Weight averaging ("soup" / SWA) over Lightning checkpoints of one run.
 
@@ -10,22 +9,18 @@ Weight averaging ("soup" / SWA) over Lightning checkpoints of one run.
     # optional weighting (same order as the files):
     #   --weights 1,2,1
 
-Why (2026-08-24, G7.3c verdict): finetune random-walks in the plateau -
-checkpoints of one window oscillate around a basin, tracking the family mix
-of the batch stream. The weight AVERAGE is a more central point of the basin
-than any individual checkpoint (SWA, Izmailov et al. 2018; the big labs'
-weight EMA is the same object). Cost: zero GPU. Verdict: a GIFT eval of the
-soup against the selected champion.
+Rationale: checkpoints of one finetuning window oscillate around a basin, and
+their weight average is a more central point than any single checkpoint
+(SWA, Izmailov et al. 2018).
 
 Contract:
-* only accepts checkpoints with the SAME key set and shapes - loud refusal
-  otherwise (averaging two architectures would be silently wrong);
-* only FLOATING tensors are averaged; ints/bools (counters, markers) are
-  taken from the first checkpoint, with a warning if they differ;
-* the output is a minimal Lightning-format checkpoint {'state_dict': ...} -
-  loadable by evaluate_gift/evaluate and FinetuneModule like any checkpoint
-  (optimizer and scheduler states are NOT kept: a soup is not "resumed", it
-  is evaluated or re-annealed).
+* checkpoints must share the same key set and shapes, otherwise the script
+  refuses (averaging two architectures would be silently wrong);
+* only floating tensors are averaged; ints/bools are taken from the first
+  checkpoint, with a warning if they differ;
+* the output is a minimal Lightning-format checkpoint {'state_dict': ...}
+  without optimizer or scheduler state: a soup is evaluated or re-annealed,
+  never resumed.
 """
 
 import argparse

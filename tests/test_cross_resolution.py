@@ -1,13 +1,12 @@
 """
-Tests for the cross-resolution JEPA arm (G9.2, config lotsa_tiny_xres).
+Tests for the cross-resolution JEPA arm (config lotsa_tiny_xres).
 
-Three invariants to protect, in order of severity:
-1. EXISTING configs are bit-for-bit unchanged (state_dict, item dict) - this
-   is what keeps reproduced checkpoints reloadable.
-2. w=1 is the exact identity at init (zero-init FiLM) - this is what makes
-   the xres checkpoint usable at finetune, which never passes w.
-3. The physics: the target is the CONTIGUOUS future of the context, never a
-   jump.
+Invariants:
+1. Existing configs are bit-for-bit unchanged (state_dict, item dict), which
+   keeps reproduced checkpoints reloadable.
+2. w=1 is the exact identity at init (zero-init FiLM), which makes the xres
+   checkpoint usable at finetune, which never passes w.
+3. The target is the contiguous future of the context, never a jump.
 """
 
 import sys
@@ -46,13 +45,13 @@ def _dataset(tmp_path, n_series=3, length=2048, **kw):
 # ---------------------------------------------------------------------------
 
 def test_default_state_dict_has_no_w_film():
-    """Protects reloading of ALL reproduced checkpoints."""
+    """Protects reloading of all reproduced checkpoints."""
     keys = set(_model(cross_resolution=False).state_dict())
     assert not any("w_film" in k for k in keys)
 
 
 def test_default_item_dict_unchanged(tmp_path):
-    """Without the flag: same keys as before, never a 'w' - collate intact."""
+    """Without the flag: same keys as before, never a 'w', collate intact."""
     ds = _dataset(tmp_path)
     item = ds.get_item(0, allow_multi_resolution=True)
     assert set(item) == {"context", "target", "series_id", "start_idx",
@@ -98,8 +97,8 @@ def test_module_rejects_xres_with_contextualized_targets():
 def test_pair_headroom_2048_only_k1_equals_1(tmp_path):
     """
     On 2048 chunks with ctx 1024 / pred 256: ctx*k1 + pred*k2 <= 2048 only
-    allows k1=1 (k2 up to 4). The 8192 chunks are the only way to open k1>1 -
-    that is the reason the arm's mixed corpus exists.
+    allows k1=1 (k2 up to 4). The 8192 chunks are the only way to open k1>1,
+    which is why the arm's mixed corpus exists.
     """
     ds = _dataset(tmp_path, cross_resolution=True,
                   multi_resolution_factors=[1, 2, 4], p_multi_resolution=1.0)

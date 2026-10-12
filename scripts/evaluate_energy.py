@@ -1,38 +1,33 @@
 """
-Prototype v0 - ENERGY-based forecasting on the local Nixtla benchmark.
+Energy-based forecasting prototype on the local Nixtla benchmark.
 
     python scripts/evaluate_energy.py \\
         --checkpoint checkpoints/timejepa_lotsa_tiny_full/last.ckpt \\
         --decoder-checkpoint checkpoints/timejepa_lotsa_tiny_full_zs/pretrain_False/last.ckpt
 
-The propose-judge-weight readout of the JEPA-energy doc, end to end, with NO
-decoder and NO finetune: the PRETRAIN checkpoint alone.
+The propose-judge-weight readout, end to end, with the pretrain checkpoint
+alone (no decoder, no finetune):
 
   1. propose: K block-bootstraps of the history + seasonal naive + drift;
-  2. judge:   E_k = 1 - cos(z_pred, enc([ctx||cand_k])) - CONTEXTUALIZED
-              encoding (E18c conclusion: a READOUT choice, valid even on a
-              lineage trained standalone);
-  3. weight:  w ~ exp(-(E-mean_E)/std_E) - softmax over per-instance
-              standardized energies. v0 has no free temperature on purpose:
-              standardizing makes the weight scale-invariant, so NO
-              hyperparameter tuned on the test. In-context T calibration
-              (conformal) is the next step, not this one;
+  2. judge:   E_k = 1 - cos(z_pred, enc([ctx||cand_k])), contextualized
+              encoding (a readout choice, valid on a lineage trained
+              standalone);
+  3. weight:  w ~ exp(-(E-mean_E)/std_E), softmax over per-instance
+              standardized energies, so the weight is scale-invariant and no
+              hyperparameter is tuned on the test;
   4. read:    weighted quantiles (9 GIFT levels) per time step;
               point forecast = weighted median.
 
-Comparability: windows, seasonality, MASE (pooled, repo helper) and WQL
-(GluonTS convention, repo helper) are STRICTLY shared between:
-    energy    the prototype above (pretrain only, zero downstream training)
-    decoder   the existing generative path (FINETUNED ckpt, --decoder-checkpoint)
-    snaive    seasonal naive (point forecast -> its WQL collapses to ND, expected)
-Compare energy to the experiment log via RATIOS vs snaive from the same run,
-never via absolute values from another harness. Known limit: the bootstrap
-only proposes recombinations of the past (no extrapolation outside the
-envelope) - the "decoder trajectories" third of the hybrid is NOT in this v0.
+Windows, seasonality, MASE (pooled) and WQL (GluonTS convention) are shared
+between the `energy` readout, the `decoder` path (finetuned checkpoint,
+--decoder-checkpoint) and `snaive` (point forecast, so its WQL collapses to
+ND). Compare readouts via ratios vs snaive from the same run, never via
+absolute values from another harness. Known limit: the bootstrap only
+proposes recombinations of the past.
 
 Window protocol: non-overlapping (stride = h) on the converted test split
-(data/processed/nixtla/), context 1024, h = 96 (one predictor pass, no
-rolling - the energy readout is single-shot by construction).
+(data/processed/nixtla/), context 1024, h = 96 (one predictor pass; the
+energy readout is single-shot by construction).
 Read-only; console output + JSON under evaluation/energy_nixtla/.
 """
 
@@ -76,42 +71,31 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
     """
     Build the candidate pool and compute their energies -> (cands, e).
 
-    extra_cands [N, h]: extra candidates submitted to the SAME judge - the
-    "hybrid" mode (user protocol 2026-08-21) puts the FINETUNED decoder's fan
-    trajectories there: the decoder proposes (it can extrapolate outside the
-    historical envelope, which the bootstrap cannot - the E18d exchange
-    failure), the pretrain judges (its energy alignment is intact, E18b).
-    Two checkpoints of one lineage in tandem, no new model.
+    extra_cands [N, h]: extra candidates submitted to the same judge. The
+    hybrid mode puts the finetuned decoder's fan trajectories there: the
+    decoder proposes (it can extrapolate outside the historical envelope,
+    which the bootstrap cannot), the pretrain judges.
 
-    h_judge: judging window (G12-on-GIFT bug, 2026-08-31). The energy readout
-    is SINGLE-SHOT by construction (z_pred = num_target_patches, native h
-    256); on GIFT, h ranges from 6 to 720. When h_judge is given, the energy
-    is computed on the FIRST h_judge steps of each candidate (returned
-    candidates stay full length for the quantile readout). Honest readout:
-    TTM path diversity is born in the first segment (first-segment jitter
-    only), so judging the start captures their spread; for h < patch_size the
-    candidate is edge-padded FOR ENCODING ONLY (the transform is pointwise,
-    so padding after normalization = normalizing the padded). None =
-    bit-identical to the existing behavior (Nixtla, h=96).
+    h_judge: judging window. The energy readout is single-shot (z_pred has
+    num_target_patches, native h 256) while GIFT horizons range from 6 to
+    720, so the energy is computed on the first h_judge steps of each
+    candidate; returned candidates stay full length for the quantile
+    readout. For h < patch_size the candidate is edge-padded for encoding
+    only. None keeps the Nixtla behavior (h=96).
     """
     drift = ctx[-1] + (ctx[-1] - ctx[max(0, len(ctx) - m - 1)]) / max(m, 1) \
         * np.arange(1, h + 1, dtype=np.float32)
     sn = np.tile(ctx[-m:], (h + m - 1) // m + 1)[:h].astype(np.float32)
     # Two block scales: the full seasonality (cycle structure) and a
-    # sub-block (local textures) - diversifies the pool without learning.
+    # sub-block (local textures), to diversify the pool without learning.
     blocks = [max(8, min(m, h)), max(8, min(m, h) // 3)]
     if centered and extra_cands is not None:
-        # G12c (2026-08-31) - bootstrap CENTERED ON THE PROPOSER. The dilution
-        # diagnosis (4 replications) is a CENTER problem, not a spread
-        # problem: a bootstrap of the raw history is centered on the PAST,
-        # and every gram of weight it gets pulls the weighted median off the
-        # proposer's trend. Here: candidates = the proposer's own path +
-        # resampled blocks of the seasonal INNOVATIONS (y_t - y_{t-m}) - all
-        # candidates share the center, center dilution is impossible BY
-        # CONSTRUCTION, and the judge only arbitrates what a verifier should
-        # touch: texture and spread. Drift (the anchor that poisoned the
-        # ttmonly run on D/W configs) leaves the pool; sn stays as a
-        # legitimate alternative center.
+        # Bootstrap centered on the proposer: a bootstrap of the raw history
+        # is centered on the past and pulls the weighted median off the
+        # proposer's trend. Candidates are the proposer's own path plus
+        # resampled blocks of the seasonal innovations (y_t - y_{t-m}), so
+        # all share the center and the judge only arbitrates texture and
+        # spread. Drift leaves the pool; sn stays as an alternative center.
         center = extra_cands[0].astype(np.float32)
         if len(history) > m:
             resid = (history[m:] - history[:-m]).astype(np.float32)
@@ -139,8 +123,8 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
 
     # Judging window: the energy is computed on the first hj steps
     # (edge-padded if shorter than a patch); cands (full length) carries the
-    # quantile readout. The slice itself is taken AFTER the refine block
-    # (which reassigns xc_norm).
+    # quantile readout. The slice is taken after the refine block, which
+    # reassigns xc_norm.
     hj = h if h_judge is None else min(h_judge, h)
     if refine_steps > 0 and hj < h:
         raise ValueError("refine_steps with h_judge < h would refine "
@@ -154,11 +138,10 @@ def candidate_energies(model, ctx: np.ndarray, history: np.ndarray, h: int,
         w=(torch.ones(1, device=device)
            if hasattr(model.predictor, 'w_film') else None))[:, :n_tgt, :]
 
-    # Gradient refinement ("planning by backprop"): the energy is
-    # differentiable in y - a few descent steps ON THE CANDIDATES themselves
-    # slide them toward the nearest valley of the landscape. Pure test-time
-    # compute, no weight modified. Goodhart guard: few steps, small lr - too
-    # much optimization would craft adversarial candidates that minimize E
+    # Gradient refinement: the energy is differentiable in y, so a few
+    # descent steps on the candidates slide them toward the nearest valley.
+    # Test-time compute only. Few steps and a small lr, since too much
+    # optimization would craft adversarial candidates that minimize E
     # without looking like a future.
     if refine_steps > 0:
         with torch.enable_grad():
@@ -197,16 +180,13 @@ def fan_from_energies(cands: np.ndarray, e: np.ndarray,
                       temperature: float = 1.0) -> np.ndarray:
     """
     Energies -> Gibbs weights -> weighted quantiles [h, 9]. T applies to the
-    STANDARDIZED energies (v0's scale invariance is preserved): T=1 = v0
-    behavior; SMALL T = contrasted judge, mass concentrates on the best
-    candidates - the cure for the dilution measured three times (E18e / e-v2
-    / g, always weather+exchange); large T = near-uniform pool.
+    standardized energies, so scale invariance is preserved: small T
+    concentrates the mass on the best candidates, large T gives a
+    near-uniform pool.
     """
-    # Degeneracy guard (measured, ttmonly run 2026-08-31): a pool of
-    # near-identical candidates gives near-identical energies, and dividing
-    # by a tiny std turns the softmax into a noise amplifier (mass dropped on
-    # an arbitrary anchor - ett1/D MASE 1.63->5.29). Below the threshold the
-    # energy signal is noise: uniform weights.
+    # Degeneracy guard: a pool of near-identical candidates gives
+    # near-identical energies, and dividing by a tiny std turns the softmax
+    # into a noise amplifier. Below the threshold, use uniform weights.
     if e.std() < 1e-4:
         w = np.full(len(e), 1.0 / len(e))
     else:
@@ -251,13 +231,12 @@ def calibrate_temperature(model, ctx: np.ndarray, h: int, m: int, K: int,
                           device, n_cal: int = 2, proposer_fn=None,
                           seed: int = 1000, centered: bool = False) -> float:
     """
-    IN-CONTEXT T calibration - the G12(a) prerequisite, and the lever pointed
-    at by three replications of the dilution signature. Replay the FULL
-    pipeline (real pool, proposer included) on n_cal past sub-windows of the
-    context whose continuation is known; keep the T minimizing mean pinball.
-    Energies are computed ONCE per sub-window, sweeping the grid only costs
-    softmaxes. Zero training, zero look at the test; dedicated rng (offset
-    seed) so the main path's draws stay bit-paired with uncalibrated runs.
+    In-context T calibration: replay the full pipeline (real pool, proposer
+    included) on n_cal past sub-windows of the context whose continuation is
+    known, and keep the T minimizing mean pinball. Energies are computed once
+    per sub-window, sweeping the grid only costs softmaxes. No training, no
+    look at the test; a dedicated rng (offset seed) keeps the main path's
+    draws paired with uncalibrated runs.
     """
     rng = np.random.default_rng(seed)
     scores = {T: [] for T in T_GRID}
@@ -281,11 +260,10 @@ def calibrate_temperature(model, ctx: np.ndarray, h: int, m: int, K: int,
 @torch.no_grad()
 def mc_dropout_paths(dec_model, ctx: np.ndarray, h: int, n: int, device) -> np.ndarray:
     """
-    n epistemic trajectories from the FINETUNED decoder: the model's Dropout
-    modules are switched to train mode FOR THE FORWARDS ONLY (the rest -
-    norm, EMA - stays in eval), then restored. Each stochastic forward gives
-    a different median = a temporally COHERENT trajectory, unlike quantile
-    paths (marginals). Script-only - the core code is untouched.
+    n epistemic trajectories from the finetuned decoder: the model's Dropout
+    modules are switched to train mode for the forwards only (norm and EMA
+    stay in eval), then restored. Each stochastic forward gives a different
+    median, i.e. a temporally coherent trajectory, unlike quantile paths.
     """
     x = torch.from_numpy(ctx).reshape(1, -1, 1).to(device)
     drops = [mod for mod in dec_model.modules()
@@ -307,19 +285,18 @@ def mc_dropout_paths(dec_model, ctx: np.ndarray, h: int, n: int, device) -> np.n
 
 class TTMProposer:
     """
-    External proposer G12(b): TTM-R3 (IBM Granite, ~1.4M - the size-class
-    rival, CRPS 0.520 on GIFT). Point forecast only -> diversity comes from N
-    jittered contexts (noise 0.05*std) plus the clean path. Lazily loaded:
-    the script stays usable without granite-tsfm installed. The G12 measure
-    is the UPLIFT: reader `ttm` alone vs `hybrid_ttm` (bootstrap + SN + drift
-    + TTM paths, judged by OUR pretrain).
+    External proposer: TTM-R3 (IBM Granite, ~1.4M). Point forecast only, so
+    diversity comes from N jittered contexts (noise 0.05*std) plus the clean
+    path. Lazily loaded so the script stays usable without granite-tsfm. The
+    measure is the uplift: reader `ttm` alone vs `hybrid_ttm` (bootstrap + SN
+    + drift + TTM paths, judged by our pretrain).
     """
 
     def __init__(self, model_id: str, device, revision: str = "main"):
         from tsfm_public.models.tinytimemixer import TinyTimeMixerForPrediction
-        # Warning: the TTM repo hosts its variants by REVISION; `main` is a
-        # horizon-30 variant that loads with REINITIALIZED head weights
-        # (MISSING warning measured) - always pass the exact revision.
+        # The TTM repo hosts its variants by revision; `main` is a horizon-30
+        # variant that loads with reinitialized head weights, so always pass
+        # the exact revision.
         self.model = TinyTimeMixerForPrediction.from_pretrained(
             model_id, revision=revision)
         self.model.to(device).eval()
@@ -423,9 +400,9 @@ def main():
         for series in data:
             T = {"energy": 1.0, "hybrid": 1.0, "hybrid_ttm": 1.0}
             if args.calibrate_T:
-                # one calibration PER SERIES and PER POOL COMPOSITION (the
+                # one calibration per series and per pool composition (the
                 # energy / hybrid_ttm pools do not have the same contrast), on
-                # the first window's context - amortized over ~max_windows.
+                # the first window's context, amortized over ~max_windows.
                 first = next(iter_windows(series, ctx_len, h, args.max_windows), None)
                 if first is not None:
                     c0 = first[0]

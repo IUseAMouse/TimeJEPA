@@ -1,85 +1,54 @@
 # @package _global_
 #
-# G4.6 - TRANSFER TO UNSEEN DATA, PRETRAINED arm.
+# Transfer to unseen data, pretrained arm.
 # Twin config: tiny_geo_scratch_lowdata (identical, without pretrained weights).
 #
 #   python scripts/train.py --config-name tiny_geo_lowdata \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_tiny_geo/pretrain_True/<ckpt>"' \
 #       wandb.run_name=lowdata-pretrained
 #
-# WARNING: the checkpoint path is the ONLY element to supply by hand. If it is
-# missing, this run becomes a duplicate of the scratch arm and the experiment
-# measures nothing.
+# The checkpoint path is the only element to supply by hand. Without it,
+# this run becomes a duplicate of the scratch arm.
 #
-# Why this experiment
-# -------------------------
-# E8 measured a TIE between pretrained and scratch with the full finetune
-# corpus (mean MASE 1.193 vs 1.187). That result does not refute the project's
-# bet, and COULD not: the pretrain corpus and the finetune corpus were THE
-# SAME 24 datasets. When the two coincide, the supervised model sees exactly
-# the same bytes, pretraining reduces to an initialization, and a tie is the
-# default outcome. The trajectory confirmed it - faster start for the
-# pretrained arm, gap closed by ~10k steps.
+# Why: pretrained and scratch tied with the full finetune corpus (mean MASE
+# 1.193 vs 1.187) because the pretrain corpus and the finetune corpus were
+# the same 24 datasets; pretraining then reduces to an initialization. A
+# foundation model's value is transferring to data it has never seen.
 #
-# A foundation model's value is transferring to data it has never seen. That
-# is what this config tests.
-#
-# The corpus: what the pretrain could NOT have seen
-# ----------------------------------------------
-# The tiny_geo pretrain requires a window of 1024+256 = 1280 steps. SIX
-# datasets from `data.datasets` are therefore dropped at the source by the
-# length filter (B17) - the encoder NEVER saw them, not even partially:
+# The corpus: the tiny_geo pretrain requires a window of 1024+256 = 1280
+# steps, so six datasets from `data.datasets` are dropped at load time by
+# the length filter and the encoder never saw them:
 #
 #   m4-hourly            1008 steps  <- kept here
-#   nn5-daily             791 steps  <- kept here (and DAILY frequency,
-#                                      nearly absent from the sub-daily corpus)
-#   fred-md               728 steps  (excluded here: < 768 - MONTHLY macro)
+#   nn5-daily             791 steps  <- kept here (daily frequency, nearly
+#                                      absent from the sub-daily corpus)
+#   fred-md               728 steps  (excluded here: < 768, monthly macro)
 #   rain-temperature      725 steps  (excluded here: < 768)
 #   rideshare             541 steps  (excluded)
 #   wikipedia-weekly      114 steps  (excluded)
 #
-# VERIFIED on the tiny_geo pretrain log (2026-08-10):
-#   "6/23 dataset(s) skipped (1280 timesteps required)" lists exactly these six.
-# They do appear in `data.datasets`, but the length filter (B17) drops them AT
-# LOAD TIME - 0 windows created, the encoder never saw them. That is what
-# makes the experiment possible: the held-out corpus is a side effect of the
+# The pretrain log line "6/23 dataset(s) skipped (1280 timesteps required)"
+# lists exactly these six. The held-out corpus is a side effect of the
 # pretrain geometry, not a hand-written exclusion.
 #
-# 4-dataset variant, if DIVERSITY is preferred over context
-# ---------------------------------------------------------------
+# 4-dataset variant, if diversity is preferred over context:
 #   model.seq_length=384 'data.datasets_finetune=[m4-hourly,nn5-daily,fred-md,rain-temperature]'
-# (384+256 = 640 <= 725, everything fits). Brings in monthly macro and
-# climate - four regimes instead of two. Cost: shorter context, so a penalty
-# for BOTH arms (paired comparison, so the reading is preserved).
-# WARNING: it also changes the regime: rain-temperature brings 32,072 series,
-# so the experiment stops being "low data" and becomes purely "unseen data".
+# (384+256 = 640 <= 725). Brings in monthly macro and climate at the cost of
+# a shorter context for both arms. rain-temperature brings 32,072 series, so
+# the experiment stops being "low data" and becomes purely "unseen data".
 #
-# The geometry follows from the corpus
-# ---------------------------
-# seq_length 512 (instead of 1024) because m4-hourly is only 1008 steps:
-# 512 + 256 = 768 <= 791 brings in m4-hourly AND nn5-daily. Going to 640 would
-# keep only m4-hourly; dropping to 384 would bring in rain-temperature but at
-# a context the sweep (E7/E9) shows to be penalizing.
-# 512 is within the range seen at pretrain (context_lengths goes from 128 to
-# 1024), so the pretrained arm is not out of distribution - it really is DATA
-# TRANSFER being tested, not a geometry extrapolation.
+# Geometry: seq_length 512 (instead of 1024) because m4-hourly is only 1008
+# steps; 512 + 256 = 768 <= 791 brings in m4-hourly and nn5-daily. 512 is
+# within the range seen at pretrain (128 to 1024), so the pretrained arm is
+# not out of distribution. Side effect: ~12k training windows versus ~8M
+# for the full corpus, so the experiment is both "unseen data" and "low data".
 #
-# Intended side effect: ~12k training windows versus ~8M for the full corpus.
-# So the experiment is both "unseen data" AND "low data" - the two regimes
-# where SSL must pay off if it is worth anything.
+# Budget: max_epochs 200 (an epoch is tiny here), early stopping patience 25.
+# Both arms get the same budget; if the scratch arm stops early, give it
+# more epochs before concluding.
 #
-# Training budget
-# ---------------------
-# max_epochs 200: an epoch is tiny here. Early stopping (patience 25) cuts
-# when progress stalls. BOTH arms get the same budget - a condition for the
-# result to prove anything. If the scratch arm stops early, give it more
-# epochs before concluding.
-#
-# Secondary axis, if the result is ambiguous
-# -----------------------------------------
-# `data.stride` (default 8) sets the window sampling density and thus the
-# volume, at constant corpus. Raising it (128, 512) on BOTH arms traces a
-# performance-vs-volume curve: the natural figure for this question.
+# Secondary axis: `data.stride` (default 8) sets the window sampling density;
+# raising it (128, 512) on both arms traces a performance-vs-volume curve.
 defaults:
   - tiny_geo
   - _self_
@@ -90,18 +59,17 @@ model:
 
 training:
   mode: "finetune"
-  # Required: gradual_unfreeze would freeze the encoder during the first
-  # epoch, which makes no sense for the scratch twin (random weights). Both
-  # arms must share the mode.
+  # gradual_unfreeze would freeze the encoder during the first epoch, which
+  # makes no sense for the scratch twin (random weights). Both arms share
+  # the mode.
   finetune_mode: "full_finetune"
   max_epochs: 200
   # The tiny_geo list goes up to 1024; at seq_length 512 the larger lengths
-  # would never be eligible anyway. Made explicit so the geometry/context_len
-  # log stays readable.
+  # would never be eligible.
   context_lengths: [128, 192, 256, 384, 512]
 
 data:
-  # The TWO datasets the pretrain could not have seen that fit in 768 steps.
+  # The two datasets the pretrain could not have seen that fit in 768 steps.
   datasets_finetune: ["m4-hourly", "nn5-daily"]
 
 wandb:

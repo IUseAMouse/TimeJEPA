@@ -1,13 +1,12 @@
-# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round; kept
-# per the no-delete policy. Reads nixtla_results_long.csv from the archived
-# P0 round.
-"""Paired statistics of the JEPA vs recon horizon signal (G6 arms, E15/E16).
+# Deprecated: one-shot analysis script from a closed experiment round, kept
+# for reference. Reads an archived nixtla_results_long.csv.
+"""Paired statistics of the JEPA vs reconstruction horizon signal.
 
 Two sources, same checkpoints (epoch04 of both arms):
-  A) horizon_metrics.json - MAE per STEP (0..255) on 8 local Monash datasets:
+  A) horizon_metrics.json: MAE per step (0..255) on 8 local Monash datasets,
      slope of the relative recon/JEPA gap as a function of depth.
-  B) nixtla_results_long.csv - MASE per (dataset x horizon 96/192/336/720):
-     the 28 E15 cells, gap per horizon + permutation trend test.
+  B) nixtla_results_long.csv: MASE per (dataset x horizon 96/192/336/720),
+     28 cells, gap per horizon plus a permutation trend test.
 """
 import csv
 import json
@@ -62,7 +61,7 @@ for h in hs:
     print(f"  h={h:3d} n={len(g)} mean gap {g.mean()*100:+6.2f}%  95% CI [{lo*100:+.2f}, {hi*100:+.2f}]  "
           f"recon-worse cells {(g>0).sum()}/{len(g)}")
 
-# trend test: observed Spearman(gap, horizon) vs INTRA-dataset horizon
+# trend test: observed Spearman(gap, horizon) vs intra-dataset horizon
 # permutations (paired structure respected)
 datasets = sorted({d for d, _ in keys})
 obs_gaps = np.array([(cr[(d, h)] - cj[(d, h)]) / cj[(d, h)] for d in datasets for h in hs])
@@ -84,7 +83,7 @@ null = np.array(null)
 p = float((null >= obs_rho).mean())
 print(f"\n  gap~horizon trend: observed Spearman {obs_rho:+.3f}, one-sided permutation p = {p:.4f}")
 
-# and with the dominant etth1 cell removed (fragility noted in E15)
+# and with the dominant etth1 cell removed
 mask = [d != "etth1" for d in datasets for _ in hs]
 obs_rho2 = spear(obs_gaps[mask], obs_hs[mask])
 null2 = []

@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.config import Config
@@ -46,11 +45,9 @@ def download_and_process_dataset(
     """
     logger = logging.getLogger(__name__)
     
-    # Get configs
     dataset_config = config.get_dataset_config(dataset_name)
     download_config = config.get_download_config()
     
-    # Setup paths
     raw_dir = data_dir / "raw"
     processed_dir = data_dir / "processed"
     
@@ -60,7 +57,6 @@ def download_and_process_dataset(
     zip_path = raw_dir / f"{dataset_name}.zip"
     output_path = processed_dir / f"{dataset_name}.npy"
     
-    # Check if already processed
     if output_path.exists() and not force_process:
         logger.info(f"Processed data already exists: {output_path}")
         logger.info("Use --force-process to reprocess")
@@ -107,7 +103,6 @@ def download_and_process_dataset(
         logger.error(f"Failed to parse file: {e}")
         return None
     
-    # 5. Save
     try:
         save_processed_data(series_list, output_path, compress=compress)
         logger.info(f"Successfully processed {dataset_name}")
@@ -174,11 +169,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Setup logging
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
     
-    # Load configuration
     try:
         config_path = Path(args.config) if args.config else None
         config = Config(config_path)
@@ -186,7 +179,6 @@ def main():
         logger.error(f"Failed to load configuration: {e}")
         sys.exit(1)
     
-    # List datasets if requested
     if args.list:
         datasets = config.list_datasets()
         print("\nAvailable datasets:")
@@ -196,13 +188,11 @@ def main():
             print(f"  - {name}: {desc}")
         sys.exit(0)
     
-    # Require dataset name
     if not args.dataset:
         parser.error("--dataset is required (or use --list to see available datasets)")
     
     data_dir = Path(args.data_dir)
     
-    # Process dataset(s)
     if args.dataset.lower() == 'all':
         datasets = config.list_datasets()
         logger.info(f"Processing all {len(datasets)} datasets...")

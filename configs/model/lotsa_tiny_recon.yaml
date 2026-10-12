@@ -1,11 +1,11 @@
 # @package _global_
 #
-# G6 - OBJECTIVE ABLATION: reconstruction vs latent extrapolation.
+# Objective ablation: reconstruction vs latent extrapolation.
 #
 #   # pretrain of the reconstruction arm
 #   python scripts/train.py --config-name lotsa_tiny_recon wandb.run_name=recon-pretrain
 #
-#   # zero-shot finetune - protocol IDENTICAL to the JEPA arm, distinct output name
+#   # zero-shot finetune, protocol identical to the JEPA arm, distinct output name
 #   # (lotsa_tiny_zeroshot would send checkpoints into the JEPA arm's directory:
 #   #  same model.name, so same folder. See lotsa_tiny_recon_zeroshot.)
 #   python scripts/train.py --config-name lotsa_tiny_recon_zeroshot \
@@ -16,74 +16,37 @@
 #   python scripts/evaluate.py --config-name lotsa_tiny_eval \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_recon_zs/pretrain_False/<ckpt>
 #
-# Why this is the most important experiment left
-# ---------------------------------------------------------
-# E12 established that pretraining improves transfer (-8.7%). E14 established
-# that a larger, more diverse corpus widens it (ETTm1, -16.8%). Neither says
-# anything about the LOSS: E12's comparison arm is the ABSENCE of pretraining,
-# not a competing objective.
+# Why: the pretraining results compare against the absence of pretraining,
+# not against a competing objective. A reconstruction objective at identical
+# budget (what Moirai and Moment do) is a reviewer's default hypothesis.
 #
-# In other words, "latent extrapolation beats reconstruction" - the project's
-# thesis - sits in section 4 of the registry, the list of what is NOT
-# established. Nothing in the current results rules out that a reconstruction
-# objective, at identical budget, does as well or better. That is a reviewer's
-# default hypothesis, since it is what Moirai and Moment do, and it works.
-#
-# What changes, and it is ONE variable
-# ------------------------------------------
+# What changes, one variable:
 #   JEPA      : the predictor regresses toward target_encoder(future patches)
-#   this arm  : the predictor regresses toward the RAW future patches
+#   this arm  : the predictor regresses toward the raw future patches
 #
-# The task stays past -> future. Corpus, geometry, budget, optimizer,
-# scheduler, stride, caps: all inherited from lotsa_tiny without exception.
-# Only the space the predictor is scored in moves, from latent to observations.
+# The task stays past -> future; corpus, geometry, budget, optimizer,
+# scheduler, stride and caps are inherited from lotsa_tiny. Moirai-style
+# masked reconstruction is not tested because it would change the target
+# space and the task shape at once. The objective used here is TimesFM's.
 #
-# We do NOT test Moirai-style masked reconstruction, deliberately: it would
-# change two variables at once (the target space AND the task shape,
-# extrapolation -> interpolation), making the result uninterpretable. The
-# objective used here is also TimesFM's, so a baseline reviewers recognize.
+# Why Huber and not MSE: RevIN normalizes the target with the context
+# statistics, and its scale is sqrt(var + 1e-5). On a near-constant context
+# (flat sensor, dead meter, solar at night) that floor is 0.00316, and the
+# slightest move in the future window lands at thousands of sigma (measured:
+# target_std at 3000 and target_var at 4e7, versus ~1 on a healthy batch).
+# Under MSE such a batch outweighs millions of normal batches. The JEPA arm
+# is unaffected because its targets are encoder outputs kept O(1) by
+# LayerNorm. Huber bounds each element's contribution and keeps all windows,
+# so both arms see the same data; `train_loss/target_absmax` keeps the
+# amplitude visible. The arm therefore differs from JEPA in the shape of the
+# loss as well as in the target space.
 #
-# Why Huber and not MSE - measured, not assumed
-# -----------------------------------------------
-# RevIN normalizes the target with the CONTEXT statistics, and its scale is
-# sqrt(var + 1e-5). On a near-constant context (flat sensor, dead meter, solar
-# at night), that floor is 0.00316: the slightest move in the future window
-# lands at THOUSANDS of sigma. Measured on this arm's first run: target_std at
-# 3000 and target_var at 4e7, versus ~1 on a healthy batch, with pred_std
-# climbing from 1 to 6 chasing them.
-#
-# Under MSE, such a batch outweighs tens of millions of normal batches: the
-# objective becomes that of the degenerate windows. The JEPA arm showed nothing
-# like this because its targets are encoder outputs, kept O(1) by LayerNorm -
-# so the pathology was IN THE DATA from the start, simply absorbed.
-#
-# Huber bounds each element's contribution to the gradient and keeps all
-# windows, so both arms see exactly the same data. `train_loss/target_absmax`
-# keeps the amplitude visible rather than hidden by the robust loss.
-#
-# WARNING: this arm therefore differs from JEPA in the SHAPE of the loss as
-# much as in the target space. Said rather than hidden: an unbounded MSE in
-# value space is not a well-posed objective here, so "strictly all else equal"
-# was not available.
-#
-# How to read the result - both outcomes are useful
-# -----------------------------------------------------
-# The run is falsifiable both ways, and that is the point:
-#   * JEPA wins  -> the paper's thesis holds, and we finally have the control
-#                   backing it rather than an intuition.
-#   * recon wins -> the real lever is corpus and scale (E14), not the loss.
-#                   Reframe the paper on that BEFORE review, not during.
-# WARNING: the comparison only holds if both arms are evaluated with the SAME
-# finetune and the SAME protocol: lotsa_tiny_zeroshot then lotsa_tiny_eval.
-# Comparing this pretrain to a Monash finetune of the other arm would measure
-# nothing.
-#
-# WARNING: NOT comparable between the two arms: the pretrain `val_loss`. One is
-# an MSE in latent space, the other in value space - unrelated quantities, on
-# different targets. Only the post-finetune MASE/WQL compare. Same remark for
-# effective rank: it stays logged (the encoder remains an encoder) but its
-# Monash/LOTSA calibration does not apply here, no collapse alarm being
-# expected - raw targets are fixed, there is nothing to collapse.
+# The comparison only holds if both arms are evaluated with the same finetune
+# and the same protocol: lotsa_tiny_zeroshot then lotsa_tiny_eval. The
+# pretrain `val_loss` is not comparable between the arms (latent space vs
+# value space); only the post-finetune MASE/WQL compare. Effective rank stays
+# logged but its calibration does not apply here, since raw targets are fixed
+# and cannot collapse.
 defaults:
   - lotsa_tiny
   - _self_
@@ -92,18 +55,15 @@ model:
   name: "timejepa_lotsa_tiny_recon"
 
 training:
-  # The only flag distinguishing this arm. Absent from every other config,
-  # whose behavior is therefore bit-for-bit unchanged.
+  # The only flag distinguishing this arm; absent from every other config.
   reconstruction_target: true
 
   loss:
-    # `_compute_loss` bypasses `jepa_loss` in reconstruction mode and applies a
-    # bare HUBER: the anti-collapse terms exist because latent targets are
-    # LEARNED and can degenerate, which is not the case for raw patches.
-    # Adding them would regularize against a nonexistent failure mode and
-    # confound the comparison.
-    # So this line drives nothing - it prevents a reader (or the startup log,
-    # which prints `loss_type`) from believing SIGReg is still running.
+    # `_compute_loss` bypasses `jepa_loss` in reconstruction mode and applies
+    # a bare Huber: the anti-collapse terms exist because latent targets are
+    # learned and can degenerate, which raw patches cannot. This line drives
+    # nothing; it keeps the startup log (which prints `loss_type`) from
+    # suggesting SIGReg is still running.
     type: "smooth_l1"
 
 wandb:

@@ -1,25 +1,16 @@
 # @package _global_
 #
-# G7.4 - PRETRAIN of the MINI (~5.1M) on the MIX RECIPE (mixed v2 corpus +
-# arcsinh + standalone targets), decision 2026-08-23 after E18i.
+# Pretrain of the mini (~5.1M) on the mix recipe (mixed v2 corpus +
+# arcsinh + standalone targets).
 #
 #   python scripts/train.py --config-name lotsa_mini_mix wandb.run_name=mini-mix
 #   # then: lotsa_mini_mix_zeroshot (1-epoch finetune) and lotsa_mini_mix_eval
 #
-# THE targeted comparison: mini-mix vs tiny-mix, ONE variable - capacity.
-# Everything else is copied from lotsa_tiny_mix unchanged: corpus
-# (data/processed/lotsa_xres, v2 regenerated 20000 chunks/family),
-# robust_scale, LR 3e-4 (WARNING: overrides lotsa_mini's 4e-4 - the scale
-# duel demands the SAME LR as tiny-mix; if mini preferred another LR, that
-# would be one more variable), standalone targets (C1), 2-epoch budget,
-# validation 0.05.
-# The duel's falsifiable predictions are written in the PLAN (G7.4,
-# 2026-08-19): saturation => higher rank/variance plateau + wider tiny->mini
-# GIFT gap.
-#
-# Budget: max_epochs 2 like tiny-mix (cap, manual cut possible). E18c notes
-# that 1 annealed epoch "may be enough" - but deviating here would add a
-# bundle item to the scale duel; we pay the 2nd epoch for purity.
+# Comparison mini-mix vs tiny-mix with one variable, capacity. Everything else
+# is copied from lotsa_tiny_mix unchanged: corpus (data/processed/lotsa_xres,
+# v2 regenerated 20000 chunks/family), robust_scale, LR 3e-4 (overrides
+# lotsa_mini's 4e-4 so both scales share the same LR), standalone targets,
+# 2-epoch budget, validation 0.05.
 defaults:
   - lotsa_mini
   - _self_
@@ -29,12 +20,12 @@ model:
   robust_scale: true
 
 training:
-  # Identical to lotsa_tiny_mix (see its header for the LR reasoning) -
-  # NOT lotsa_mini's 4e-4: one variable, capacity.
+  # Identical to lotsa_tiny_mix (see its header for the LR reasoning),
+  # overriding lotsa_mini's 4e-4.
   optimizer:
     learning_rate: 3.0e-4
   max_epochs: 2
-  # C1 (audit 2026-08-20): standalone targets, like tiny-mix and xres.
+  # Standalone targets, like tiny-mix and xres.
   contextualized_targets: false
 
 trainer:
@@ -42,7 +33,7 @@ trainer:
 
 early_stopping:
   # Disabled, same reasoning as lotsa_tiny_mix / lotsa_mini_full: the model's
-  # value is at the end of annealing, not at the val_loss dip (E12).
+  # value is at the end of annealing, not at the val_loss dip.
   enabled: false
 
 data:

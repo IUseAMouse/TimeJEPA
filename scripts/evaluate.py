@@ -52,8 +52,8 @@ from timejepa.training.utils.baselines import (
 )
 from timejepa.models import JEPATST
 from timejepa.models.jepa_tst import filter_loadable
-# Moved to the shared evaluation package so the GIFT-Eval harness and this
-# script load checkpoints through the SAME code path (see evaluation/loading.py).
+# Shared with the GIFT-Eval harness so both load checkpoints through the same
+# code path (see evaluation/loading.py).
 from timejepa.evaluation.loading import create_model_from_config, load_checkpoint
 from timejepa.models.decoders import ForecastingHead
 
@@ -67,7 +67,6 @@ try:
 except ImportError:
     NIXTLA_AVAILABLE = False
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -204,8 +203,7 @@ def plot_forecasts(
         ax.set_ylabel('Value')
     
     # Hide unused subplots. Uses len(indices), not n: the good/mid/bad selection
-    # yields 3 * max(1, n//3) indices, which is fewer than n for most values of
-    # n - leaving a blank axes frame in the grid.
+    # yields 3 * max(1, n//3) indices, usually fewer than n.
     for i in range(len(indices), len(axes)):
         axes[i].set_visible(False)
     
@@ -324,9 +322,8 @@ def plot_error_analysis(
         quartile_labels.append(f'H{start+1}-{end}')
     
     # matplotlib renamed boxplot's `labels` to `tick_labels` in 3.9 and removed
-    # the old spelling in 3.11, which aborted the whole evaluation of a dataset
-    # after its plots had already been written. Setting the tick labels
-    # afterwards works on every version and needs no feature detection.
+    # the old spelling in 3.11; setting the tick labels afterwards works on
+    # every version.
     bp = ax6.boxplot(quartile_errors, patch_artist=True)
     ax6.set_xticks(range(1, len(quartile_labels) + 1))
     ax6.set_xticklabels(quartile_labels)
@@ -480,21 +477,13 @@ def evaluate_dataset_horizon(
 
     Uses rolling forecasts if horizon > model.prediction_length.
 
-    Normalization
-    -------------
-    `skip_revin=False` is the correct default and the regime the model was
-    trained in. The previous code used `skip_revin=True` with the rationale
-    "nixtla long horizon datasets are already normalized" - but those datasets
-    are z-scored GLOBALLY with train statistics, which is a completely different
-    thing from RevIN's per-window instance normalization. Passing them with
-    skip_revin=True fed the encoder inputs whose mean was far from 0 (ETTh1 test:
-    mean -1.34, std 0.34) while it had only ever seen mean-0/std-1 windows, and
-    compared its output against targets living in yet another space. That is what
-    produced the constant level offset visible in the h96 forecast plots.
-
-    With skip_revin=False the model instance-normalizes each context, predicts in
-    that frame, and denormalizes back into the globally z-scored space where the
-    targets live - exactly what PatchTST / iTransformer / TimesNet do.
+    Normalization: `skip_revin=False` is the correct default. The Nixtla
+    datasets are z-scored globally with train statistics, which is not RevIN's
+    per-window instance normalization; with skip_revin=True the encoder would
+    see inputs far from mean 0 / std 1. With skip_revin=False the model
+    instance-normalizes each context, predicts in that frame, and denormalizes
+    back into the globally z-scored space where the targets live, as PatchTST,
+    iTransformer and TimesNet do.
 
     Args:
         model: Model in eval mode
@@ -535,10 +524,8 @@ def evaluate_dataset_horizon(
         # Truncate target to horizon (dataloader may provide more)
         target = target[:, :horizon]
 
-        # Keep the quantile fan when the head is probabilistic. Without it the
-        # reported WQL is computed from the point forecast, where it collapses
-        # to ND - the score a deterministic model earns - and none of the
-        # quantile head's benefit would ever appear in the numbers.
+        # Keep the quantile fan when the head is probabilistic, otherwise WQL
+        # is computed from the point forecast and collapses to ND.
         if 'quantiles_denorm' in output:
             q = output['quantiles_denorm']
             all_quantiles.append(q.cpu())
@@ -578,7 +565,7 @@ def evaluate_with_baselines(
     quantile_levels: Optional[List[float]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """
-    Score the model AND every reference baseline on identical windows.
+    Score the model and every reference baseline on identical windows.
 
     Without this, an absolute MSE is uninterpretable. `skill_vs_seasonal_naive`
     is the headline number: >0 means TimeJEPA beats seasonal naive on MASE,
@@ -593,13 +580,10 @@ def evaluate_with_baselines(
         predictions, targets, context=contexts, season_length=season_length
     )
 
-    # With a probabilistic head, recompute WQL over the actual quantile fan.
+    # With a probabilistic head, recompute WQL over the actual quantile fan;
     # compute_forecasting_metrics_extended derives it from the point forecast,
-    # where WQL collapses to ND by construction - the score a deterministic
-    # model earns, which would hide the entire benefit of the head.
-    # The baselines stay point forecasts, and that is correct: seasonal naive IS
-    # deterministic, so its CRPS is its ND. That is also how GIFT-Eval
-    # normalizes, with seasonal naive at 1.00 on both MASE and CRPS.
+    # where it collapses to ND. The baselines stay point forecasts: seasonal
+    # naive is deterministic, so its CRPS is its ND, as in GIFT-Eval.
     if quantiles is not None:
         levels = list(quantile_levels) if quantile_levels else None
         q = quantiles
@@ -612,8 +596,7 @@ def evaluate_with_baselines(
         )
         # Empirical coverage of the outermost band. With levels 0.1..0.9 the
         # target should fall inside 80% of the time: below that the intervals
-        # are overconfident, above it they are wasteful and WQL pays for it.
-        # The eye cannot judge this from plots; this number can.
+        # are overconfident, above it they are wasteful.
         t = targets.unsqueeze(-1) if targets.ndim == quantiles.ndim - 1 else targets
         inside = (t >= quantiles[..., :1]) & (t <= quantiles[..., -1:])
         results['timejepa']['coverage_outer'] = float(inside.float().mean())
@@ -888,7 +871,6 @@ def main(cfg: DictConfig):
     print("TIMEJEPA EVALUATION")
     print("=" * 80)
     
-    # Get checkpoint path
     checkpoint_path = cfg.get('checkpoint_path')
     
     if checkpoint_path is None:
@@ -900,20 +882,16 @@ def main(cfg: DictConfig):
                 "No checkpoint found. Specify with: +checkpoint_path=path/to/checkpoint.ckpt"
             )
     
-    # Validate checkpoint exists
     if not Path(checkpoint_path).exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
-    # Output directory
     ckpt_name = Path(checkpoint_path).stem
     output_dir = Path(cfg.data.output_dir) / "evaluation" / cfg.model.name / ckpt_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
     
-    # Create model ONCE with native architecture
     logger.info("Creating model with native architecture...")
     model = create_model_from_config(cfg)
     model = load_checkpoint(model, checkpoint_path, device)

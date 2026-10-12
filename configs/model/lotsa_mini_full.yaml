@@ -1,18 +1,13 @@
 # @package _global_
 #
-# G7 - PRETRAIN of the MINI (~5M) on the FULL LOTSA corpus.
+# Pretrain of the mini (~5M) on the full LOTSA corpus.
 #
 #   python scripts/train.py --config-name lotsa_mini_full wandb.run_name=mini-full
 #
 # Inherits from lotsa_mini (192/4+3 architecture, LR 4e-4, batch 384) and only
 # changes what lotsa_tiny_full changes for the tiny: the corpus and the epoch
-# budget. Any additional divergence between the tiny-full and mini-full
-# regimes would make their comparison uninterpretable - this is the paper's
-# scaling curve, it only holds if ONLY the model size moves.
-#
-# max_epochs: 2 - same logic as E13a/lotsa_tiny_full: the cosine is stretched
-# over max_epochs, and on the full corpus one epoch is already huge. See the
-# lotsa_tiny_full header for the balance audit TO DO before any run.
+# budget. The tiny-full / mini-full comparison is the scaling curve, so only
+# the model size may move.
 defaults:
   - lotsa_mini
   - _self_
@@ -24,26 +19,17 @@ data:
   data_dir: "data/processed/lotsa_full"
 
 training:
-  # Same single-pass regime as lotsa_tiny_full - see its header for the
-  # reasoning (E13b: beyond one epoch, measured overfitting; and `max_epochs`
-  # drives the cosine annealing).
+  # Same single-pass regime as lotsa_tiny_full: beyond one epoch the model
+  # overfits, and `max_epochs` drives the cosine annealing.
   max_epochs: 1
 
 trainer:
   val_check_interval: 0.05
 
 early_stopping:
-  # DISABLED on single-pass runs, deliberately.
-  #
-  # The cosine is stretched over `max_epochs: 1`: the model's value is at the
-  # END of the pass, when annealing completes. Stopping early ships a model
-  # that was never annealed - the exact defect E13a measured.
-  #
-  # With val_check_interval=0.05 there are only ~20 validations, so patience=25
-  # would never trigger anyway: better to write it down than to depend on that
-  # coincidence. Anyone refining validation (0.01 -> 100 points) would
-  # otherwise re-enable stopping on a noise dip, which E12 already paid for
-  # once - its val_loss picked the model that generalizes the LEAST well.
+  # Disabled on single-pass runs: the cosine is stretched over `max_epochs: 1`,
+  # so the model's value is at the end of the pass, when annealing completes.
+  # Stopping early on a val_loss dip ships a model that was never annealed.
   enabled: false
 
 wandb:

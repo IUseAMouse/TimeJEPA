@@ -1,10 +1,7 @@
-# DEPRECATED (2026-08-19 audit) - ORPHANED root, do not use. Measured drift
-# vs tiny.yaml: stale dataset list, missing multi-resolution/context_lengths
-# keys, copied blocks never resynced. Kept per the no-delete policy (P2.9);
-# use lotsa_mini / lotsa_base (which inherit from lotsa_tiny and redefine the
-# dimensions).
+# Deprecated orphaned root, do not use: stale dataset list, missing
+# multi-resolution and context_lengths keys. Use lotsa_mini / lotsa_base
+# (which inherit from lotsa_tiny and redefine the dimensions).
 # @package _global_
-# configs/model/timejepa_large.yaml
 
 model:
   name: "timejepa_large"
@@ -58,16 +55,14 @@ training:
     type: "vicreg"  # mse | smooth_l1 | cosine | vicreg
     finetune_type: "huber" # mse | mae | huber
     smooth_l1_beta: 1.0
-    # See base.yaml: `invariance_loss_weight` was missing (train.py crashed) and
-    # variance/covariance at 0.0 turned VICReg into plain MSE with no
-    # anti-collapse term.
+    # Non-zero variance/covariance weights keep VICReg from degenerating to MSE.
     invariance_loss_weight: 25.0
     variance_loss_weight: 15.0
     covariance_loss_weight: 1.0
   
   optimizer:
     name: "adamw"
-    learning_rate: 3.0e-4  # More conservative
+    learning_rate: 3.0e-4
     weight_decay: 0.05
     betas: [0.9, 0.95]
     eps: 1.0e-8
@@ -75,14 +70,14 @@ training:
   
   lr_scheduler:
     type: "cosine"
-    warmup_epochs: 0.2  # 20% warmup for a large model
+    warmup_epochs: 0.2
     min_lr: 1.0e-6
   
   max_epochs: 20
   
   ema:
     enabled: true
-    momentum_base: 0.999  # Slower for a large model
+    momentum_base: 0.999
     momentum_final: 1.0
     schedule: "cosine"
   
@@ -95,7 +90,7 @@ data:
   data_dir: "data/processed/"
   checkpoint_dir: "checkpoints/"
   output_dir: "lightning/"
-  datasets: [] # This load alls
+  datasets: []
   datasets_finetune: ["electricity", "m4_hourly", "australian-electricity-demand", "melbourne-pedestrian-count", "london-smart-meters"]
   datasets_eval: ["electricity", "m4_hourly"]
   combine_mode: "concatenate"
@@ -177,7 +172,7 @@ trainer:
   precision: "bf16-mixed"
   max_epochs: ${training.max_epochs}
   gradient_clip_val: ${training.gradient_clip_val}
-  accumulate_grad_batches: 12  # Effective batch ~3072
+  accumulate_grad_batches: 12  # effective batch ~3072
   val_check_interval: 0.05
   log_every_n_steps: ${training.log_every_n_steps}
   deterministic: false

@@ -1,5 +1,5 @@
 """
-Generates the synthetic corpus (G8 / P2.5) in the converted-corpus format.
+Generates the synthetic corpus in the converted-corpus format.
 
     # the three default families, ~1.6B observations, ~6.5 GB
     python scripts/generate_synthetic.py --out data/processed/synthetic
@@ -8,20 +8,18 @@ Generates the synthetic corpus (G8 / P2.5) in the converted-corpus format.
     python scripts/generate_synthetic.py --out data/processed/synthetic \\
         --chunks-per-family 50000 --seed 7
 
-Three families, one per measured gap (see src/timejepa/data/synthetic.py):
-  synthetic_subhourly   periods 24-150 steps, 8192 chunks  -> 10T/15T gap (E17)
+Three default families, one per measured gap (see src/timejepa/data/synthetic.py):
+  synthetic_subhourly   periods 24-150 steps, 8192 chunks  -> 10T/15T gap
   synthetic_broadband   periods 4-2048,       8192 chunks  -> diversity floor
-  synthetic_lowfreq     periods 4-52,         1280 chunks  -> short series (G7.1)
+  synthetic_lowfreq     periods 4-52,         1280 chunks  -> short series
 
-The output directory is SEPARATE from the real corpora on purpose: mixing is
-done by dropping/symlinking the .npy files into the target corpus directory,
-never by generating inside it - a corpus of a running job must not change
-under its feet, and the real/synthetic ratio is an experiment DECISION to
-record, not an implicit directory state.
+The output directory is separate from the real corpora on purpose: mixing is
+done by symlinking the .npy files into the target corpus directory, never by
+generating inside it, so a corpus of a running job never changes under its
+feet and the real/synthetic ratio is an explicit decision.
 
-The 8192 chunks are also the first data compatible with multi-resolution
-(f up to 6: 1280*6 = 7680 <= 8192) and therefore with the cross-resolution
-JEPA (G9.2) - the real 2048 chunks block f=2.
+The 8192-step chunks are long enough for multi-resolution factors up to 6
+(1280*6 = 7680 <= 8192), which the real 2048-step chunks are not.
 """
 
 import argparse

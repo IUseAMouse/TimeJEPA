@@ -1,23 +1,18 @@
 # @package _global_
 #
-# G4.6 - TRANSFER TO UNSEEN DATA, SCRATCH arm (the control).
-# Twin config: tiny_geo_lowdata (identical, WITH pretrained weights).
+# Transfer to unseen data, scratch arm (the control).
+# Twin config: tiny_geo_lowdata (identical, with pretrained weights).
 #
 #   python scripts/train.py --config-name tiny_geo_scratch_lowdata \
 #       wandb.run_name=lowdata-scratch
 #
-# WARNING: NO `+training.pretrained_encoder_path` - that is the whole point
-# of this config. Without the flag, the encoder starts from random init.
+# No `+training.pretrained_encoder_path`, by design: the encoder starts from
+# random init.
 #
-# This config inherits from tiny_geo_lowdata and ONLY changes the model name.
-# Everything else - architecture, geometry, epochs, finetune mode, decoder,
-# datasets, seed - is therefore identical by construction, and stays so if
-# either one is modified. That guarantees the experiment carries a single
+# This config inherits from tiny_geo_lowdata and only changes the model
+# name, so architecture, geometry, epochs, finetune mode, decoder, datasets
+# and seed stay identical by construction. The experiment carries a single
 # variable: the presence or absence of pretrained weights.
-#
-# Note on the corpus asymmetry: m4-hourly and nn5-daily were never seen by
-# the PRETRAIN (dropped by the length filter at window 1280). For this arm
-# the question does not arise - it saw nothing at all.
 #
 # See tiny_geo_lowdata for the full protocol and reasoning.
 defaults:

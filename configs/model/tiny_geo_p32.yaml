@@ -1,6 +1,6 @@
 # @package _global_
 #
-# PATCH 32/16 ARM of the geometry round. Identical to tiny_geo except patching.
+# Patch 32/16 arm of the geometry round. Identical to tiny_geo except patching.
 #
 #   python scripts/train.py    --config-name tiny_geo_p32 wandb.run_name=geo-p32
 #   python scripts/train.py    --config-name tiny_geo_p32 training.mode=finetune \
@@ -8,22 +8,14 @@
 #   python scripts/evaluate.py --config-name tiny_geo_p32 \
 #       +checkpoint_path=checkpoints/timejepa_tiny_geo_p32/pretrain_False/<ckpt>
 #
-# Why a config rather than two overrides
-# ---------------------------------------------
-# `model.patch_length=32 model.stride=16` had to be repeated on EVERY command
-# of the arm - train, finetune, eval, context sweep. Forgetting it at finetune
-# raises a RuntimeError (loud, recoverable); forgetting it at EVAL only warns
-# "re-initialising patching.*" and outputs silently wrong numbers, produced by
-# a reinitialized patching layer under a trained encoder. A named config
-# removes the error class.
+# Why a config rather than two overrides: `model.patch_length=32
+# model.stride=16` had to be repeated on every command of the arm.
+# Forgetting it at finetune raises a RuntimeError; forgetting it at eval
+# only warns "re-initialising patching.*" and outputs wrong numbers.
 #
-# The question this arm settles
-# --------------------------------
-# 63 tokens at ctx 1024 instead of 127: ~4x less attention. The
-# patch16/patch32 comparison was never clean (2nd vs 3rd batch also differed
-# by the whole P1 bundle and by ftall); here the two arms differ ONLY by the
-# patch. Real stake: if patch32 matches patch16, LOTSA-scale training costs
-# 4x less - worth knowing before paying for G5.
+# The question: 63 tokens at ctx 1024 instead of 127, ~4x less attention.
+# Here the two arms differ only by the patch. If patch32 matches patch16,
+# LOTSA-scale training costs 4x less.
 defaults:
   - tiny_geo
   - _self_

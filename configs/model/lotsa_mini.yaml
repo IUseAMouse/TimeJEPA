@@ -1,31 +1,20 @@
 # @package _global_
 #
-# G5 - LOTSA PRETRAIN, mini scale (5.1M parameters).
+# LOTSA pretrain, mini scale (5.1M parameters, below Chronos-Bolt-Tiny ~9M,
+# Moirai-small ~14M, TiRex ~35M).
 #
 #   make train CONFIG=lotsa_mini ARGS="trainer.accumulate_grad_batches=2 wandb.run_name=lotsa-mini"
 #
-# The project's target: 5M parameters, i.e. BELOW the smallest serious
-# competitor (Chronos-Bolt-Tiny ~9M, Moirai-small ~14M, TiRex ~35M). A model
-# of this size well trained on a diverse corpus is a credible candidate for
-# the small-size category; aiming for absolute #1, no - the top of the
-# leaderboard sits between 35M and 500M.
+# Inherits from `lotsa_tiny` for everything that is not model size (corpus,
+# memmap, exclusions, stride, 1024/256 geometry, sigreg loss, quantile
+# decoder), so the only variable across scales is capacity.
 #
-# Inherits from `lotsa_tiny` for EVERYTHING that is not model size: converted
-# corpus, memmap, exclusions, stride, 1024/256 geometry, sigreg loss,
-# quantile decoder. The only variable is capacity - that is what makes the
-# cross-scale comparison interpretable.
+# The dimensions are written explicitly rather than inherited from `mini.yaml`,
+# whose `data` block would overwrite the LOTSA corpus; a test verifies they
+# stay identical to the reference.
 #
-# The dimensions are written EXPLICITLY rather than inherited from
-# `mini.yaml`: that file also carries its own `data` block, which would
-# overwrite the LOTSA corpus. A test verifies they stay identical to the
-# reference.
-#
-# Batch and accumulation
-# ---------------------
-# batch 384 x accumulation 1 x 3 GPUs = 1152 effective batch, in the order of
-# magnitude of the reference runs' 1536. TO VALIDATE with a short run: these
-# values are a starting point for 24 GB at context 1024, not a measurement.
-#   +trainer.max_steps=5000 to bound the smoke test.
+# Batch 384 x accumulation 1 x 3 GPUs = 1152 effective batch, a starting point
+# for 24 GB at context 1024. +trainer.max_steps=5000 bounds a smoke test.
 defaults:
   - lotsa_tiny
   - _self_

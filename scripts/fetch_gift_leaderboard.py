@@ -1,26 +1,24 @@
-# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round (the
-# 2026-08-24 leaderboard snapshot vendored under docs/assets/gift_leaderboard/);
-# kept per the no-delete policy.
+# Deprecated: one-shot script that produced the snapshot vendored under
+# docs/assets/gift_leaderboard/; kept for reference.
 """
 Local snapshot of the GIFT-Eval leaderboard (HF space Salesforce/GIFT-Eval).
 
     python scripts/fetch_gift_leaderboard.py            # -> docs/assets/gift_leaderboard/<date>/
 
 Downloads each leaderboard model's official all_results.csv, then recomputes
-BOTH aggregates (MASE and CRPS/WQL) with the leaderboard formula - geometric
-mean of per-config ratios against the official Seasonal_Naive - i.e. exactly
-our harness's convention (evaluation/gift.py).
+both aggregates (MASE and CRPS/WQL) with the leaderboard formula: geometric
+mean of per-config ratios against the official Seasonal_Naive, the same
+convention as our harness (evaluation/gift.py).
 
-Why vendor rather than consult the site: (1) the ranks cited in the registry
-(E17, E19...) must stay verifiable even if the leaderboard moves; (2) the
-competitors' raw per-config files enable tail comparisons (the E18
-decomposition against Moirai_small, TTM, etc.) without re-scraping.
+The snapshot is vendored so that cited ranks stay verifiable when the
+leaderboard moves, and so that per-config comparisons with other models do
+not require re-scraping.
 
 Outputs:
     docs/assets/gift_leaderboard/<date>/raw/<model>.csv     (official 97 configs)
     docs/assets/gift_leaderboard/<date>/leaderboard.csv     (rank, MASE ratio, CRPS ratio)
-A model missing the Seasonal_Naive's full config set is aggregated on the
-intersection and marked (n_configs) - stated, not hidden.
+A model missing part of the Seasonal_Naive config set is aggregated on the
+intersection and marked with its n_configs.
 """
 
 import argparse
@@ -64,11 +62,10 @@ def geomean(vals):
 
 def fetch_meta(models, out_dir: Path):
     """
-    Enrichment (2026-08-24): submission config.json files carry the official
-    ORG, model link, model_type, testdata_leakage,
-    replication_code_available - and the linked model's HF API gives the real
-    size (safetensors.total). Vendored in models_meta.csv, next to the
-    ranking, for gift_rank.py.
+    Submission config.json files carry the org, model link, model_type,
+    testdata_leakage and replication_code_available fields, and the linked
+    model's HF API gives its size (safetensors.total). Written to
+    models_meta.csv next to the ranking, for gift_rank.py.
     """
     rows = []
     for i, m in enumerate(models):

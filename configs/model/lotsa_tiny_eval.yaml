@@ -1,38 +1,27 @@
 # @package _global_
 #
-# G5 - ZERO-SHOT EVALUATION of a model trained entirely on LOTSA.
+# Zero-shot evaluation of a model trained entirely on LOTSA.
 #
 #   python scripts/evaluate.py --config-name lotsa_tiny_eval \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_zs/pretrain_False/<ckpt>
 #
-# Why a separate eval config
-# ----------------------------------
-# Neither `lotsa_tiny` nor `lotsa_tiny_zeroshot` fits: their `data.data_dir`
-# points to LOTSA, so the "local datasets" evaluation would run on the
-# TRAINING corpus - the exact opposite of what we want to measure.
+# Why a separate eval config: neither `lotsa_tiny` nor `lotsa_tiny_zeroshot`
+# fits, their `data.data_dir` points to LOTSA, so the "local datasets"
+# evaluation would run on the training corpus. `tiny_geo` fits by
+# coincidence (same geometry, Monash data), but the day one geometry moves
+# the eval would load a checkpoint of incompatible shape, and at evaluation
+# a wrong geometry only warns (`re-initialising patching.*`) and outputs
+# wrong numbers. A test verifies this config's geometry stays identical to
+# `lotsa_tiny`'s.
 #
-# `tiny_geo` would fit by coincidence (same geometry, Monash data), but that
-# is a fragile coupling: the day one of the two geometries moves, the eval
-# would load a checkpoint of incompatible shape. And at evaluation a wrong
-# geometry only WARNS (`re-initialising patching.*`) and outputs silently
-# wrong numbers - the trap already hit on the p32 arm.
+# What is zero-shot here: the "Nixtla Long-Horizon Benchmarks" section is
+# fully zero-shot (the conversion excludes ett1, ett2, electricity_15min,
+# traffic_hourly, traffic_weekly, Q-TRAFFIC, weather, oikolab_weather, plus
+# the 28 GIFT-Eval directories); those are the publishable numbers,
+# comparable to Chronos / Moirai / TimesFM / Toto.
 #
-# This config makes the intent explicit, and a test verifies its geometry
-# stays identical to `lotsa_tiny`'s: if the two diverge, the test breaks
-# instead of the evaluation.
-#
-# What is REAL zero-shot here, and what is not
-# -------------------------------------------------------
-# The "Nixtla Long-Horizon Benchmarks" section is fully zero-shot.
-#    Verified on the actual `make lotsa-list` output (2026-08-13): the
-#    conversion excludes ett1, ett2, electricity_15min, traffic_hourly,
-#    traffic_weekly, Q-TRAFFIC, weather, oikolab_weather, plus the 28
-#    GIFT-Eval directories. That is the section carrying the publishable
-#    numbers, comparable to Chronos / Moirai / TimesFM / Toto.
-#
-# WARNING: the "Local datasets" section is NOT entirely zero-shot. It
-#    evaluates on the Monash corpus, several entries of which have a KEPT
-#    equivalent in LOTSA:
+# The "Local datasets" section is not entirely zero-shot: it evaluates on
+# the Monash corpus, and these entries have a kept equivalent in LOTSA:
 #
 #      london-smart-meters        <- london_smart_meters_with_missing
 #      bitcoin                    <- bitcoin_with_missing
@@ -42,16 +31,10 @@
 #      sunspot-daily              <- sunspot_with_missing
 #      melbourne-pedestrian-count <- pedestrian_counts
 #
-#    Those lines are therefore IN-DOMAIN, not zero-shot, and must not be
-#    presented as such. The other local entries (electricity-hourly,
-#    traffic-hourly, m4-hourly, nn5-daily, solar-10-minute, saugeenday,
-#    australian-electricity-demand, us-births, rain-temperature,
-#    wikipedia-web-traffic) are covered by the exclusion and stay zero-shot.
-#
-#    Why not curate the list: it would require maintaining an exhaustive
-#    Monash-LOTSA mapping, aliases included, and one omission would silently
-#    produce a false zero-shot claim. Documenting is safer than claiming a
-#    completeness that is not guaranteed.
+# Those lines are in-domain and must not be presented as zero-shot. The other
+# local entries are covered by the exclusion. The list is not curated out of
+# the eval because an exhaustive Monash-LOTSA mapping, aliases included, is
+# hard to maintain and one omission would produce a false zero-shot claim.
 defaults:
   - tiny_geo
   - _self_
@@ -62,7 +45,7 @@ model:
   name: "timejepa_lotsa_tiny_zs"
 
 # data inherits from tiny_geo: Monash corpus, use_mmap absent (so False).
-# Intended - this data is the TARGET of the evaluation, not of training.
+# This data is the target of the evaluation, not of training.
 
 wandb:
   tags:

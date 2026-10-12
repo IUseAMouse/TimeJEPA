@@ -1,7 +1,7 @@
 """
 Unit tests for JEPA-TST model.
 
-Deprecated since I removed the create_jepa_tst_mini, tiny, base and large methods to favor loading configs with hydra
+Deprecated: the create_jepa_tst_* factories were replaced by Hydra configs.
 """
 
 import pytest

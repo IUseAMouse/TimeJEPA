@@ -1,14 +1,13 @@
 # @package _global_
-# Zero-shot finetune of the v3 corpus - frozen G7.3c protocol (1 cosine
-# epoch, selection by GIFT eval, all checkpoints kept).
+# Zero-shot finetune of the v3 corpus (1 cosine epoch, selection by GIFT
+# eval, all checkpoints kept).
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny_v3/pretrain_True/last.ckpt"'
 #
-# FINETUNE augmentations stay the inherited (light) ones - the TiRex-style
-# ones are a PRETRAIN lever; adding them at finetune would be one more
-# unmeasured variable. Rationing inherited from lotsa_tiny_v3 (same sampler
-# on both sides of the v3 pretrain/finetune - bundle coherence).
+# Finetune augmentations stay the inherited (light) ones: the TiRex-style
+# ones are a pretrain lever. Rationing inherited from lotsa_tiny_v3 (same
+# sampler on both sides of the v3 pretrain/finetune).
 defaults:
   - lotsa_tiny_v3
   - _self_
@@ -22,8 +21,8 @@ training:
   max_epochs: 1
 
 checkpoint:
-  # G7.3c doctrine: selection happens via GIFT eval, not val_loss - keep
-  # EVERYTHING (~20 checkpoints x 16 MB), and the SWA soup becomes possible.
+  # Selection happens via GIFT eval, not val_loss: keep every checkpoint
+  # (~20 x 16 MB), which also allows checkpoint averaging.
   save_top_k: -1
 
 data:

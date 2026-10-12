@@ -1,18 +1,15 @@
-# Paper figure generator (gate-fan surgery figure).
 """
-Paper figure: the fan WITH and WITHOUT the z gate, on a real GIFT window.
+Paper figure: the fan with and without the z gate, on a real GIFT window.
 
     python scripts/plot_gate_fan.py \\
         --checkpoint checkpoints/champions/esjepa45_mase0.8739_crps0.5981.ckpt \\
         --model-config lotsa_tiny_esjepa_eval \\
         --config solar/10T/short --window 5
 
-The experimental artifact to show (E21, review 2026-08-31: "a figure would be
-worth more than the paragraph"): with an IDENTICAL checkpoint, cutting the
-gate (z_gate -> 0 surgery at eval, no retraining) blows the fan up to its
-worst-case envelope (+18.7 pts of aggregate CRPS, coverage 0.790 -> 0.968)
-while the MEDIAN does not move a bit - the median's structural invariance,
-visible by eye on a single window.
+With an identical checkpoint, cutting the gate (z_gate -> 0 at eval, no
+retraining) blows the fan up to its worst-case envelope (+18.7 pts of
+aggregate CRPS, coverage 0.790 -> 0.968) while the median does not move:
+the median's structural invariance, visible on a single window.
 
 Output: paper/figures/gate_fan_<config>.pdf (and .png), two panels sharing
 the axis: truth + median + q10-q90 band, gate ON / gate OFF.

@@ -1,30 +1,25 @@
 # @package _global_
 #
-# RUN A - "MIXED CONTROL": corpus (winning base + synthetic + chronos)
-# + robust arcsinh scaler (G8.4). Baseline of the xres arm.
+# Mixed control: corpus (base + synthetic + chronos) + robust arcsinh scaler.
+# Baseline of the xres arm.
 #
 #   python scripts/train.py --config-name lotsa_tiny_mix wandb.run_name=mix-control
 #   # then: lotsa_tiny_mix_zeroshot (finetune) and lotsa_tiny_mix_eval (evals)
 #
-# BUNDLING DECISION (user, 2026-08-20, limited compute): this run bundles
-# THREE changes vs tiny-full - mixed corpus (symlinks), arcsinh scaler, and it
-# serves as the control for xres. We give up isolating synthetic / chronos /
-# arcsinh from each other (chronos ~0.5% of the corpus, never measurable
-# alone; arcsinh judged "not worth a dedicated run"). What STAYS isolable:
-#   * mix vs tiny-full  = mixed corpus + arcsinh + standalone targets +
-#     2-epoch finetune, as a package (each item listed in E18);
-#   * xres vs mix       = the cross-resolution OBJECTIVE, ONE variable - made
-#     true by the 2026-08-20 audit: mix ALSO adopts contextualized_targets:false
-#     (forced on the xres side by the physics of the two grids), otherwise the
-#     comparison carried two settings. The cost (standalone EMA target: the
-#     target encoder sees 31 patches while the online one sees 127) is paid by
-#     BOTH arms - measured, not dodged.
+# This run bundles three changes vs tiny-full (mixed corpus via symlinks,
+# arcsinh scaler, standalone targets) because compute was limited; chronos is
+# ~0.5% of the corpus and never measurable alone. What stays isolable:
+#   * mix vs tiny-full  = the package above plus the 2-epoch finetune;
+#   * xres vs mix       = the cross-resolution objective, one variable. mix
+#     also adopts contextualized_targets: false (forced on the xres side by
+#     the two grids), so the cost of standalone EMA targets (the target
+#     encoder sees 31 patches while the online one sees 127) is paid by both.
 #
 # The scaler (components/robust_scale.py): arcsinh((x-median)/MAD) on input,
-# sinh on output, RevIN intact in the middle. Expected: heavy-tailed configs
-# (bitbrains 3.6-6.0 MASE, car_parts CRPS>1, bizitobs) - the "domain" half of
-# E17. The checkpoint self-describes (robust_scaler.is_robust marker): any
-# flag/checkpoint mismatch is refused at load time (P3.2).
+# sinh on output, RevIN intact in the middle. Expected to help heavy-tailed
+# configs (bitbrains, car_parts, bizitobs). The checkpoint self-describes
+# (robust_scaler.is_robust marker): any flag/checkpoint mismatch is refused
+# at load time.
 defaults:
   - lotsa_tiny
   - _self_
@@ -34,24 +29,17 @@ model:
   robust_scale: true
 
 training:
-  # LR cap 3e-4 (decision 2026-08-21, inherited: 7.5e-4 from tiny.yaml).
-  # Two supports: (a) mechanistic - at high LR the online encoder outruns the
-  # EMA teacher and the latent targets drift constantly, the hard objective is
-  # paid twice; (b) the tiny-full pretrain showed a late contraction of
-  # effective rank (47 -> 37 over the last quarter), to watch here. No
-  # ablation (1 day/run): shared by mix AND xres, so their duel stays clean;
-  # one more bundle item vs tiny-full (E18+).
+  # LR cap 3e-4 (tiny.yaml inherits 7.5e-4): at high LR the online encoder
+  # outruns the EMA teacher and the latent targets drift, and the tiny-full
+  # pretrain showed a late contraction of effective rank (47 -> 37). Shared
+  # by mix and xres so their comparison stays clean.
   optimizer:
     learning_rate: 3.0e-4
-  # 2 epochs (decision 2026-08-21): budget cap rather than strict
-  # single-pass - cut by hand if the second epoch looks useless.
-  # The cosine spans 2 epochs: a manual stop at the end of epoch 1 leaves the
-  # LR at ~50% of max, not annealed (same artifact as tiny-full's midway
-  # checkpoint) - keep in mind when comparing to tiny-full, which was annealed
-  # over exactly 1 epoch.
+  # 2 epochs as a budget cap. The cosine spans both: a manual stop at the end
+  # of epoch 1 leaves the LR at ~50% of max, not annealed, unlike tiny-full
+  # which was annealed over exactly 1 epoch.
   max_epochs: 2
-  # Audit 2026-08-20 (C1): aligned with xres so the xres-vs-mix duel carries
-  # only one variable. See the header.
+  # Aligned with xres so the xres-vs-mix comparison carries one variable.
   contextualized_targets: false
 
 trainer:

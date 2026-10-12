@@ -1,44 +1,31 @@
 # @package _global_
 #
-# G5 - FINETUNE ON LOTSA, for a ZERO-SHOT evaluation. The main protocol.
+# Finetune on LOTSA, for a zero-shot evaluation. The main protocol.
 #
 #   python scripts/train.py --config-name lotsa_tiny_zeroshot \
 #       '+training.pretrained_encoder_path="checkpoints/timejepa_lotsa_tiny/pretrain_True/<ckpt>"' \
 #       wandb.run_name=lotsa-zeroshot
 #
-#   # evaluation: Monash and Nixtla were NEVER seen, not at pretrain nor here
+#   # evaluation: Monash and Nixtla were never seen, not at pretrain nor here
 #   python scripts/evaluate.py --config-name tiny_geo \
 #       +checkpoint_path=checkpoints/timejepa_lotsa_tiny_zs/pretrain_False/<ckpt>
 #
-# Why finetune on LOTSA and not on Monash
-# ----------------------------------------------
-# The architecture requires a finetune: after the JEPA pretrain, the decoder
-# is still random. So we cannot be zero-shot "for free" like Chronos or
-# Moirai, trained end to end to forecast.
+# Why finetune on LOTSA and not on Monash: after the JEPA pretrain the
+# decoder is still random, so a finetune is required. Finetuning on Monash
+# would reopen the contamination with supervised targets on the evaluation's
+# series: `electricity-hourly` is the Nixtla benchmark `electricity`
+# (5260/26304 = the last 20%), `traffic-hourly` is `traffic` (3508/17544),
+# and the sequential split covers those series over their whole span.
+# Training both stages on LOTSA makes training and evaluation corpora
+# disjoint by construction, verifiable in the conversion log, and produces
+# numbers comparable to Chronos / Moirai / TimesFM / Toto.
 #
-# But finetuning on Monash would reopen the contamination, and worse - with
-# SUPERVISED targets on the evaluation's series and time window:
-# `electricity-hourly` IS the Nixtla benchmark `electricity` (5260/26304 =
-# the last 20%), `traffic-hourly` IS `traffic` (3508/17544). The
-# train/val/test split being sequential on per-series grouped indices,
-# training covers those series over their whole span.
-#
-# Training BOTH stages on LOTSA makes training and evaluation corpora
-# disjoint by construction, verifiable in the conversion log. It is the
-# protocol of the literature, and the only way to produce numbers comparable
-# to Chronos / Moirai / TimesFM / Toto.
-#
-# What to expect, to avoid misreading it
-# ------------------------------------------
-# Absolute numbers will DROP versus the Monash runs, probably sharply on
-# traffic and electricity. This is not a regression: it is the disappearance
-# of a contamination artifact. On top comes a real cost, giving up domain
-# adaptation (E3: +12 skill points for a diverse finetune). The two effects
-# add up and cannot be separated in this run.
-#
-# The alternative arm `lotsa_tiny_finetune` adapts to the Monash domain:
-# better absolute numbers, but contaminated on electricity and traffic, so
-# not publishable as is. It remains useful as an upper bound.
+# Absolute numbers drop versus the Monash runs, sharply on traffic and
+# electricity: that is the disappearance of a contamination artifact plus
+# the real cost of giving up domain adaptation. The alternative arm
+# `lotsa_tiny_finetune` adapts to the Monash domain: better absolute
+# numbers, but contaminated on electricity and traffic, useful only as an
+# upper bound.
 defaults:
   - lotsa_tiny
   - _self_
@@ -48,12 +35,12 @@ model:
 
 training:
   mode: "finetune"
-  # Same mode as the E11/E12 arms, so the numbers compare.
+  # Same mode as the earlier finetune arms, so the numbers compare.
   finetune_mode: "full_finetune"
 
 data:
-  # null => glob of the LOTSA directory, exactly like the pretrain.
-  # This is the line that does everything: the decoder only sees LOTSA.
+  # null => glob of the LOTSA directory, exactly like the pretrain, so the
+  # decoder only sees LOTSA.
   datasets_finetune: null
 
 wandb:

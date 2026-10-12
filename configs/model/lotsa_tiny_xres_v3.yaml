@@ -1,27 +1,24 @@
 # @package _global_
 #
-# G9.3 - xres-AMENDED PRETRAIN on the v3 recipe (premise verdict 2026-08-31).
-# WARNING - TRIGGER-GATED RUN: only launch if (1) the post-mini per-config
-# tail is still cross-frequency AND (2) RateIN@eval showed juice
+# Cross-resolution (xres) pretrain on the v3 recipe. Launched only if the
+# per-config tail is still cross-frequency and RateIN at eval shows a gain
 # (oracle-k > +5% somewhere) but hits a wall (missed detections or smoothing
-# ceiling). Otherwise, this file stays a spec.
+# ceiling).
 #
 #   python scripts/train.py --config-name lotsa_tiny_xres_v3 wandb.run_name=xres-v3
 #   # then: lotsa_tiny_xres_v3_zeroshot and lotsa_tiny_xres_v3_eval
 #
-# WHY AMENDED - the 3 defects of bare xres (G9.2), each fixed:
-#   1. "w=1 at GIFT eval => capacity never used" -> inference can pass w
-#      (forecast(w=...)), and RateIN provides the causal k; failing that, the
-#      gain goes through the encoder's rate coherence, EXERCISED (2).
-#   2. "zero slope gradient at finetune (log2(1)=0)" -> the finetune
-#      exercises w!=1 pairs (p_multi_resolution_finetune) + lambda*MSE anchor
-#      (the E18b/E21 wiring law: a capacity survives iff traversed).
-#   3. "k1>1 material rare and synthetic" -> v3 corpus: ~54% of the batch in
-#      8192 chunks (audit 2026-08-27), x5.7 vs the G9.2 era.
+# Amendments to the bare xres arm (lotsa_tiny_xres):
+#   1. w=1 at GIFT eval left the capacity unused -> inference can pass w
+#      (forecast(w=...)), and RateIN provides the causal k.
+#   2. Zero slope gradient at finetune (log2(1)=0) -> the finetune exercises
+#      w!=1 pairs (p_multi_resolution_finetune) + lambda*MSE anchor, since a
+#      capacity survives only if traversed.
+#   3. k1>1 material was rare and synthetic -> v3 corpus: ~54% of the batch
+#      in 8192 chunks.
 #
-# Declared bundle (one-variable duel against the lotsa_tiny_v3 control):
-# xres objective + pairs at finetune + anchor. Predictions P-x.1..3 recorded
-# in the registry AT LAUNCH (not before - the trigger may refine them).
+# Bundle (one-variable comparison against the lotsa_tiny_v3 control): xres
+# objective + pairs at finetune + anchor.
 defaults:
   - lotsa_tiny_v3
   - _self_
@@ -32,8 +29,8 @@ model:
 
 training:
   # Inherited from the mix/v3 lineage but restated: standalone targets are
-  # MANDATORY with xres (concatenating [ctx||target] on two grids is
-  # physically wrong - hard guard in the module).
+  # required with xres (concatenating [ctx||target] on two grids is wrong;
+  # hard guard in the module).
   contextualized_targets: false
 
 data:

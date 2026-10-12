@@ -1,42 +1,35 @@
 # @package _global_
 #
-# CORPUS V3 - the RECIPE RUN of the S2 roadmap (accepted bundle, approved by
-# on 2026-08-24; PLAN section 0bis, card E19).
+# Corpus v3 recipe run.
 #
 #   python scripts/train.py --config-name lotsa_tiny_v3 wandb.run_name=v3
 #   # then: lotsa_tiny_v3_zeroshot (1-epoch finetune) and lotsa_tiny_v3_eval
 #
-# WARNING - PREREQUISITE: the corpus data/processed/lotsa_v3 must exist -
-# assembly recipe (roadmap S2.4, to run on the pod, WITH audit):
+# Prerequisite: the corpus data/processed/lotsa_v3 must exist. Assembly:
 #   1. python scripts/generate_synthetic.py --set v3 --out data/processed/synthetic_v3 \
-#          --chunks-per-family <sized by the audit - "target batch first"
-#          principle: aim for ~40-50% synthetic batch share>
+#          --chunks-per-family <sized by the audit: aim for ~40-50% synthetic batch share>
 #   2. python scripts/prepare_lotsa.py --out data/processed/lotsa_short \
 #          --subsets m1_monthly m1_quarterly m1_yearly monash_m3_monthly \
 #          monash_m3_other monash_m3_quarterly monash_m3_yearly tourism_monthly \
 #          tourism_quarterly tourism_yearly nn5_daily_with_missing nn5_weekly \
 #          --min-length 384 --chunk-length 1280 --pad-to 1280
 #   3. python scripts/prepare_lotsa.py --out data/processed/lotsa_solar \
-#          --subsets solar_power   # readmitted 2026-08-24, 3 lotsa.py checks
+#          --subsets solar_power
 #   4. python scripts/decimate_corpus.py --src data/processed/lotsa_full \
 #          --dst data/processed/decimated --factors 2,3 --families <dense 5T>
 #   5. mkdir data/processed/lotsa_v3 && ln -s the .npy from lotsa_xres +
 #      synthetic_v3 + lotsa_short + lotsa_solar + decimated
 #   6. python scripts/audit_batch_schedule.py --config-name lotsa_tiny_v3
-#      -> adjust volumes until the target composition, RECORD the audit.
+#      -> adjust volumes until the target composition.
 #
-# DECLARED BUNDLE (each item in the registry, predictions P-v3.1..4 recorded E19):
-#   * synthetic ~40-50% of the batch: 3 v1 families + ops_bursty (bizitobs -
-#     P-v3.1: 10S geomean 1.387 -> <1.0) + intermittent (car_parts);
-#   * real short series pad-to-1280 (P-v3.2: A/Q/M/W block -10%);
-#   * real solar_power + 5T->10T/15T decimation (P-v3.3: electricity/15T/long
-#     1.206 -> <1.0);
-#   * TiRex-style augmentations (the biggest line of THEIR ablation, +0.019);
-#   * G10.2 sampler rationing (stable composition over the epoch - the
-#     2026-08-24 finetune verdict leaves it neutral at finetune, but the
-#     PRETRAIN argument - final annealing on constant composition - holds);
-#   * P-v3.4: aggregate <= 0.59 BEFORE inference layers (flip = ~-2.4% extra).
-# Outside the bundle (one variable each, vs THIS control): xres, h512/h768,
+# The bundle vs lotsa_tiny_mix:
+#   * synthetic ~40-50% of the batch: 3 v1 families + ops_bursty + intermittent;
+#   * real short series pad-to-1280;
+#   * real solar_power + 5T->10T/15T decimation;
+#   * TiRex-style augmentations (the biggest line of their ablation, +0.019);
+#   * sampler rationing (stable composition over the epoch, so the final
+#     annealing happens on a constant composition).
+# Outside the bundle (one variable each, vs this control): xres, h512/h768,
 # esjepa-v2, long-context curriculum.
 defaults:
   - lotsa_tiny_mix
@@ -46,10 +39,9 @@ model:
   name: "timejepa_lotsa_tiny_v3"
 
 checkpoint:
-  # Keep everything AT PRETRAIN too (2026-08-26): a val plateau freezes the
-  # top-3 mid-run and deprives the probe-judge series of the late
-  # checkpoints - and judge-checkpoint selection is its own axis (E20c),
-  # distinct from val and from GIFT. ~40 ckpts x 16 MB, zero cost.
+  # Keep every pretrain checkpoint: a val plateau freezes the top-3 mid-run,
+  # and judge-checkpoint selection is its own axis, distinct from val and
+  # from GIFT. ~40 ckpts x 16 MB.
   save_top_k: -1
 
 data:
@@ -58,7 +50,7 @@ data:
 
 augmentations:
   pretrain:
-    # TiRex-style (v3) - see augmentations.py; the rest inherits from tiny.yaml.
+    # TiRex-style (v3), see augmentations.py; the rest inherits from tiny.yaml.
     amplitude_mod_enabled: true
     p_amplitude_mod: 0.5
     censor_enabled: true

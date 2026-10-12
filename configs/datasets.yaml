@@ -1,5 +1,5 @@
 datasets:
-  # Tes datasets actuels
+  # Current datasets
   electricity-hourly:
     url: "https://zenodo.org/record/4656140/files/electricity_hourly_dataset.zip?download=1"
     description: "Electricity consumption hourly - 321 series"

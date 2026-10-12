@@ -4,7 +4,7 @@ Is forecast uncertainty already encoded in the representations?
 
 The question decides where a probabilistic head can live. The predictor is
 trained under MSE against the target latent, so it converges to
-E[z_target | z_context] - a conditional MEAN by construction (measured:
+E[z_target | z_context], a conditional mean by construction (measured:
 pred_var 0.6 against target_var 0.95). The spread lives in the residual between
 predicted and actual target latent, which the model never sees at inference.
 
@@ -25,12 +25,12 @@ answering a different design question:
     z_ctx       the context embeddings (mean+std pooled).
                 This is what wiring the context into the head adds.
 
-    z_ctx+z_pred    both - the full context-fed input.
+    z_ctx+z_pred    both, the full context-fed input.
 
 Read it as: if z_ctx clearly beats z_pred, wiring the context into the decoder
 is worth it (context-fed over latent-only). If neither beats ctx_std by much, the encoder is
 not representing volatility and a decoder-side head will be limited whatever we
-feed it - which is the case for revisiting the pretraining objective (option C).
+feed it, which is the case for revisiting the pretraining objective.
 
 Usage:
     python scripts/probe_uncertainty.py +checkpoint_path=path/to/finetuned.ckpt
@@ -114,7 +114,7 @@ def collect(model, loader, horizon: int, device, max_windows: int) -> Dict[str, 
     """
     Run the model and record, per window, the features and the realised error.
 
-    The error is measured in the NORMALIZED space - the same space the finetune
+    The error is measured in the normalized space, the same space the finetune
     loss uses - so that windows of wildly different scale stay comparable.
     """
     feats = {"ctx_std": [], "z_ctx": [], "z_pred": []}

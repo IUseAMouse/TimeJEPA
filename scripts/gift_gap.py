@@ -1,26 +1,21 @@
-# DEPRECATED (2026-09-01 audit) - one-shot script from a closed round (the
-# E18/E19 gap decomposition); kept per the no-delete policy.
+# Deprecated: one-shot analysis script from a closed experiment round, kept for reference.
 """
-Per-config decomposition of the GIFT-Eval gap - us vs the target competitors.
+Per-config decomposition of the GIFT-Eval gap against the target competitors.
 
     python scripts/gift_gap.py \
         --per-config evaluation/timejepa_lotsa_tiny_zs/mix1ep3e4_25pct_mase0.8914_crps0.6134/gift/per_config
 
 Crosses our per-config files (JSON from the evaluate_gift.py harness) with the
-competitors' vendored OFFICIAL per-config files
+competitors' vendored official per-config files
 (docs/assets/gift_leaderboard/<date>/raw/), in the leaderboard convention
-(ratios vs the OFFICIAL Seasonal_Naive, geomean).
+(ratios vs the official Seasonal_Naive, geomean).
 
 Reports:
-  1. the TAIL: configs ranked by contribution to the CRPS geomean
-     (log-contribution), with the "geomean without the tail";
-  2. aggregates by FREQUENCY and by TERM;
+  1. the tail: configs ranked by log-contribution to the CRPS geomean, with
+     the geomean without the tail;
+  2. aggregates by frequency and by term;
   3. the per-config duel against each competitor: where we lose most, where
      we win, and the what-if "tail brought down to the competitor's level".
-
-This is the E19 map: it writes the falsifiable per-config predictions of the
-next runs (v3 corpus, h512, xres) and checks the E18 prediction ("the mix
-must compress the 16-config tail").
 """
 
 import argparse
@@ -86,7 +81,7 @@ def main():
         print(f"warning: only {len(common)}/97 configs (incomplete eval? "
               f"partial per_config?) - the analysis covers the intersection.")
 
-    # our ratios (leaderboard convention: vs OFFICIAL SN)
+    # our ratios (leaderboard convention: vs official SN)
     r_mase = {c: ours[c][0] / sn[c][0] for c in common}
     r_crps = {c: ours[c][1] / sn[c][1] for c in common}
     g_mase, g_crps = geomean(r_mase.values()), geomean(r_crps.values())
@@ -95,7 +90,7 @@ def main():
     print(f"{n} configs | geomean vs official SN: MASE {g_mase:.4f} | CRPS {g_crps:.4f}")
     print(f"{'=' * 80}")
 
-    # 1. THE TAIL (by CRPS log-contribution to the geomean)
+    # 1. The tail (by CRPS log-contribution to the geomean)
     contrib = sorted(common, key=lambda c: r_crps[c], reverse=True)
     tail = contrib[:args.tail]
     body = [c for c in common if c not in tail]
@@ -142,7 +137,7 @@ def main():
         print("  where we WIN the most:")
         for c in best:
             print(f"    {c:<38s} x{rel[c]:.2f}  (us {r_crps[c]:.3f} vs them {t_crps[c]:.3f})")
-        # what-if: the tail brought down to THEIR level
+        # what-if: the tail brought down to the competitor's level
         whatif = [min(r_crps[c], t_crps[c]) if c in tail else r_crps[c] for c in both]
         print(f"  WHAT-IF tail({args.tail}) brought to their level: "
               f"CRPS {geomean(whatif):.4f} (actual {geomean([r_crps[c] for c in both]):.4f})")

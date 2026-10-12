@@ -1,12 +1,10 @@
 """
-Tests for the CORPUS PIPELINE (extracted from test_p0_regressions.py,
-2026-08-19 audit - moved verbatim, no test rewritten).
+Tests for the corpus pipeline.
 
-Covers: B17 (a too-short dataset does not kill a multi-dataset run), G5
-(purely additive LOTSA integration: exclusions, mmap, _pack_series), B22
-(object arrays of uniform survivors), B18 (torch version drift in the
-sampler), G8.1 (EVAL_SAFE_OVERRIDES readmissions - the area where one mistake
-invalidates every number in the project).
+Covers: a too-short dataset does not kill a multi-dataset run, the LOTSA
+integration (exclusions, mmap, _pack_series), object arrays of uniform
+survivors, torch version drift in the sampler, and the EVAL_SAFE_OVERRIDES
+readmissions, where one mistake invalidates every number in the project.
 """
 
 import sys
@@ -50,7 +48,7 @@ def short_and_long_datasets(tmp_path):
     _write(tmp_path, "electricity-hourly",
            np.stack([np.sin(2 * np.pi * t / 24) + 0.1 * rng.standard_normal(20000)
                      for _ in range(4)]).astype("float32"))
-    # Exactly the shape that crashed the first real run: weekly data, 114 points
+    # Weekly data, 114 points: shorter than one window
     _write(tmp_path, "wikipedia-web-traffic-weekly",
            rng.standard_normal((500, 114)).astype("float32"))
     # Same problem stored as a variable-length object array
@@ -100,15 +98,10 @@ def test_error_reports_the_real_longest_series(short_and_long_datasets):
 
 def test_window_indices_are_a_compact_array(short_and_long_datasets):
     """
-    B19. window_indices was a Python list of 2-tuples: ~120 bytes per window
-    (8 list pointer + 56 tuple + 56 for two int objects, start_idx being well
-    past the small-int cache). At the corpus's ~54M windows that is ~6.5 GB -
-    and paid PER PROCESS, because a dataloader worker walking the list bumps
-    each tuple's refcount, writing to its page and defeating fork's
-    copy-on-write. Observed as a steady climb to ~50 GB on a 57 GB host.
-
-    An int32 [N, 2] array is 8 bytes per window and has no per-element Python
-    objects, so the pages are genuinely shared.
+    A Python list of 2-tuples costs about 120 bytes per window, paid per
+    dataloader process because refcount updates defeat fork's copy-on-write
+    (about 6.5 GB per process at 54M windows). An int32 [N, 2] array is 8 bytes
+    per window with no per-element Python objects, so the pages are shared.
     """
     import numpy as np
     from timejepa.data.dataset import TimeSeriesDataset
@@ -150,8 +143,8 @@ def test_window_indices_still_address_the_right_data(tmp_path, layout):
 
 def test_multidataset_skips_short_datasets_and_keeps_training(short_and_long_datasets):
     """
-    THE B17 bug: wikipedia-web-traffic-weekly (114 weekly points vs 640 needed)
-    aborted an entire 23-dataset pretraining run.
+    wikipedia-web-traffic-weekly (114 weekly points vs 640 needed) must not
+    abort a multi-dataset pretraining run.
     """
     from timejepa.data.datamodule import MultiDatasetMonashDataModule
     dm = MultiDatasetMonashDataModule(
@@ -188,8 +181,8 @@ def test_multidataset_raises_when_everything_is_skipped(tmp_path):
 
 def test_lotsa_segmentation_produces_dense_chunks():
     """
-    The corpus MUST convert to dense arrays only: object arrays break fork's
-    copy-on-write (B19) and would be fatal at LOTSA scale.
+    The corpus must convert to dense arrays only: object arrays break fork's
+    copy-on-write and would be fatal at LOTSA scale.
     """
     import numpy as np
     from timejepa.data.lotsa import segment_series, iter_dense_chunks
@@ -212,11 +205,10 @@ def test_lotsa_segmentation_produces_dense_chunks():
 
 def test_memmapped_windows_yield_writable_tensors(tmp_path):
     """
-    B23. With use_mmap, np.load(mmap_mode="r") is read-only, ascontiguousarray on
-    a contiguous slice does not copy, and .float() on float32 is a no-op - so the
-    tensor aliased the mapping. Augmentations run right after, and an in-place
-    write to a read-only mapping is a segfault at best and silent corruption of
-    the .npy on disk at worst.
+    With use_mmap, np.load(mmap_mode="r") is read-only, ascontiguousarray on a
+    contiguous slice does not copy, and .float() on float32 is a no-op, so the
+    tensor can alias the mapping. Augmentations then write in place, which is
+    a segfault at best and corruption of the .npy on disk at worst.
     """
     import numpy as np
     from timejepa.data.dataset import TimeSeriesDataset
@@ -230,7 +222,7 @@ def test_memmapped_windows_yield_writable_tensors(tmp_path):
     item = ds[0]
     ctx = item["context"]
 
-    # An in-place write must be safe and must NOT reach the file
+    # An in-place write must be safe and must not reach the file
     ctx.add_(1.0)
     assert np.array_equal(np.load(path), original), "in-place write reached the .npy"
 
@@ -245,8 +237,7 @@ def test_family_grouping_prevents_one_domain_dominating():
     The per-subset cap protects nothing when one domain is split across many
     subsets. LOTSA ships cmip6 as 33 annual slices and era5 as 30, which is 63
     of the 123 kept subsets: at an equal cap each, half the pretraining corpus
-    would be smooth seasonal climate reanalysis. E10 already measured that
-    failure mode at smaller scale (two datasets holding 48.7% of the batch).
+    would be smooth seasonal climate reanalysis.
     """
     from timejepa.data.lotsa import family_of
 
@@ -265,11 +256,10 @@ def test_family_grouping_prevents_one_domain_dominating():
 
 def test_chunk_stats_explain_an_empty_subset():
     """
-    A subset that yields nothing must say WHY. Series shorter than chunk_length
-    are dropped to keep the output dense, so a series of 5000 steps - perfectly
-    usable for a 1280-step window - is lost at chunk_length 8192. Without the
-    breakdown, that is indistinguishable from a subset whose series are simply
-    too short, and the two call for opposite decisions.
+    A subset that yields nothing must say why. Series shorter than chunk_length
+    are dropped to keep the output dense, so a 5000-step series (usable for a
+    1280-step window) is lost at chunk_length 8192. Without the breakdown that
+    is indistinguishable from a subset whose series are too short.
     """
     import numpy as np
     from timejepa.data.lotsa import iter_dense_chunks, ChunkStats
@@ -292,14 +282,12 @@ def test_chunk_stats_explain_an_empty_subset():
 
 def test_short_gaps_are_imputed_and_structural_ones_refused():
     """
-    Rejecting a whole chunk over one NaN is untenable on a real corpus: measured
-    on LOTSA, HZMETRO lost 160/160 chunks and SHMETRO 2304/2304. Short gaps get
-    interpolated; large ones are refused rather than invented.
+    Rejecting a whole chunk over one NaN loses whole subsets (on LOTSA, HZMETRO
+    lost 160/160 chunks). Short gaps get interpolated; large ones are refused.
 
-    The refusal matters as much as the imputation. Those metro subsets carry
-    ~23% NaN in REGULAR 23-step blocks - the nightly service closure. Filling
-    that would fabricate 3am ridership, so raising the threshold would be a
-    mistake rather than a fix, and the summary says so.
+    The metro subsets carry about 23% NaN in regular 23-step blocks (the nightly
+    closure). Filling that would fabricate ridership, so the summary says not to
+    raise the threshold.
     """
     import numpy as np
     from timejepa.data.lotsa import iter_dense_chunks, ChunkStats
@@ -335,7 +323,7 @@ def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
     """
     A subset missed here is a benchmark seen during pretraining, and a zero-shot
     claim that is not one. The Monash corpus has exactly that defect
-    (electricity-hourly IS the Nixtla electricity benchmark), which the LOTSA
+    (electricity-hourly is the Nixtla electricity benchmark), which the LOTSA
     protocol avoids by construction.
     """
     from timejepa.data.lotsa import (
@@ -345,10 +333,8 @@ def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
 
     nixtla = ["ett_h1", "ETTm2", "electricity_15min", "traffic_hourly",
               "weather", "exchange_rate", "illness"]
-    # The 28 directories of the official GIFT-Eval repository, verbatim, read
-    # from https://huggingface.co/api/datasets/Salesforce/GiftEval/tree/main
-    # on 2026-08-13. Missing one means a benchmark seen during pretraining and
-    # a zero-shot claim that is not one.
+    # The 28 directories of the official GIFT-Eval repository, verbatim, from
+    # https://huggingface.co/api/datasets/Salesforce/GiftEval/tree/main
     gift = ["LOOP_SEATTLE", "M_DENSE", "SZ_TAXI", "bitbrains_fast_storage",
             "bitbrains_rnd", "bizitobs_application", "bizitobs_l2c",
             "bizitobs_service", "car_parts_with_missing", "covid_deaths",
@@ -367,21 +353,15 @@ def test_lotsa_excludes_every_nixtla_and_gift_eval_source():
                  "largest_2017", "uber_tlc_hourly", "m5"]:
         assert not is_eval_overlap(name), f"{name} must be kept"
 
-    # beijing_air_quality / china_air_quality - position REVERSED on
-    # 2026-08-19 (G8.1, decision). The old reasoning ("= kdd_cup_2018")
-    # was too broad: kdd_cup_2018 evaluates Beijing 2017-2018 and a PARTIAL
-    # window overlap is conceivable, but `Salesforce/GiftEvalPretrain` - the
-    # pretraining corpus PUBLISHED BY THE AUTHORS of the benchmark - contains
-    # both subsets: no leaderboard entry is penalized for having seen them.
-    # Excluding them handicapped us unilaterally (E17: the gap to the
-    # leaderboard follows corpus coverage).
-    # The residual risk is recorded in section 5 of the experiment registry;
-    # if a reviewer contests it, remove both from EVAL_SAFE_OVERRIDES AND
-    # restore the inverse assertion here - the two must move together.
+    # beijing_air_quality / china_air_quality are readmitted: a partial window
+    # overlap with kdd_cup_2018 is conceivable, but `Salesforce/GiftEvalPretrain`,
+    # the pretraining corpus published by the benchmark's authors, contains both.
+    # To reverse this, remove both from EVAL_SAFE_OVERRIDES and invert the
+    # assertion here; the two must move together.
     for name in ["beijing_air_quality", "china_air_quality"]:
         assert not is_eval_overlap(name), \
             f"{name} is readmitted by EVAL_SAFE_OVERRIDES (sanctioned by GiftEvalPretrain)"
-    # ...but the corresponding EVAL dataset stays strictly excluded:
+    # ...but the corresponding eval dataset stays strictly excluded:
     assert is_eval_overlap("kdd_cup_2018_with_missing")
 
     # The union is what the converter uses; the two sources stay separable
@@ -435,14 +415,10 @@ def test_use_mmap_defaults_off_and_rejects_object_arrays(tmp_path):
 
 def test_pack_series_returns_numeric_when_lengths_are_uniform():
     """
-    B22. np.array(list_of_arrays, dtype=object) does NOT give a ragged 1-D array
-    when every series has the same length - it silently gives a 2-D OBJECT array,
-    and np.stack on that preserves dtype=object. The value then reaches
-    torch.from_numpy, which rejects object arrays outright.
-
-    Never triggered before because the length filter always left mixed lengths;
-    it fires as soon as a dataset whose survivors are uniform is used
-    (m4-hourly: every series is 1008 steps once filtered).
+    np.array(list_of_arrays, dtype=object) gives a 2-D object array when every
+    series has the same length, and np.stack on that preserves dtype=object,
+    which torch.from_numpy rejects. This happens as soon as a dataset's
+    survivors are uniform (m4-hourly: every series is 1008 steps once filtered).
     """
     import numpy as np
     from timejepa.data.dataset import _pack_series
@@ -496,9 +472,8 @@ def test_temperature_sampler_constructs():
     """
     `Sampler.__init__` took a deprecated `data_source` argument; newer torch
     removed it, at which point `super().__init__(None)` reaches
-    `object.__init__` and raises "takes exactly one argument". Killed a real
-    run, and could not be reproduced locally because the local torch still had
-    the old signature - hence this direct construction test.
+    `object.__init__` and raises "takes exactly one argument". Older local
+    torch versions do not show it, hence this direct construction test.
     """
     from timejepa.data.datamodule import TemperatureSampler
     s = TemperatureSampler(dataset_sizes=[1000, 50000, 300], batch_size=64,
@@ -516,10 +491,7 @@ def test_temperature_sampler_constructs():
     # Nixtla evaluation datasets
     "traffic_hourly", "traffic_weekly", "weather", "oikolab_weather",
     "cdc_fluview_ilinet",
-    # local Monash evaluation datasets
-    # (solar_power READMITTED 2026-08-24 - v3 corpus, three checks in
-    #  lotsa.py: GiftEvalPretrain sanctions it, absent from Nixtla, the local
-    #  Monash suite that blocked it is deprecated in favor of GIFT.)
+    # local Monash evaluation datasets (solar_power is readmitted, see below)
     "wiki-rolling_nips", "extended_web_traffic_with_missing",
     "kaggle_web_traffic_weekly",
 ])
@@ -542,8 +514,8 @@ def test_eval_datasets_stay_excluded_from_pretraining(name):
 def test_safe_overrides_are_readmitted(name):
     """
     These subsets are in GiftEvalPretrain (corpus sanctioned by the benchmark)
-    and have a counterpart in NONE of our three eval suites. Excluding them
-    cost frequency coverage for nothing (E17).
+    and have a counterpart in none of our three eval suites. Excluding them
+    cost frequency coverage for nothing.
     """
     from timejepa.data.lotsa import is_eval_overlap
     assert not is_eval_overlap(name), f"{name} should be readmitted"

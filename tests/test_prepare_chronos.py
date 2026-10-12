@@ -22,7 +22,7 @@ from prepare_chronos import (                                             # noqa
 
 
 def test_allowlist_excludes_every_leak():
-    """No leaking name may EVER enter the allowlist."""
+    """No leaking name may enter the allowlist."""
     leaky = {"exchange_rate", "electricity_15min", "wiki_daily_100k",
              "solar", "solar_1h", "m4_daily", "m4_hourly", "m4_monthly",
              "m4_quarterly", "m4_weekly", "m4_yearly", "monash_traffic",
@@ -63,7 +63,7 @@ def test_convert_subset_adapts_chunk_length(tmp_path):
 
 
 def test_convert_subset_refuses_too_short(tmp_path):
-    """Median < min_length: nothing written, None returned, NO file."""
+    """Median < min_length: nothing written, None returned, no file."""
     stream = (np.ones(300, dtype=np.float32) for _ in range(20))
     written, stats, eff = convert_subset(
         stream, tmp_path / "z.npy",
