@@ -1,57 +1,117 @@
-# TimeJEPA: Small Joint-Embedding Foundation Forecasters
+# TimeJEPA: Joint-Embedding Predictive Architectures for Time Series
+
+TimeJEPA asks one question: can a Joint Embedding Predictive Architecture,
+trained as an energy-based model on time series, learn representations of the
+future that are coherent enough to tell plausible futures from implausible
+ones? The answer, measured on frozen checkpoints, is yes. The same weights,
+finetuned with a quantile head on top, give a small zero-shot forecaster
+evaluated on all 97 GIFT-Eval configurations.
+
+Everything was trained on three RTX 3090s by one person. Every number traces
+to a dated entry in an experiment log where predictions were written down
+before the runs (see the end of this page).
+
+## TimeJEPA-EBM: the latent as judge
+
+A pretrained JEPA is implicitly an energy over (context, future) pairs:
+
+    E(x, y) = 1 - cos(pred(enc(x)), enc(y))
+
+The encoder embeds the context, the predictor produces the embedding of the
+future, and the pretraining objective lowers E on true pairs. Nothing below
+trains anything further: the checkpoints are read frozen.
+
+![Rank of the true future among 34 candidates](docs/assets/judge_rank_probe.png)
+
+**The judge exists, and finetuning destroys it.** The probe presents each
+checkpoint with 34 candidate futures for a context (32 block bootstraps of the
+past, the seasonal naive, and the truth) and reads the normalized rank of the
+truth under E. Chance is 0.50.
+
+| Checkpoint | Rank of the true future |
+|---|---|
+| chance | 0.500 |
+| TimeJEPA-EBM (1.1M, pretrained only) | 0.219 |
+| the same weights after finetuning as a forecaster | 0.349 |
+
+The energy follows the real distance to the truth (correlation with the MAE of
+each candidate 0.35 on the released judge, 0.62 to 0.77 on earlier ones), on
+every dataset probed, including those the forecaster gets wrong. The judge
+peaks early in pretraining and erodes while the validation loss keeps
+improving; finetuning the same weights into a forecaster degrades it from
+0.219 to 0.349.
+
+**What the judge knows.** On a controlled simulator with a known arrow of
+time, the energy separates a future from its time reversal with an AUC of
+0.808 and reacts to out-of-range actions at 0.935. It does not carry
+continuity between context and future: a future teleported to another level
+is accepted (AUC 0.556, chance). The energy is a classifier of futures, not a
+regularizer: used as a penalty inside a planner it does not reduce
+constraint violations.
+
+**A zero-training reranker.** Given a proposer, the judge turns a pool of
+candidate futures into weighted quantiles. With TTM-R3 as proposer, on the
+six Nixtla long-horizon datasets, weighted quantile loss as a ratio to the
+seasonal naive:
+
+| | ettm1 | ettm2 | etth1 | etth2 | weather | exchange |
+|---|---|---|---|---|---|---|
+| TTM-R3 alone | 0.88 | 0.81 | 0.85 | 0.95 | **0.63** | 0.88 |
+| TTM-R3 + frozen judge | **0.77** | **0.72** | **0.71** | **0.78** | 0.64 | **0.78** |
+
+Six of six beaten or tied, replicated with judges from two pretraining
+lineages. On the 97 GIFT-Eval configurations (150 instances each, paired
+windows), the reranked fan takes 5.3 CRPS points off TTM's collapsed point
+forecast (0.7258 to 0.6732) for a 3.8 % MASE cost; the 3.4M judge (the standard mini pretrain) brings the
+CRPS to 0.6508. Given a deliberately biased proposer, the judge moves its
+mass to the alternative center kept in the pool: a verifier that can fire its
+proposer. Coverage (0.62 against 0.80 nominal) is the open gap.
+
+**What did not work**, recorded with the same care: selecting the resampling
+rate by energy is worse than selecting it by backtest; reweighting the
+forecaster's own calibrated fan with its judge dilutes it; refining
+candidates by gradient descent on E helps only on uncentered pools; and the
+forecaster and the judge are two checkpoints, not one.
+
+## TimeJEPA-forecast
 
 ![TimeJEPA forecasting a von Karman vortex street, one pixel per series](docs/assets/vortex.gif)
 
-TimeJEPA is a family of univariate forecasters built on a Joint Embedding
-Predictive Architecture and trained end to end on three RTX 3090s. A single
-checkpoint is evaluated zero-shot on all 97 GIFT-Eval configurations, with no
-per-dataset adaptation of any kind. The animation above is the 1.14M-parameter
-checkpoint forecasting a fluid simulation it has never seen: the red frame
-marks the end of the context, and the model calibrates its own uncertainty on
-the way (empirical 80% coverage on this scene: 0.79).
+The forecaster is the pretrained JEPA, finetuned for one epoch on the same
+corpus with a quantile head on top (cross-attention over the context and an
+MLP, nine quantiles that cannot cross), and evaluated zero-shot on GIFT-Eval
+with no per-dataset adaptation. The animation is the 1.14M-parameter
+checkpoint forecasting a fluid simulation it has never seen, every pixel as an
+independent series: the red frame marks the end of the context, and the fan
+width in the third panel is the model's own uncertainty (empirical 80 %
+coverage on this scene: 0.79).
 
-## Results
+GIFT-Eval, 97 configurations, geometric means of the ratio to the official
+seasonal naive, lower is better.
 
-### TimeJEPA-tiny, 1.14M parameters
-
-| Inference | MASE ratio | CRPS ratio |
-|---|---|---|
-| plain | 0.895 | 0.624 |
-| + sign-flip averaging | 0.863 | 0.598 |
-| + RateIN | **0.815** | **0.559** |
-| seasonal naive | 1.000 | 1.000 |
-
-Geometric mean over the 97 configurations, against the official seasonal
-naive numbers. Both inference layers are causal and identical across all
-datasets. Sign-flip averaging blends each forecast with the forecast of the
-negated context. RateIN mean-pools each context so that its dominant cycle
-falls inside the band the model was trained on, at a rate chosen by
-backtesting on the past of each series.
+| Model | Parameters | Inference | MASE | CRPS | 80 % coverage |
+|---|---|---|---|---|---|
+| TimeJEPA-mini | 3.9M | sign flip + test-time backtest resampling | **0.7842** | **0.5340** | 0.756 |
+| TimeJEPA-mini | 3.9M | sign flip | 0.8543 | 0.5842 | 0.781 |
+| TimeJEPA-mini | 3.9M | none | 0.8877 | 0.6131 | 0.740 |
+| TimeJEPA-tiny | 1.14M | sign flip + test-time backtest resampling | 0.815 | 0.559 | |
 
 Among the sub-10M models of the GIFT-Eval leaderboard, aggregated with the
 same formula (parameter counts from the leaderboard metadata):
 
 | Model | Parameters | CRPS ratio |
 |---|---|---|
-| FlowState-r1.1 | 9.1M | 0.487 |
+| FlowState 9.1M | 9.1M | 0.502 |
 | TTM-R3 | 1.4M | 0.520 |
 | Toto-2.0-4m | 4.1M | 0.524 |
 | TempoPFN | n/a | 0.533 |
+| **TimeJEPA-mini** | **3.9M** | **0.534** |
 | TinyCast | 0.1M | 0.545 |
 | goia-forecast-nano | 4.7M | 0.553 |
 | Kairos-10m | 9.9M | 0.554 |
 | Metamorph-4.5M | n/a | 0.555 |
 | **TimeJEPA-tiny** | **1.14M** | **0.559** |
 | YingLong-6m | 7.3M | 0.609 |
-
-Every number traces to a dated entry in the experiment registry
-([docs/EXPERIMENTAL_LOG.md](docs/EXPERIMENTAL_LOG.md)), where predictions are
-written down before the runs. The technical report lives in
-[paper/](paper/).
-
-### TimeJEPA-mini, 3.4M parameters
-
-Pretraining in progress.
 
 ## Usage
 
@@ -84,11 +144,14 @@ fan = out["quantiles_denorm"][0]                     # [n, 9], levels 0.1 to 0.9
 Normalization lives inside the model: feed raw values, read raw values back.
 The quantile fan cannot cross by construction. Interpolate NaNs in the
 context before calling. `scripts/evaluate_gift.py` is the reference
-inference pipeline; sign-flip averaging and RateIN live there.
+inference pipeline; sign-flip averaging and the test-time resampling live
+there.
 
 Checkpoints are not distributed yet. They will be published on Hugging Face
 together with the preprint. Until then, the training commands below produce
-one in about a day on three GPUs.
+one in about a day on three GPUs. The judge is read from a pretrain checkpoint
+with `scripts/probe_energy.py` (rank probe) and `scripts/evaluate_energy.py`
+(propose-judge-reweight).
 
 ## Setup
 
@@ -158,9 +221,6 @@ python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval \
 
 # Video demo: every pixel forecast as an independent series
 python scripts/forecast_video.py
-
-# Build the paper
-cd paper && make
 ```
 
 ## Project structure
@@ -169,10 +229,16 @@ cd paper && make
 src/timejepa/             # data, models, training, evaluation
 scripts/                  # entry points: train, evaluate_gift, probes, demos
 configs/model/            # one-variable config lineages
-docs/EXPERIMENTAL_LOG.md  # dated experiment registry, predictions first
-paper/                    # LaTeX technical report
 evaluation/               # per-config JSON results, cached
 ```
+
+## Experiment log
+
+Every run of this project, with its prediction written before launch, its
+thresholds and its verdict, is recorded in a dated experiment log kept outside
+the repository. I am glad to share it with anyone who wants to know what
+happened during training, including what did not work: open an issue or write
+to the address in the citation.
 
 ## Citation
 
