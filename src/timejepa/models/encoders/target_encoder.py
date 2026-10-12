@@ -1,13 +1,7 @@
 """
-Target Encoder for JEPA.
-
-This is a wrapper around an encoder that maintains a separate copy
-of the encoder weights, updated via Exponential Moving Average (EMA).
-
-Key JEPA principle:
-- Online encoder (context): Updated via backprop
-- Target encoder: Updated via EMA (slow-moving copy)
-- This creates a momentum-based consistency regularization
+Target encoder for JEPA: a copy of the online encoder whose weights follow
+an exponential moving average (EMA) of the online weights instead of
+gradient descent.
 """
 
 import torch
@@ -19,24 +13,16 @@ from .bare_encoder import BareTransformerEncoder
 
 import math
 
-# TODO: the encoder type hint should be nn.Module (any encoder works)
 class TargetEncoder(nn.Module):
     """
-    Target encoder with Exponential Moving Average (EMA) updates.
-    
-    This wraps an encoder and maintains its weights as a slow-moving
-    average of the online encoder's weights.
-    
-    Key features:
-    - Initialized as copy of online encoder
-    - Weights updated via EMA (not gradient descent)
-    - No gradients computed for target encoder (faster, memory efficient)
-    - Cosine EMA schedule (tau increases during training)
-    
+    Target encoder with EMA updates: initialized as a copy of the online
+    encoder, frozen, updated with a cosine EMA schedule (tau increases
+    during training).
+
     Args:
-        encoder: The online encoder to create target from (any nn.Module)
-        ema_decay: Base EMA decay rate (default: 0.998)
-        ema_decay_end: Final EMA decay rate (default: 1.0)
+        encoder: The online encoder to copy (any nn.Module)
+        ema_decay: Base EMA decay rate
+        ema_decay_end: Final EMA decay rate
     """
     
     def __init__(
@@ -50,26 +36,20 @@ class TargetEncoder(nn.Module):
         self.ema_decay_base = ema_decay
         self.ema_decay_end = ema_decay_end
         self.ema_decay = ema_decay  # Current decay
-        
-        # Create a deep copy of the encoder
+
         self.encoder = deepcopy(encoder)
-        
-        # Freeze all parameters (no gradient computation)
+
         for param in self.encoder.parameters():
             param.requires_grad = False
-        
-        # Set to eval mode (important for BatchNorm/Dropout if any)
+
         self.encoder.eval()
     
     def _compute_ema_decay(self, step: int, max_steps: int) -> float:
         """
-        Compute EMA decay with cosine schedule.
-        
-        Formula from BYOL/MoCo v3:
+        Cosine EMA schedule (BYOL / MoCo v3):
         tau = tau_end - (tau_end - tau_base) * (cos(pi * k / K) + 1) / 2
-        
-        where k = current step, K = max steps
-        
+        with k the current step and K the total steps.
+
         Args:
             step: Current training step
             max_steps: Total training steps
@@ -98,17 +78,13 @@ class TargetEncoder(nn.Module):
             step: Current training step (for EMA schedule)
             max_steps: Total training steps (for EMA schedule)
         """
-        # Update decay with schedule
         self.ema_decay = self._compute_ema_decay(step, max_steps)
-        
-        # Get state dicts
+
         online_state = online_encoder.state_dict()
         target_state = self.encoder.state_dict()
-        
-        # Update each parameter
+
         for key in online_state.keys():
             if 'num_batches_tracked' in key:
-                # Skip batch norm tracking (not a learned parameter)
                 continue
             
             target_state[key].data.copy_(
@@ -132,10 +108,8 @@ class TargetEncoder(nn.Module):
         Returns:
             Encoded representations
         """
-        # Force eval mode (in case someone called .train())
+        # Force eval mode in case .train() was called on the parent.
         self.encoder.eval()
-        
-        # Forward pass without gradients
         return self.encoder(x, attention_mask)
     
     def get_encoder(self) -> nn.Module:
@@ -158,14 +132,9 @@ class TargetEncoder(nn.Module):
 
 class EMAUpdater:
     """
-    Helper class to manage EMA updates with cosine schedule.
-    
-    The EMA decay rate can be scheduled to increase during training:
-    - Start: lower decay (faster updates)
-    - End: higher decay (slower updates, more stable)
-    
-    This follows BYOL/MoCo v3 practice.
-    
+    Step counter with a cosine EMA decay schedule (BYOL / MoCo v3): the
+    decay increases from base_decay to final_decay during training.
+
     Args:
         base_decay: Base EMA decay rate (e.g., 0.996)
         final_decay: Final EMA decay rate (e.g., 0.999)
@@ -191,7 +160,6 @@ class EMAUpdater:
         if not self.use_schedule:
             return self.base_decay
         
-        # Cosine schedule
         progress = min(self.current_step / self.total_steps, 1.0)
         decay = self.final_decay - (self.final_decay - self.base_decay) * \
                 (1 + torch.cos(torch.tensor(progress * 3.14159))) / 2
@@ -209,11 +177,8 @@ class EMAUpdater:
 
 class DualEncoderWrapper(nn.Module):
     """
-    Wrapper that manages both online and target encoders.
-    
-    This is a convenience class that bundles the online encoder,
-    target encoder, and EMA updater together.
-    
+    Bundles an online encoder, its target encoder and an EMA updater.
+
     Usage:
         dual_encoder = DualEncoderWrapper(encoder_config)
         
@@ -224,9 +189,7 @@ class DualEncoderWrapper(nn.Module):
         # After backward:
         dual_encoder.update_target()
     
-    .. deprecated::
-        Not used by JEPATST, which wires the online/target pair directly.
-        Kept for reference and for standalone experiments.
+    Not used by JEPATST, which wires the online/target pair directly.
 
     Args:
         encoder_config: Config dict for BareTransformerEncoder (d_model, num_layers, ...)
@@ -244,13 +207,8 @@ class DualEncoderWrapper(nn.Module):
     ):
         super().__init__()
 
-        # Create online encoder
         self.online = BareTransformerEncoder(**encoder_config)
-        
-        # Create target encoder (copy of online)
         self.target = TargetEncoder(self.online, ema_decay=ema_decay)
-        
-        # EMA updater with schedule
         self.ema_updater = EMAUpdater(
             base_decay=ema_decay,
             final_decay=ema_final_decay,

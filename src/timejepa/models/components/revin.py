@@ -1,12 +1,8 @@
 """
-Reversible Instance Normalization (RevIN)
-
-Paper: "Reversible Instance Normalization for Accurate Time-Series Forecasting
-        against Distribution Shift" (ICLR 2022)
-
-Key idea: Normalize each instance, then denormalize at output
-- Helps model generalize across different scales/distributions
-- Critical for time series with varying magnitudes
+Reversible Instance Normalization (RevIN), after "Reversible Instance
+Normalization for Accurate Time-Series Forecasting against Distribution Shift"
+(ICLR 2022): normalize each instance with its own statistics, denormalize the
+output with the same statistics.
 """
 
 import torch
@@ -43,27 +39,23 @@ class RevIN(nn.Module):
         self.affine = affine
         self.subtract_last = subtract_last
         
-        # Learnable affine parameters (optional)
         if self.affine:
             self.affine_weight = nn.Parameter(torch.ones(num_features))
             self.affine_bias = nn.Parameter(torch.zeros(num_features))
         
-        # Store statistics for denormalization
+        # Statistics of the last normalized instance, used to denormalize.
         self.register_buffer('mean', torch.zeros(1))
         self.register_buffer('std', torch.ones(1))
 
         # When frozen, `_normalize` reuses the stored mean/std instead of
-        # recomputing them. Required for rolling forecasts, where every roll
-        # must be denormalized with the statistics of the ORIGINAL context.
+        # recomputing them (rolling forecasts keep the original context's
+        # statistics).
         self._frozen = False
 
     def freeze(self):
         """
-        Pin the current (mean, std) so subsequent `_normalize` calls reuse them.
-
-        Used by `JEPATST.forecast` during multi-step rollouts: the statistics are
-        computed once on the real context, then held fixed while the model feeds
-        its own predictions back in.
+        Pin the current (mean, std) so subsequent `_normalize` calls reuse
+        them. Used by `JEPATST.forecast` during multi-step rollouts.
         """
         self._frozen = True
         return self
@@ -109,21 +101,17 @@ class RevIN(nn.Module):
         Returns:
             Normalized tensor with same shape
         """
-        # Handle 2D input [B, L] -> [B, L, 1]
         if x.dim() == 2:
             x = x.unsqueeze(-1)
 
         if self._frozen:
-            # Reuse pinned statistics (rolling-forecast path).
+            # Pinned statistics (rolling-forecast path).
             x = (x - self.mean) / self.std
         else:
-            # Compute statistics per instance (across time dimension)
-            # x shape: [B, L, C]
+            # Statistics per instance over the time dimension of [B, L, C].
             if self.subtract_last:
-                # Subtract last timestep value
                 self.mean = x[:, -1:, :].detach()  # [B, 1, C]
             else:
-                # Subtract mean
                 self.mean = x.mean(dim=1, keepdim=True).detach()  # [B, 1, C]
 
             x = x - self.mean
@@ -133,7 +121,6 @@ class RevIN(nn.Module):
 
             x = x / self.std
 
-        # Apply affine transformation if enabled
         if self.affine:
             x = x * self.affine_weight + self.affine_bias
 
@@ -149,41 +136,25 @@ class RevIN(nn.Module):
         Returns:
             Denormalized tensor with same shape
         """
-        # Handle 2D input
         if x.dim() == 2:
             x = x.unsqueeze(-1)
 
-        # Reverse affine transformation if enabled
         if self.affine:
             x = (x - self.affine_bias) / (self.affine_weight + self.eps)
 
-        # Denormalize
         x = x * self.std + self.mean
 
         return x
 
     def denormalize_target_space(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Denormalize a forecast that lives in the *target* space, i.e. `(y - mean) / std`
-        WITHOUT the learnable affine.
+        Denormalize a forecast that lives in the target space `(y - mean) / std`,
+        without the learnable affine.
 
-        Why this exists
-        ---------------
-        The training losses normalize the target as a plain z-score:
-
-            jepa_tst.forward_pretrain    : (target - revin.mean) / revin.std
-            finetune_module.training_step: (target - revin.mean) / revin.std
-
-        ...while `_normalize` additionally applies `* w + b` to the *context*.
-        The decoder is therefore trained to emit values in the plain z-score
-        space, but `_denormalize` undoes an affine that was never applied to it.
-        With the affine weights actually learned in the released checkpoints
-        (w in [0.86, 1.10], b up to 0.089) that mismatch is a ~6-10% scale error
-        plus a constant offset on every denormalized forecast.
-
-        This method is the consistent inverse for decoder outputs. `_denormalize`
-        is kept unchanged for callers that legitimately round-trip through
-        `_normalize` (context reconstruction).
+        The training losses normalize the target as a plain z-score, while
+        `_normalize` also applies `* w + b` to the context. Decoder outputs
+        therefore need this inverse; `_denormalize` is for tensors that went
+        through `_normalize`.
         """
         if x.dim() == 2:
             x = x.unsqueeze(-1)
@@ -191,14 +162,11 @@ class RevIN(nn.Module):
 
     def to_input_frame(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Map a tensor from the *target* space `(y - mean)/std` into the *encoder
-        input* space `((y - mean)/std) * w + b`.
+        Map a tensor from the target space `(y - mean)/std` into the encoder
+        input space `((y - mean)/std) * w + b`.
 
-        Needed by rolling forecasts: the decoder emits target-space values, but
-        the context buffer they get appended to lives in the encoder input frame
-        (it went through `_normalize`, which applies the affine). Without this,
-        every roll past the first feeds the encoder a sequence that is part
-        affine-scaled and part not.
+        Rolling forecasts append decoder outputs to a context that went
+        through `_normalize`, so the two frames must be aligned first.
         """
         if x.dim() == 2:
             x = x.unsqueeze(-1)

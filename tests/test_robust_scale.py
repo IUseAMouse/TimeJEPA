@@ -1,14 +1,14 @@
 """
-Tests for the robust arcsinh scaler (G8.4, components/robust_scale.py).
+Tests for the robust arcsinh scaler (components/robust_scale.py).
 
-Four invariants, by severity:
-1. Flag off = strictly NOTHING (state_dict, compute paths) - protects all
+Invariants:
+1. Flag off changes nothing (state_dict, compute paths), which protects all
    reproduced checkpoints.
-2. Checkpoints self-describe: a flag/checkpoint mismatch REFUSES at load time
-   instead of producing silently wrong numbers (the flag weighs no
-   parameters, only the marker betrays it).
-3. The two measured pathologies are fixed: epsilon floor (G6, targets at
-   10^3 sigma) and a spike crushing the signal (E17, domain half).
+2. Checkpoints self-describe: a flag/checkpoint mismatch refuses at load time
+   instead of producing silently wrong numbers (the flag adds no parameters,
+   only a marker).
+3. Two pathologies are fixed: the epsilon floor (targets at 10^3 sigma) and
+   a spike crushing the signal.
 4. Monotonicity: denormalized quantiles stay ordered and in raw scale.
 """
 
@@ -74,7 +74,7 @@ def test_matching_robust_ckpt_loads(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 3. The measured pathologies
+# 3. The pathologies
 # ---------------------------------------------------------------------------
 
 def test_round_trip_identity():
@@ -87,9 +87,9 @@ def test_round_trip_identity():
 
 def test_epsilon_floor_case_is_tamed():
     """
-    G6: near-constant context + moving target. Under RevIN alone, the
-    normalized target went to THOUSANDS of sigma. arcsinh is logarithmic in
-    the tail: the same target becomes an ordinary number.
+    Near-constant context + moving target. Under RevIN alone, the normalized
+    target goes to thousands of sigma. arcsinh is logarithmic in the tail:
+    the same target becomes an ordinary number.
     """
     rs = RobustScale()
     ctx = torch.full((2, 384, 1), 5.0) + torch.randn(2, 384, 1) * 1e-4
@@ -101,9 +101,9 @@ def test_epsilon_floor_case_is_tamed():
 
 def test_spike_does_not_crush_the_signal():
     """
-    E17 domain half: an x1000 spike in the context. std lets it crush the
-    whole signal toward zero; MAD ignores it, arcsinh compresses the spike
-    ITSELF. The body of the signal must keep a working variance.
+    An x1000 spike in the context. std lets it crush the whole signal toward
+    zero; MAD ignores it, arcsinh compresses the spike itself. The body of
+    the signal must keep a working variance.
     """
     body = torch.sin(torch.linspace(0, 20, 384)).reshape(1, 384, 1)
     spiked = body.clone()
@@ -146,12 +146,11 @@ def test_finetune_loss_path_runs_in_compressed_space():
 
 def test_flat_plus_spikes_context_stays_invertible():
     """
-    Regression (2026-08-22, mix finetune): a "flat + spikes" window
-    (idle VM - 29% of bitbrains_rnd contexts have MAD exactly 0) gave a
-    floor scale of 1e-8, an anchor shifted by ln(1e8) ~ 18, and the sinh
-    inverse exploded (CRPS 1e10..inf measured). With the 0.1*std fallback,
+    A "flat + spikes" window (idle VM: 29% of bitbrains_rnd contexts have MAD
+    exactly 0) would give a floor scale of 1e-8, an anchor shifted by
+    ln(1e8) ~ 18, and an exploding sinh inverse. With the 0.1*std fallback,
     the anchor stays bounded and the round trip of a reasonable fan stays
-    FINITE and sane.
+    finite.
     """
     ctx = torch.zeros(1, 384, 1)
     ctx[0, ::40, 0] = 100.0                    # spikes, MAD = 0, std > 0
@@ -170,7 +169,7 @@ def test_flat_plus_spikes_context_stays_invertible():
 
 def test_strictly_constant_context_is_log_bounded():
     """Strictly constant context (std=0 too): the eps=1e-3 floor bounds the
-    anchor at ~ln(2000*X) instead of ln(1e8*X) - no more +18 offset."""
+    anchor at ~ln(2000*X) instead of ln(1e8*X)."""
     ctx = torch.full((1, 384, 1), 5.0)
     tgt = torch.full((1, 96, 1), 25.0)         # jump of 20
     rs = RobustScale()
@@ -182,11 +181,9 @@ def test_strictly_constant_context_is_log_bounded():
 
 def test_rogue_tail_quantile_is_capped_by_context_envelope():
     """
-    Regression G8.4b (2026-08-23, run mix_zs_1ep3e4 at 15%):
-    bitbrains_fast_storage/H/short - flat + spikes context, the half-trained
-    quantile head emits a tail quantile z ~ 15 in compressed space, and
-    sinh(15)*scale ~ 10^6*scale disfigures the GIFT aggregate (CRPS 1.8e7
-    measured, x1.19 on the geomean of the 97 configs BY ITSELF). The context
+    On a flat + spikes context (bitbrains_fast_storage/H/short) a half-trained
+    quantile head can emit a tail quantile z ~ 15 in compressed space, and
+    sinh(15)*scale ~ 10^6*scale disfigures the GIFT aggregate. The context
     envelope bounds the inverse to [min-K*w, max+K*w]; the clamp is monotone
     and inactive on reasonable values.
     """
@@ -203,7 +200,7 @@ def test_rogue_tail_quantile_is_capped_by_context_envelope():
     fan = torch.stack([rogue - 1, rogue, rogue + 1], dim=-1)
     inv = rs.inverse(fan)
     assert (inv[..., 1:] >= inv[..., :-1]).all()
-    # and values INSIDE the envelope stay exact (round trip intact)
+    # and values inside the envelope stay exact (round trip intact)
     torch.testing.assert_close(rs.inverse(rs.transform(ctx)), ctx,
                                rtol=1e-4, atol=1e-4)
 
@@ -217,3 +214,21 @@ def test_healthy_windows_unchanged_by_std_fallback():
     med = x.median(dim=1, keepdim=True).values
     mad = (x - med).abs().median(dim=1, keepdim=True).values * 1.4826
     torch.testing.assert_close(rs.scale, mad, rtol=1e-5, atol=1e-6)
+
+
+def test_one_point_context_is_defined():
+    """A 1-step context (per-step tokenization + backtest decimation) must
+    not produce a NaN scale; longer contexts are untouched."""
+    import warnings
+    import torch
+    from timejepa.models.components.robust_scale import RobustScale
+    rs = RobustScale()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rs.fit(torch.tensor([[[5.0]], [[-3.0]]]))
+    assert torch.isfinite(rs.scale).all() and (rs.scale > 0).all()
+    y = rs.transform(torch.tensor([[[5.0], [6.0]], [[-3.0], [0.0]]]))
+    assert torch.isfinite(y).all()
+    ref = RobustScale(); x = torch.randn(3, 40, 1) * 4 + 2
+    ref.fit(x); rs.fit(x)
+    assert torch.equal(ref.scale, rs.scale) and torch.equal(ref.median, rs.median)

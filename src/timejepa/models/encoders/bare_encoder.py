@@ -10,9 +10,7 @@ from ..components.attention import TransformerBlock
 
 class BareTransformerEncoder(nn.Module):
     """
-    Encoder without patching, just transformer blocks.
-
-    For JEPA, where patching is handled upstream so masks can be applied.
+    Transformer stack without patching; patching is handled upstream.
 
     Args:
         d_model: Model dimension
@@ -39,7 +37,6 @@ class BareTransformerEncoder(nn.Module):
         self.num_heads = num_heads
         self.d_ff = d_ff
         
-        # Stack of Transformer blocks
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(
                 d_model=d_model,
@@ -47,12 +44,11 @@ class BareTransformerEncoder(nn.Module):
                 d_ff=d_ff,
                 dropout=dropout,
                 activation=activation,
-                causal=False  # Non-causal for JEPA
+                causal=False
             )
             for _ in range(num_layers)
         ])
         
-        # Final layer norm
         self.final_norm = nn.LayerNorm(d_model)
 
     def forward(
@@ -72,16 +68,13 @@ class BareTransformerEncoder(nn.Module):
         Returns:
             Encoded representations [B, num_patches, d_model]
         """
-        # Store hidden states if requested
         hidden_states = [] if return_hidden_states else None
-        
-        # Pass through transformer blocks
+
         for block in self.transformer_blocks:
             x = block(x, attention_mask=attention_mask)
             if return_hidden_states:
                 hidden_states.append(x)
         
-        # Final normalization
         x = self.final_norm(x)
         
         if return_hidden_states:

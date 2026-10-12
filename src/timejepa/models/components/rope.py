@@ -1,10 +1,6 @@
 """
-Rotary Position Embedding 
-
-Key advantages:
-- Relative position encoding (better extrapolation)
-- No position limit (unlike learned embeddings)
-- Computationally efficient
+Rotary Position Embedding (RoPE): relative position encoding by rotation of
+the query and key vectors.
 """
 
 import torch
@@ -15,11 +11,8 @@ from typing import Tuple, Optional
 
 class RotaryPositionEmbedding(nn.Module):
     """
-    Rotary Position Embedding (RoPE).
-    
-    Applies rotation to query and key vectors based on their position.
-    Encodes relative position information implicitly through rotation.
-    
+    Rotary Position Embedding: precomputed cos/sin tables per position.
+
     Args:
         dim: Dimension of embeddings (must be even)
         max_seq_len: Maximum sequence length to precompute
@@ -42,12 +35,10 @@ class RotaryPositionEmbedding(nn.Module):
         self.max_seq_len = max_seq_len
         self.base = base
         
-        # Compute inverse frequencies
         # theta_i = base^(-2i/dim) for i in [0, dim/2)
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
         
-        # Precompute cos and sin for all positions
         self._set_cos_sin_cache(max_seq_len, device=device)
     
     def _set_cos_sin_cache(
@@ -58,17 +49,9 @@ class RotaryPositionEmbedding(nn.Module):
         """Precompute cos and sin values for all positions."""
         self.max_seq_len_cached = seq_len
         
-        # Create position indices [0, 1, ..., seq_len-1]
         t = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
-        
-        # Compute frequencies: outer product of positions and inv_freq
-        # freqs shape: [seq_len, dim/2]
-        freqs = torch.outer(t, self.inv_freq)
-        
-        # Concatenate to get [seq_len, dim]
-        emb = torch.cat([freqs, freqs], dim=-1)
-        
-        # Precompute cos and sin
+        freqs = torch.outer(t, self.inv_freq)  # [seq_len, dim/2]
+        emb = torch.cat([freqs, freqs], dim=-1)  # [seq_len, dim]
         self.register_buffer('cos_cached', emb.cos(), persistent=False)
         self.register_buffer('sin_cached', emb.sin(), persistent=False)
     
@@ -86,7 +69,6 @@ class RotaryPositionEmbedding(nn.Module):
         if seq_len is None:
             seq_len = x.shape[1]
         
-        # Extend cache if needed
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len, device=x.device)
         
@@ -99,9 +81,7 @@ class RotaryPositionEmbedding(nn.Module):
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     """
     Rotate half the hidden dims of the input.
-    
-    This is used to apply the rotation matrix efficiently.
-    
+
     Args:
         x: Input tensor [..., dim]
         
@@ -132,18 +112,14 @@ def apply_rotary_pos_emb(
     Returns:
         (rotated_q, rotated_k) with same shapes as inputs
     """
-    # If position_ids provided, gather specific positions
     if position_ids is not None:
         cos = cos[position_ids].unsqueeze(1)  # [B, 1, seq_len, head_dim]
         sin = sin[position_ids].unsqueeze(1)
     else:
-        # Reshape for broadcasting
         if cos.dim() == 2:
             cos = cos.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, head_dim]
             sin = sin.unsqueeze(0).unsqueeze(0)
-    
-    # Apply rotation
-    # q_embed = q * cos + rotate_half(q) * sin
+
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     
@@ -152,8 +128,8 @@ def apply_rotary_pos_emb(
 
 class RotaryEmbedding(nn.Module):
     """
-    Simplified wrapper for RoPE that can be used as a module.
-    
+    Module wrapper applying RoPE to queries and keys.
+
     Usage:
         rope = RotaryEmbedding(dim=64, max_seq_len=2048)
         q_rot, k_rot = rope(q, k, seq_len=512)

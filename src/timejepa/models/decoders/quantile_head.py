@@ -1,40 +1,19 @@
 """
 Non-parametric probabilistic forecasting head.
 
-Why quantiles rather than a parametric distribution
----------------------------------------------------
-GIFT-Eval ranks on CRPS, approximated by the weighted quantile loss - which IS
-an average of pinball losses over a quantile grid. Predicting the grid directly
-optimizes the ranking metric with no proxy in between.
+GIFT-Eval ranks on CRPS approximated by the weighted quantile loss, an
+average of pinball losses over a quantile grid, so the head predicts that grid
+directly and imposes no distributional shape. The median at q=0.5 is also the
+MAE-optimal point forecast, which MASE scores.
 
-It also imposes no distributional shape. The hardest datasets (exchange,
-bitcoin, ETTm) are noisy, skewed and heavy-tailed; a Gaussian would
-be the wrong model and a Student-t, while better on tails, is still unimodal
-and symmetric.
+The head cross-attends to the context embeddings: the predictor is trained
+under MSE, so its output is a conditional mean, and two contexts with the
+same mean but different volatility would otherwise collapse to the same
+latent.
 
-There is a side benefit on the point metric too: MASE is MAE-based, and MAE is
-minimized by the MEDIAN. Training with Huber gives something between a mean and
-a median; pinball gives the exact conditional median at q=0.5.
-
-Why the head is fed the context
--------------------------------
-The predictor is trained under MSE against the target latent, so it converges to
-E[z_target | z_context] - a conditional MEAN by construction (measured on a live
-run: pred_var 0.6 against target_var 0.95). Dispersion information lives in the
-residual, which the model never observes at inference.
-
-Two contexts with the same conditional mean but different volatility can
-therefore collapse to the same predicted latent, leaving a decoder that only
-sees that latent unable to tell them apart. Cross-attending to the context
-embeddings gives the head direct access to the window's volatility signature.
-`scripts/archive/probe_uncertainty.py` measured that this buys real signal
-on a trained checkpoint.
-
-Quantile crossing
------------------
-Independently regressing each level lets q0.9 fall below q0.1. Rather than
-penalizing that after the fact, the head is parameterized so it cannot happen:
-predict the median, plus strictly positive widths accumulated outward from it.
+Quantile crossing is prevented by construction: the median is predicted
+directly, the other levels are strictly positive widths accumulated outward
+from it.
 """
 
 from typing import Optional, Sequence
@@ -53,6 +32,7 @@ def pinball_loss(
     quantiles: torch.Tensor,
     target: torch.Tensor,
     levels: Sequence[float],
+    mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Averaged pinball (quantile) loss.
@@ -78,7 +58,13 @@ def pinball_loss(
     q = torch.as_tensor(levels, device=quantiles.device, dtype=quantiles.dtype)
     diff = target - quantiles                      # [B, L, Q]
     loss = 2.0 * torch.maximum(q * diff, (q - 1.0) * diff)
-    return loss.mean()
+    if mask is None:
+        return loss.mean()
+    # Padded positions past the real end of a short series carry no
+    # information; average over real ones.
+    m = mask.to(loss.dtype).unsqueeze(-1)          # [B, L, 1] over the Q axis
+    denom = torch.clamp(m.sum() * loss.shape[-1], min=1.0)
+    return (loss * m).sum() / denom
 
 
 class QuantileHead(nn.Module):
@@ -113,9 +99,8 @@ class QuantileHead(nn.Module):
         num_heads: int = 4,
         hidden_dim: Optional[int] = None,
         dropout: float = 0.1,
-        # ESJEPA - modulation of the fan's SPREAD by the z path. Strict
-        # opt-in: flag off => the z_gate attribute does not exist, state_dict
-        # and compute path bit-identical (w_film pattern).
+        # Modulation of the fan's spread by the z path. Opt-in: when off,
+        # the z_gate attribute does not exist.
         use_error_signal: bool = False,
         z_dim: int = 4,
     ):
@@ -131,9 +116,8 @@ class QuantileHead(nn.Module):
         if not all(a < b for a, b in zip(self.quantile_levels, self.quantile_levels[1:])):
             raise ValueError(f"quantile_levels must be strictly increasing, got {self.quantile_levels}")
 
-        # Index of the median. With an odd grid this is exact; with an even one
-        # the anchor sits just below 0.5, which only shifts which level is
-        # regressed directly and never breaks monotonicity.
+        # Index of the median; with an even grid the anchor sits just below
+        # 0.5, which only shifts which level is regressed directly.
         self.median_idx = min(
             range(self.num_quantiles),
             key=lambda i: abs(self.quantile_levels[i] - 0.5),
@@ -149,11 +133,8 @@ class QuantileHead(nn.Module):
         if use_error_signal:
             # Multiplicative gate on _make_monotone's widths:
             # z [B, N, z_dim] -> (g_low, g_up) per patch -> widths * exp(g).
-            # Zero-init weights AND bias => exp(0)=1: EXACT identity at init
-            # (finetune starts from the baseline fan, modulation only appears
-            # if the gradient asks for it). The MEDIAN is untouchable by
-            # construction - MASE structurally invariant, any WQL delta
-            # attributable to the spread.
+            # Zero-init weights and bias give exp(0)=1, an exact identity at
+            # init. The median is never touched.
             self.z_gate = nn.Linear(z_dim, 2)
             nn.init.zeros_(self.z_gate.weight)
             nn.init.zeros_(self.z_gate.bias)
@@ -186,10 +167,9 @@ class QuantileHead(nn.Module):
         Returns:
             quantiles [B, L, Q], strictly increasing along Q.
 
-        `z` (ESJEPA, optional): predicted residual stats [B, N, z_dim] -
-        modulates the spread via z_gate. Two-way refusal: built with
-        use_error_signal but no z, or z given without the module =>
-        ValueError (never a silent degradation, use_context precedent).
+        `z` (optional): predicted residual stats [B, N, z_dim], modulates the
+        spread via z_gate. Built with use_error_signal but no z, or z given
+        without the gate, raises ValueError.
         """
         if self.use_error_signal and z is None:
             raise ValueError(
@@ -224,10 +204,9 @@ class QuantileHead(nn.Module):
 
         gates = None
         if z is not None:
-            # z is per PATCH [B, N, z_dim]; the widths are per TIMESTEP
-            # [B, L, .]. Non-overlapping mapping t -> min(t//stride, N-1) -
-            # simpler than reproducing UnPatching's overlap-averaging and
-            # good enough for a scale.
+            # z is per patch [B, N, z_dim], the widths are per timestep
+            # [B, L, .]: map t -> min(t//stride, N-1), simpler than
+            # reproducing UnPatching's overlap averaging.
             g = self.z_gate(z)                               # [B, N, 2]
             idx = torch.div(
                 torch.arange(raw.shape[1], device=raw.device),
@@ -244,12 +223,9 @@ class QuantileHead(nn.Module):
         Turn unconstrained outputs into a sorted quantile fan.
 
         The median is regressed directly; every other level is the median plus
-        or minus a cumulative sum of softplus widths. Sorting is then a property
-        of the parameterization rather than something to penalize or post-process.
-
-        `gates` (ESJEPA, [B, L, 2]): log-multiplicative factors (g_low, g_up)
-        applied to the widths - exp(g)*softplus stays > 0, monotonicity and
-        the median are preserved by construction.
+        or minus a cumulative sum of softplus widths, so the fan is sorted by
+        construction. `gates` [B, L, 2] are log-multiplicative factors
+        (g_low, g_up) on the widths; exp(g)*softplus stays positive.
         """
         mid = self.median_idx
         median = raw[..., mid:mid + 1]                       # [B, L, 1]
@@ -260,7 +236,7 @@ class QuantileHead(nn.Module):
             lower_w = F.softplus(raw[..., :mid])             # [B, L, mid]
             if gates is not None:
                 lower_w = lower_w * torch.exp(gates[..., 0:1])
-            # Accumulate outward from the median, then restore ascending order
+            # Accumulate outward from the median, then restore ascending order.
             lower = median - torch.cumsum(lower_w.flip(-1), dim=-1).flip(-1)
             parts.append(lower)
 
@@ -275,8 +251,9 @@ class QuantileHead(nn.Module):
 
         return torch.cat(parts, dim=-1)
 
-    def loss(self, quantiles: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        return pinball_loss(quantiles, target, self.quantile_levels)
+    def loss(self, quantiles: torch.Tensor, target: torch.Tensor,
+             mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return pinball_loss(quantiles, target, self.quantile_levels, mask=mask)
 
     def median(self, quantiles: torch.Tensor) -> torch.Tensor:
         """The MAE-optimal point forecast, for MASE and the plots."""

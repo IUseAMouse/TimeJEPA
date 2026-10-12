@@ -1,10 +1,6 @@
 """
-Patching module for time series.
-
-Similar to Vision Transformer (ViT) patching but for 1D sequences.
-Converts continuous time series into discrete patches.
-
-Key idea: [B, L] -> [B, num_patches, patch_size * d_model]
+Patching for time series: [B, L, C] -> [B, num_patches, d_model], and the
+inverse operation for the decoders.
 """
 
 import torch
@@ -43,11 +39,9 @@ class Patching(nn.Module):
         self.stride = stride if stride is not None else patch_size
         self.padding = padding
         
-        # Linear projection from (patch_size * num_features) -> d_model
         self.projection = nn.Linear(patch_size * num_features, d_model)
-        
-        # Optional: learnable value embedding (as in PatchTST)
-        # This can help the model learn better representations
+
+        # Value embedding as in PatchTST; kept in the state_dict.
         self.value_embedding = nn.Linear(num_features, d_model)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -62,35 +56,25 @@ class Patching(nn.Module):
         """
         batch_size, seq_len = x.shape[0], x.shape[1]
         
-        # Handle 2D input [B, L] -> [B, L, 1]
         if x.dim() == 2:
             x = x.unsqueeze(-1)  # [B, L, 1]
         
         num_features = x.shape[-1]
         
-        # Pad if necessary
         if self.padding:
-            # Calculate padding needed
             remainder = (seq_len - self.patch_size) % self.stride
             if remainder != 0:
                 pad_len = self.stride - remainder
-                # Pad at the end with last value (or could use zeros)
+                # Pad at the end by repeating the last value.
                 x = torch.cat([x, x[:, -1:, :].repeat(1, pad_len, 1)], dim=1)
                 seq_len = x.shape[1]
         
-        # Calculate number of patches
         num_patches = (seq_len - self.patch_size) // self.stride + 1
-        
-        # Create patches using unfold
-        # x: [B, L, C] -> patches: [B, num_patches, patch_size, C]
+
         patches = x.unfold(dimension=1, size=self.patch_size, step=self.stride)
-        # patches: [B, num_patches, C, patch_size]
+        # [B, num_patches, C, patch_size]
         patches = patches.transpose(2, 3)  # [B, num_patches, patch_size, C]
-        
-        # Flatten patches: [B, num_patches, patch_size * C]
         patches = patches.reshape(batch_size, num_patches, -1)
-        
-        # Project to d_model
         patches = self.projection(patches)  # [B, num_patches, d_model]
         
         return patches
@@ -115,11 +99,8 @@ class Patching(nn.Module):
 
 class PatchEmbedding(nn.Module):
     """
-    Full patch embedding with optional positional encoding.
-    
-    This is a higher-level module that combines patching with
-    optional learned positional embeddings (separate from RoPE).
-    
+    Patching plus optional learned positional embeddings (separate from RoPE).
+
     Args:
         patch_size: Size of each patch
         d_model: Embedding dimension
@@ -136,14 +117,13 @@ class PatchEmbedding(nn.Module):
         num_features: int = 1,
         max_patches: int = 512,
         dropout: float = 0.1,
-        use_pos_encoding: bool = False  # We use RoPE instead usually
+        use_pos_encoding: bool = False  # RoPE is used instead by default
     ):
         super().__init__()
         
         self.patching = Patching(patch_size, d_model, num_features)
         self.dropout = nn.Dropout(dropout)
         
-        # Learned positional encoding (optional, usually don't use with RoPE)
         self.use_pos_encoding = use_pos_encoding
         if use_pos_encoding:
             self.pos_encoding = nn.Parameter(torch.randn(1, max_patches, d_model))
@@ -158,15 +138,12 @@ class PatchEmbedding(nn.Module):
         Returns:
             Embedded patches [B, num_patches, d_model]
         """
-        # Patchify
         x = self.patching(x)  # [B, num_patches, d_model]
-        
-        # Add positional encoding if enabled
+
         if self.use_pos_encoding:
             num_patches = x.shape[1]
             x = x + self.pos_encoding[:, :num_patches, :]
-        
-        # Dropout
+
         x = self.dropout(x)
         
         return x
@@ -174,11 +151,8 @@ class PatchEmbedding(nn.Module):
 
 class UnPatching(nn.Module):
     """
-    Convert patches back to continuous time series.
-    
-    This is used in the decoder to reconstruct the original sequence
-    from patch-level predictions.
-    
+    Convert patch-level predictions back to a continuous time series.
+
     Args:
         patch_size: Size of each patch
         d_model: Embedding dimension
@@ -200,7 +174,6 @@ class UnPatching(nn.Module):
         self.num_features = num_features
         self.stride = stride if stride is not None else patch_size
         
-        # Project from d_model -> (patch_size * num_features)
         self.projection = nn.Linear(d_model, patch_size * num_features)
     
     def forward(
@@ -220,18 +193,14 @@ class UnPatching(nn.Module):
         """
         batch_size, num_patches, _ = x.shape
         
-        # Project to patch values
         x = self.projection(x)  # [B, num_patches, patch_size * C]
-        
-        # Reshape to [B, num_patches, patch_size, C]
         x = x.reshape(batch_size, num_patches, self.patch_size, self.num_features)
         
-        # If non-overlapping patches (stride == patch_size), simple reshape
         if self.stride == self.patch_size:
-            # Merge patches: [B, num_patches * patch_size, C]
+            # Non-overlapping: [B, num_patches * patch_size, C]
             x = x.reshape(batch_size, -1, self.num_features)
         else:
-            # Overlapping patches: need to average overlapping regions
+            # Overlapping: average the overlapping regions.
             seq_len = (num_patches - 1) * self.stride + self.patch_size
             output = torch.zeros(
                 batch_size, seq_len, self.num_features,
@@ -247,7 +216,6 @@ class UnPatching(nn.Module):
             
             x = output / counts.unsqueeze(0).unsqueeze(-1)
         
-        # Trim to target length if specified
         if target_len is not None:
             x = x[:, :target_len, :]
         

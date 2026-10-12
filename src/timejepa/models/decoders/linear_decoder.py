@@ -1,10 +1,6 @@
 """
-Linear Decoder for generative finetuning.
-
-After JEPA pretraining, we add a simple decoder head to generate
-actual time series values for forecasting tasks.
-
-Architecture: Representation [B, N, d_model] -> Values [B, L_pred, C]
+Decoder heads for finetuning: representations [B, N, d_model] -> values
+[B, L_pred, C].
 """
 
 import torch
@@ -16,20 +12,13 @@ from ..components.patching import UnPatching
 
 class LinearDecoder(nn.Module):
     """
-    Simple linear decoder for forecasting.
-    
-    Projects patch-level representations back to time series values.
-    Used during finetuning for generative tasks.
-    
-    Architecture:
-        Patch representations [B, num_patches, d_model]
-        -> Linear projection [B, num_patches, patch_size * C]
-        -> Reshape to [B, L_pred, C]
-    
+    Linear decoder: patch representations [B, num_patches, d_model] ->
+    [B, num_patches, patch_size * C] -> [B, L_pred, C].
+
     Args:
-        d_model: Model dimension (512)
-        patch_size: Size of each patch (16)
-        stride: Gap between patches (8)
+        d_model: Model dimension
+        patch_size: Size of each patch
+        stride: Gap between patches
         prediction_length: Length of prediction horizon
         num_features: Number of output features/channels (1 for univariate)
         use_unpatching: Whether to use UnPatching layer
@@ -54,7 +43,7 @@ class LinearDecoder(nn.Module):
         self.use_unpatching = use_unpatching
         
         if use_unpatching:
-            # Use proper unpatching with overlap handling
+            # Handles overlapping patches.
             self.unpatching = UnPatching(
                 patch_size=patch_size,
                 stride=stride,
@@ -62,7 +51,6 @@ class LinearDecoder(nn.Module):
                 num_features=num_features
             )
         else:
-            # Simple linear projection
             self.projection = nn.Linear(d_model, patch_size * num_features)
     
     def forward(
@@ -84,19 +72,11 @@ class LinearDecoder(nn.Module):
             target_length = self.prediction_length
         
         if self.use_unpatching:
-            # Use unpatching layer
             output = self.unpatching(x, target_len=target_length)
         else:
-            # Simple projection and reshape
             batch_size, num_patches, _ = x.shape
-            
-            # Project to patch values
             x = self.projection(x)  # [B, num_patches, patch_size * C]
-            
-            # Reshape
             x = x.reshape(batch_size, num_patches * self.patch_size, self.num_features)
-            
-            # Trim to target length
             output = x[:, :target_length, :]
         
         return output
@@ -124,7 +104,7 @@ class MLPDecoder(nn.Module):
         
         hidden_dim = hidden_dim or d_model
         
-        # The MLP projects to d_model (not directly to patch_size * C)
+        # The MLP keeps d_model; UnPatching does the final projection.
         layers = []
         for i in range(num_layers):
             in_dim = d_model if i == 0 else hidden_dim
@@ -137,7 +117,6 @@ class MLPDecoder(nn.Module):
         
         self.mlp = nn.Sequential(*layers)
         
-        # UnPatching handles the final projection + overlap
         self.unpatching = UnPatching(
             patch_size=patch_size,
             stride=stride,
@@ -153,10 +132,7 @@ class MLPDecoder(nn.Module):
         if target_length is None:
             target_length = self.prediction_length
         
-        # The MLP enriches the representations
         x = self.mlp(x)  # [B, num_patches, d_model]
-
-        # UnPatching handles the rest cleanly
         output = self.unpatching(x, target_len=target_length)
         
         return output
@@ -164,13 +140,9 @@ class MLPDecoder(nn.Module):
 
 class AttentiveDecoder(nn.Module):
     """
-    Attention-based decoder for more sophisticated decoding.
-    
-    Uses cross-attention between learnable query embeddings and
-    patch representations to generate predictions.
-    
-    Inspired by Perceiver and similar architectures.
-    
+    Cross-attention decoder: learnable per-timestep queries attend to the
+    patch representations (Perceiver style).
+
     Args:
         d_model: Model dimension
         prediction_length: Prediction horizon
@@ -193,12 +165,10 @@ class AttentiveDecoder(nn.Module):
         self.prediction_length = prediction_length
         self.num_features = num_features
         
-        # Learnable query embeddings for each output timestep
         self.query_embeddings = nn.Parameter(
             torch.randn(1, prediction_length, d_model) * 0.02
         )
         
-        # Cross-attention
         self.cross_attention = nn.MultiheadAttention(
             embed_dim=d_model,
             num_heads=num_heads,
@@ -206,10 +176,7 @@ class AttentiveDecoder(nn.Module):
             batch_first=True
         )
         
-        # Layer norm
         self.norm = nn.LayerNorm(d_model)
-        
-        # Output projection
         self.output_proj = nn.Linear(d_model, num_features)
     
     def forward(
@@ -232,17 +199,14 @@ class AttentiveDecoder(nn.Module):
         
         batch_size = x.shape[0]
         
-        # Get query embeddings
         queries = self.query_embeddings[:, :target_length, :].expand(batch_size, -1, -1)
         
-        # Cross-attention: queries attend to patch representations
         attended, _ = self.cross_attention(
             query=queries,
             key=x,
             value=x
         )
         
-        # Norm and project
         attended = self.norm(attended)
         output = self.output_proj(attended)  # [B, L_pred, C]
         
@@ -251,11 +215,9 @@ class AttentiveDecoder(nn.Module):
 
 class ForecastingHead(nn.Module):
     """
-    Complete forecasting head with multiple decoder options.
-    
-    Wraps different decoder types and provides a unified interface.
-    Can also handle denormalization via RevIN.
-    
+    Unified forecasting head over the decoder types, with RevIN
+    denormalization.
+
     Args:
         d_model: Model dimension
         patch_size: Patch size
@@ -276,9 +238,10 @@ class ForecastingHead(nn.Module):
         revin: Optional[nn.Module] = None,
         quantile_levels: Optional[Sequence[float]] = None,
         quantile_use_context: bool = True,
-        # ESJEPA - forwarded to QuantileHead (spread gate). Flag off =>
-        # state_dict and behavior bit-identical.
+        # Forwarded to QuantileHead (spread gate).
         error_signal: bool = False,
+        # MLP width of the quantile head; None keeps the d_model fallback.
+        quantile_hidden_dim: 'Optional[int]' = None,
     ):
         super().__init__()
 
@@ -287,7 +250,6 @@ class ForecastingHead(nn.Module):
         self.decoder_type = decoder_type
         self.revin = revin
         
-        # Create decoder
         if decoder_type == 'linear':
             self.decoder = LinearDecoder(
                 d_model=d_model,
@@ -311,8 +273,8 @@ class ForecastingHead(nn.Module):
                 num_features=num_features
             )
         elif decoder_type == 'quantile':
-            # Probabilistic head. Emits a sorted quantile fan instead of a point,
-            # and optionally cross-attends to the context embeddings.
+            # Probabilistic head: a sorted quantile fan instead of a point,
+            # optionally cross-attending to the context embeddings.
             from .quantile_head import QuantileHead, DEFAULT_QUANTILES
             self.decoder = QuantileHead(
                 d_model=d_model,
@@ -322,13 +284,13 @@ class ForecastingHead(nn.Module):
                 quantile_levels=quantile_levels or DEFAULT_QUANTILES,
                 use_context=quantile_use_context,
                 use_error_signal=error_signal,
+                hidden_dim=quantile_hidden_dim,
             )
         else:
             raise ValueError(f"Unknown decoder_type: {decoder_type}")
 
         if error_signal and decoder_type != 'quantile':
-            # A z trained at pretrain then silently unconsumed by a point
-            # decoder is exactly the degradation this project refuses.
+            # A z trained at pretrain must not go silently unconsumed.
             raise ValueError(
                 f"error_signal=True requires decoder_type='quantile' (the z "
                 f"path modulates the fan's spread) - got '{decoder_type}'."
@@ -354,17 +316,14 @@ class ForecastingHead(nn.Module):
             x: Representations [B, num_patches, d_model]
             skip_revin: Return the normalized forecast unchanged as the "denorm" one
             context_embeddings: Encoder output [B, N_ctx, d_model]. Only the
-                quantile head consumes it; the point decoders ignore it, so the
-                caller can always pass it.
-            z: ESJEPA - predicted residual stats [B, N, z_dim]. Unlike
-                context_embeddings, a z given to a point decoder is REFUSED:
-                it only exists when the arm is active, losing it would be
-                silent.
+                quantile head consumes it; point decoders ignore it.
+            z: Predicted residual stats [B, N, z_dim] (error signal). A z
+                given to a point decoder is refused rather than lost.
 
         Returns:
             For point decoders: (forecast [B, L, C], forecast_denorm [B, L, C])
-            For the quantile head: (quantiles [B, L, Q], quantiles_denorm [B, L, Q])
-            - the caller extracts the median.
+            For the quantile head: (quantiles [B, L, Q], quantiles_denorm [B, L, Q]);
+            the caller extracts the median.
         """
         if self.decoder_type == 'quantile':
             predictions = self.decoder(x, context_embeddings=context_embeddings, z=z)
@@ -380,10 +339,9 @@ class ForecastingHead(nn.Module):
         if skip_revin or self.revin is None:
             predictions_denorm = predictions
         else:
-            # `denormalize_target_space`, NOT `mode='denorm'`: the decoder is
-            # trained against a plain z-scored target (no RevIN affine), so the
-            # affine inverse in `_denormalize` would introduce a scale/offset
-            # error. See RevIN.denormalize_target_space for the full rationale.
+            # `denormalize_target_space` rather than `mode='denorm'`: the
+            # decoder is trained against a plain z-scored target, without the
+            # RevIN affine. See RevIN.denormalize_target_space.
             predictions_denorm = self.revin.denormalize_target_space(predictions)
 
         return predictions, predictions_denorm
