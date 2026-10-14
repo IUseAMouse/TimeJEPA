@@ -85,28 +85,32 @@ Entraînement, modèle gelé, sur un corpus au format standard (`.npy [N, L]` + 
 fréquences, jamais GIFT-Eval) :
 
 ```bash
-# grille : le modèle n'est appelé que sous no_grad, une fois par fenêtre et par k de la
-# grille ; le sélecteur apprend sur la courbe de perte interpolée (tout modèle)
-PYTHONPATH=../TimeSSM/src python scripts/train_ratein_layer.py --mode grid --model timessm \
-    --pretrained ../TimeSSM/export/timessm-2.5m --corpus-dir data/processed/<corpus_reduit> \
-    --frequency-table configs/corpus_v3_frequencies.yaml --windows 20000 --steps 3000 \
-    --grid-cache checkpoints/ratein_layer/grid_timessm.npz --out checkpoints/ratein_layer/grid_timessm.pt
-# gradient à travers le modèle gelé (TimeSSM seulement) : une passe avant-arrière par pas
-PYTHONPATH=../TimeSSM/src python scripts/train_ratein_layer.py --mode through --model timessm ...
-# modèle tiers : --model external --external-config configs/model/ext_<nom>_eval.yaml, mode grid
+# e2e, le mode de référence : gradient à travers le modèle gelé, une passe avant-arrière par pas
+PYTHONPATH=../TimeSSM/src python scripts/train_ratein_layer.py --mode e2e --model timessm \
+    --pretrained ../TimeSSM/export/timessm-2.5m --corpus-dir data/processed/lotsa_ratein \
+    --frequency-table configs/corpus_v3_frequencies.yaml --windows 12000 --steps 3000 --batch 16 \
+    --out checkpoints/ratein_layer/e2e_timessm.pt
+# curve, pour un modèle qu'on ne peut pas traverser (enveloppes tierces sous no_grad) : perte du
+# modèle à chaque k de la grille par fenêtre, en cache, puis sélecteur sur la courbe lissée
+python scripts/train_ratein_layer.py --mode curve --model external --external-config configs/model/ext_<nom>_eval.yaml \
+    --corpus-dir data/processed/lotsa_ratein --frequency-table configs/corpus_v3_frequencies.yaml \
+    --grid-cache checkpoints/ratein_layer/curve_<nom>.npz --out checkpoints/ratein_layer/curve_<nom>.pt
 ```
 
 `--k-prior-table <yaml>` (fréquence → k) remplace le prior k = 1 par la table de consensus ;
 `--shrink` pénalise le résidu `g²`. Le journal imprime, sur la validation, la perte au prior,
-la perte apprise et (mode grille) l'oracle : la part du gain oracle capturée est le chiffre
-à lire. Coût CPU mesuré : une prévision TimeSSM de 24 séries ≈ 4 à 8 s ; le précalcul de la
-grille vaut 14 prévisions par lot de fenêtres.
+la perte apprise et (mode curve) l'oracle : la part du gain oracle capturée est le chiffre
+à lire. Corpus réduit : `configs/ratein_layer_subsets_{long,short}.txt` (24 sous-ensembles LOTSA,
+une cadence par ligne du corpus, 500 morceaux chacun, 4096 pas pour les cadences fines et
+1536 pour le quotidien et l'hebdo), voir `prepare_lotsa.py --subsets-from`. Coût CPU mesuré :
+une prévision TimeSSM de 24 séries ≈ 4 à 8 s ; e2e ≈ 3 passes par pas ; curve = 14 passes
+par lot de fenêtres, une fois.
 
 Évaluation GIFT, une prévision par instance, tag `_ratein-layer-<fichier>` :
 
 ```bash
 python scripts/evaluate_gift.py --config-name <eval> "+checkpoint_path=$CK" +tta_flip=true \
-    +ratein=layer +ratein_layer=checkpoints/ratein_layer/grid_timessm.pt [+ratein_layer_prior=<yaml>]
+    +ratein=layer +ratein_layer=checkpoints/ratein_layer/e2e_timessm.pt [+ratein_layer_prior=<yaml>]
 ```
 
 Une couche non entraînée (g = 0) à prior 1 reproduit le chemin nu bit pour bit, à prior 2 le

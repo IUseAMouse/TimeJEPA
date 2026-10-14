@@ -4,22 +4,23 @@ Train the RateIN layer (`timejepa.ratein_layer`) with the forecaster frozen.
 
 Two training modes, one layer at inference:
 
-  through   the gradient of the native pinball loss flows through the frozen
-            forecaster into the selector (needs a differentiable model:
-            TimeSSM loaded with `timessm.from_pretrained`).
-  grid      the forecaster is only ever called under no_grad, once per window
-            and per rate of the grid (the backtest's candidates), and the
-            selector learns on the interpolated loss curve. Any model.
+  e2e       end to end: the gradient of the native pinball loss flows through
+            the frozen forecaster into the selector. The reference mode (needs
+            a differentiable model: TimeSSM loaded with `timessm.from_pretrained`).
+  curve     for forecasters that cannot be traversed (the third-party
+            wrappers run under no_grad): the forecaster is called once per
+            window and per rate of the grid, the per-window loss curves are
+            cached, and the selector learns on the kernel-smoothed curve.
 
 Data: a directory of `.npy [N, L]` arrays (the corpus format) and the
 frequency table of the corpus; each row gives one window: the last
 `--horizon` points are the target, a random-length suffix before them is the
 native context. Nothing from GIFT-Eval is read here.
 
-    python scripts/train_ratein_layer.py --mode grid --model timessm \\
+    python scripts/train_ratein_layer.py --mode e2e --model timessm \\
         --pretrained ../TimeSSM/export/timessm-2.5m \\
         --corpus-dir data/processed/lotsa_small --frequency-table configs/corpus_v3_frequencies.yaml \\
-        --windows 20000 --out checkpoints/ratein_layer/grid_timessm.pt
+        --windows 12000 --out checkpoints/ratein_layer/e2e_timessm.pt
 
 The checkpoint holds the layer's state_dict and the settings the harness
 needs (`+ratein=layer +ratein_layer=<file>`).
@@ -202,7 +203,7 @@ def grid_losses(windows, forecast_fn, layer, device, batch_size, log_every=20):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=("through", "grid"), required=True)
+    ap.add_argument("--mode", choices=("e2e", "curve"), required=True)
     ap.add_argument("--model", choices=("timessm", "external"), required=True)
     ap.add_argument("--pretrained", default=None, help="timessm: export directory or HF id")
     ap.add_argument("--external-config", default=None, help="external: a yaml with model.external")
@@ -217,12 +218,12 @@ def main():
     ap.add_argument("--steps", type=int, default=2000)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--shrink", type=float, default=1e-3, help="penalty on g^2 (the residual in log k)")
-    ap.add_argument("--sigma", type=float, default=0.25, help="grid mode: kernel bandwidth in log k")
+    ap.add_argument("--sigma", type=float, default=0.25, help="curve mode: kernel bandwidth in log k")
     ap.add_argument("--n-modes", type=int, default=48)
     ap.add_argument("--hidden", type=int, default=32)
     ap.add_argument("--model-len", type=int, default=RL.MODEL_LEN)
     ap.add_argument("--min-blocks", type=int, default=32)
-    ap.add_argument("--grid-cache", default=None, help="grid mode: npz to reuse / write the per-k losses")
+    ap.add_argument("--grid-cache", default=None, help="curve mode: npz to reuse / write the per-k losses")
     ap.add_argument("--eval-every", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu")
@@ -242,13 +243,13 @@ def main():
     layer = RL.RateINLayer(RL.RateSelector(args.n_modes, args.hidden), model_len=args.model_len,
                            min_blocks=args.min_blocks).to(device)
     forecast_fn, differentiable = build_forecaster(args, device)
-    if args.mode == "through" and not differentiable:
-        raise ValueError("--mode through needs a differentiable forecaster (timessm)")
+    if args.mode == "e2e" and not differentiable:
+        raise ValueError("--mode e2e needs a differentiable forecaster (timessm); use --mode curve")
     opt = torch.optim.AdamW(layer.parameters(), lr=args.lr, weight_decay=0.0)
     rng = np.random.default_rng(args.seed)
 
     grid = losses = None
-    if args.mode == "grid":
+    if args.mode == "curve":
         cache = Path(args.grid_cache) if args.grid_cache else None
         if cache is not None and cache.exists():
             z = np.load(cache)
@@ -275,7 +276,7 @@ def main():
                 b = ids[start:start + args.batch]
                 x, lengths, y, season, prior = windows.batch(b, device)
                 lk = layer.log_k(x, lengths, prior)
-                if args.mode == "grid":
+                if args.mode == "curve":
                     Lb = L_all[b]
                     learned = RL.interp_loss_curve(log_grid, Lb, lk)
                     at_prior = RL.interp_loss_curve(log_grid, Lb, layer.bound_log_k(prior, lengths))
@@ -290,7 +291,7 @@ def main():
                 tot_learned += learned.sum().item(); tot_prior += at_prior.sum().item(); n += len(b)
         layer.train()
         out = {"learned": tot_learned / n, "prior": tot_prior / n}
-        if args.mode == "grid":
+        if args.mode == "curve":
             out["oracle"] = tot_orc / n
         return out
 
@@ -301,7 +302,7 @@ def main():
         x, lengths, y, season, prior = windows.batch(b, device)
         g = layer.selector(x, lengths)
         lk = layer.bound_log_k(prior + g, lengths)
-        if args.mode == "grid":
+        if args.mode == "curve":
             loss_items = RL.kernel_loss_curve(log_grid, L_all[b], lk, args.sigma)
         else:
             k = torch.exp(lk)
