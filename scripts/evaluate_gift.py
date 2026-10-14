@@ -648,6 +648,24 @@ def _mix_weights(ratios: dict, tau: float = MIX_TAU,
     return {k: v / z for k, v in sorted(w.items())}
 
 
+def _instance_stats(target, median, quantiles, scale) -> dict:
+    """The raw sums one instance contributes to `MetricAccumulator`, kept
+    per instance so a selector can be scored offline at any choice of k:
+    config CRPS = mean over quantiles of sum(ql) / sum(abs)."""
+    mask = ~np.isnan(target)
+    y, yhat = target[mask], median[mask]
+    err = np.abs(y - yhat)
+    q = np.asarray(gift.QUANTILE_LEVELS)
+    if quantiles is not None:
+        qp = quantiles[mask]
+        ql = (2.0 * np.abs((qp - y[:, None]) * ((y[:, None] <= qp) - q[None, :]))).sum(axis=0)
+    else:
+        e = yhat - y
+        ql = np.array([2.0 * np.abs(e * ((y <= yhat) - qv)).sum() for qv in q])
+    return {"ql": ql.astype(np.float64), "abs_sum": float(np.abs(y).sum()),
+            "err_sum": float(err.sum()), "scale": float(scale), "n_obs": int(mask.sum())}
+
+
 def evaluate_config(model, config: str, gift_root: Path, device,
                     batch_size: int, max_series: int = 0,
                     max_context: int = 0, tta_lookbacks=None,
@@ -664,7 +682,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
-                    ttt_spec=None) -> dict:
+                    ttt_spec=None, per_instance=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -698,6 +716,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     stride = model.patching.stride
     n_inst = 0
     k_hist = Counter()
+    win_counter = Counter()                    # series_idx -> next window index
     # RateIN: per-config k chosen by causal backtest (see the helper),
     # computed once before the loop, batched.
     bt_ks, bt_diag, mix_weights = None, None, None
@@ -786,6 +805,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # RateIN: k is a causal statistic of the past, one uniform rule across
         # the 97 configs. forced_k is the oracle mode (diagnostic, never
         # official).
+        widx = win_counter[inst.series_idx]
+        win_counter[inst.series_idx] += 1
         if forced_k:
             k = forced_k
         elif bt_ks is not None:
@@ -808,7 +829,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # MASE scale uses the full past, not the capped context: gluonts
         # computes the seasonal error on the entire history of the series.
         scale = gift.seasonal_error(inst.context, m)
-        buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale, inst.series_idx))
+        buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale, inst.series_idx, widx))
         k_hist[k] += 1
         n_inst += 1
 
@@ -898,6 +919,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 if spread_s != 1.0:
                     fan_nat = biasin_mod.scale_fan(fan_nat, med_nat, spread_s)
                 model_acc.add(target, med_nat, fan_nat, scale)
+                if per_instance is not None:
+                    st = _instance_stats(target, med_nat, fan_nat, scale)
+                    st.update({"series_idx": int(item[4]), "window": int(item[5]), "k": float(k)})
+                    per_instance.append(st)
                 sn = gift.seasonal_naive_forecast(past, h, m)
                 sn_acc.add(target, sn, None, scale)
 
@@ -1045,7 +1070,7 @@ KNOWN_FLAGS = frozenset((
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
     "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows", "ratein_mix_tau",
-    "freq_delta",
+    "freq_delta", "dump_per_k",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
@@ -1363,6 +1388,13 @@ def main(cfg: DictConfig):
         tag += "-w"
     if freq_delta:
         tag += "_fdelta"
+    # +dump_per_k=true (oracle mode only): per-instance sums at every k, to
+    # score per-series selectors offline. Tag _perk: never the cached oracle dir.
+    dump_per_k = bool(cfg.get("dump_per_k", False))
+    if dump_per_k:
+        if not ratein_oracle:
+            raise ValueError("+dump_per_k needs +ratein=oracle")
+        tag += "_perk"
     tag += refine_tag
     if bias_mode == "backtest":
         tag += "_bias-bt" + ("" if bias_lambdas is None else
@@ -1412,6 +1444,7 @@ def main(cfg: DictConfig):
                 # Per-config k sweep: the upper bound on the gain reachable
                 # by rate canonicalization.
                 per_k, best = {}, None
+                dump_rows = [] if dump_per_k else None
                 for kk in ratein_mod.K_CANDIDATES:
                     r_k = evaluate_config(model, config, gift_root, device,
                                           batch_size, max_series,
@@ -1428,11 +1461,24 @@ def main(cfg: DictConfig):
                                           bias_lambdas=bias_lambdas,
                                           spread_mode=spread_mode,
                                           spread_grid=spread_grid,
-                                          ttt_spec=ttt_spec)
+                                          ttt_spec=ttt_spec,
+                                          per_instance=dump_rows)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
                 res = best
+                if dump_rows:
+                    np.savez_compressed(
+                        per_config / (config.replace("/", "__") + "__per_instance.npz"),
+                        series_idx=np.array([r["series_idx"] for r in dump_rows], dtype=np.int32),
+                        window=np.array([r["window"] for r in dump_rows], dtype=np.int32),
+                        k=np.array([r["k"] for r in dump_rows], dtype=np.float64),
+                        ql=np.stack([r["ql"] for r in dump_rows]),
+                        abs_sum=np.array([r["abs_sum"] for r in dump_rows]),
+                        err_sum=np.array([r["err_sum"] for r in dump_rows]),
+                        scale=np.array([r["scale"] for r in dump_rows]),
+                        n_obs=np.array([r["n_obs"] for r in dump_rows], dtype=np.int32),
+                        quantile_levels=np.asarray(gift.QUANTILE_LEVELS))
                 res["oracle"] = {"per_k_crps": per_k, "best_k": best_k,
                                  "gain_vs_k1": 1.0 - per_k[str(best_k)]
                                  / per_k["1"] if per_k["1"] > 0 else 0.0}
