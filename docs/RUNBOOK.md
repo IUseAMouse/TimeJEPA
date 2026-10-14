@@ -70,6 +70,50 @@ officiel, comme sur le leaderboard. `scripts/harness_fidelity.py` compare le har
 lignes officielles d'un modèle tiers. Un modèle externe passe par
 `configs/model/ext_*_eval.yaml` (`model.builder`).
 
+## RateIN en couche (branche `ratein`)
+
+Le resampling par backtest choisit k par configuration au prix de 20 à 40 prévisions par
+série. La couche (`src/timejepa/ratein_layer.py`) remplace la recherche par une fonction du
+contexte : un banc de filtres (SSM diagonal lu au dernier pas, énergie par mode) donne
+`log k = log k_prior + g(x)` ; le contexte est rééchantillonné à longueur fixe par un
+opérateur dérivable en k (moyennes de blocs par sommes cumulées pour k ≥ 1, interpolation
+entre centres pour k < 1, exactement `decimate` / `upsample` pour k entier) ; le modèle gelé
+prévoit ⌈h / k_min⌉ pas ; le fan revient au pas natif (`reinterp_fan` / `pool_fan`
+généralisés). Un batch porte un k différent par série sans découpage.
+
+Entraînement, modèle gelé, sur un corpus au format standard (`.npy [N, L]` + table de
+fréquences, jamais GIFT-Eval) :
+
+```bash
+# grille : le modèle n'est appelé que sous no_grad, une fois par fenêtre et par k de la
+# grille ; le sélecteur apprend sur la courbe de perte interpolée (tout modèle)
+PYTHONPATH=../TimeSSM/src python scripts/train_ratein_layer.py --mode grid --model timessm \
+    --pretrained ../TimeSSM/export/timessm-2.5m --corpus-dir data/processed/<corpus_reduit> \
+    --frequency-table configs/corpus_v3_frequencies.yaml --windows 20000 --steps 3000 \
+    --grid-cache checkpoints/ratein_layer/grid_timessm.npz --out checkpoints/ratein_layer/grid_timessm.pt
+# gradient à travers le modèle gelé (TimeSSM seulement) : une passe avant-arrière par pas
+PYTHONPATH=../TimeSSM/src python scripts/train_ratein_layer.py --mode through --model timessm ...
+# modèle tiers : --model external --external-config configs/model/ext_<nom>_eval.yaml, mode grid
+```
+
+`--k-prior-table <yaml>` (fréquence → k) remplace le prior k = 1 par la table de consensus ;
+`--shrink` pénalise le résidu `g²`. Le journal imprime, sur la validation, la perte au prior,
+la perte apprise et (mode grille) l'oracle : la part du gain oracle capturée est le chiffre
+à lire. Coût CPU mesuré : une prévision TimeSSM de 24 séries ≈ 4 à 8 s ; le précalcul de la
+grille vaut 14 prévisions par lot de fenêtres.
+
+Évaluation GIFT, une prévision par instance, tag `_ratein-layer-<fichier>` :
+
+```bash
+python scripts/evaluate_gift.py --config-name <eval> "+checkpoint_path=$CK" +tta_flip=true \
+    +ratein=layer +ratein_layer=checkpoints/ratein_layer/grid_timessm.pt [+ratein_layer_prior=<yaml>]
+```
+
+Une couche non entraînée (g = 0) à prior 1 reproduit le chemin nu bit pour bit, à prior 2 le
+balayage oracle k = 2 (tests `tests/test_ratein_layer*.py`). `+dump_per_k=true` avec
+`+ratein=oracle` (tag `_perk`) écrit les sommes de pinball par instance et par k, pour
+noter un sélecteur hors ligne.
+
 ## Le juge (TimeJEPA-EBM)
 
 ```bash
