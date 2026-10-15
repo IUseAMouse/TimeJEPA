@@ -52,7 +52,6 @@ from omegaconf import DictConfig
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.evaluation import create_model_from_config, load_checkpoint  # noqa: E402
-from timejepa import ratein_layer as layer_mod  # noqa: E402
 from timejepa.evaluation import gift  # noqa: E402
 from timejepa.evaluation import ratein as ratein_mod  # noqa: E402
 from timejepa.evaluation import refine as refine_mod  # noqa: E402
@@ -667,88 +666,6 @@ def _instance_stats(target, median, quantiles, scale) -> dict:
             "err_sum": float(err.sum()), "scale": float(scale), "n_obs": int(mask.sum())}
 
 
-def _evaluate_config_layer(model, layer, config: str, series, h: int, m: int, windows: int,
-                           device, batch_size: int, tta_flip: bool, quantile_gamma,
-                           freq_season, log_k_prior: float) -> dict:
-    """+ratein=layer: one continuous rate per instance from the trained layer
-    (`timejepa.ratein_layer`), the context resampled by the layer's own
-    operator at a fixed model length, one forecast per instance, the fan
-    brought back to the native grid by the layer. No backtest, no bucketing
-    by k. The rate knob of a model that has one follows k as +freq_delta does
-    (w = 24 / (season / k)); the full past is read, up to model_len * K_MAX
-    native points."""
-    model_acc = gift.MetricAccumulator()
-    sn_acc = gift.MetricAccumulator()
-    k_hist = Counter()
-    log_ks = []
-    max_native = int(layer.model_len * layer_mod.K_MAX)
-    lo, hi = getattr(model, "delta_range", DELTA_RANGE)
-    insts = list(gift.iter_test_instances(series, h, windows))
-    for start in range(0, len(insts), batch_size):
-        chunk, pasts = [], []
-        for inst in insts[start:start + batch_size]:
-            past = np.asarray(inst.context[-max_native:], dtype=np.float32)
-            finite = np.isfinite(past)
-            if not finite.any():
-                continue
-            if not finite.all():                     # the resampler needs finite values
-                idx = np.arange(len(past))
-                past = np.interp(idx, idx[finite], past[finite]).astype(np.float32)
-            chunk.append(inst)
-            pasts.append(past)
-        if not chunk:
-            continue
-        L = max(len(pp) for pp in pasts)
-        x = torch.full((len(chunk), L), float("nan"))
-        for b, pp in enumerate(pasts):
-            x[b, L - len(pp):] = torch.from_numpy(pp)
-        lengths = torch.tensor([len(pp) for pp in pasts])
-        with torch.no_grad():
-            lk = layer.log_k(x.to(device), lengths.to(device), log_k_prior).cpu()
-            k = torch.exp(lk.double())
-            y, _ = layer_mod.resample_context(x, k, layer.model_len, lengths)
-            n = layer.model_horizon(h, k)
-            w_vec = None
-            if freq_season is not None:
-                w_vec = torch.tensor([frequency_mod.delta_scale(freq_season / kk, lo, hi)
-                                      for kk in k.tolist()], dtype=torch.float32, device=device)
-            out = tta_forecast(model, y.unsqueeze(-1).to(device), n, flip=tta_flip, w=w_vec)
-            out = apply_quantile_gamma(out, quantile_gamma)
-            quants = out.get("quantiles_denorm")
-            levels = out.get("quantile_levels")
-            if quants is not None:
-                quants = quants.float().cpu()
-                if quants.dim() == 4:
-                    quants = quants[..., 0]
-                fan_nat = layer_mod.fan_to_native(quants, k, h).numpy()        # [B, h, Q]
-                mid = (min(range(len(levels)), key=lambda j: abs(levels[j] - 0.5))
-                       if levels is not None else quants.shape[-1] // 2)
-                med_nat = fan_nat[:, :, mid]
-            else:
-                med = out["forecast_denorm"].float().cpu()
-                if med.dim() == 2:
-                    med = med.unsqueeze(-1)
-                fan_nat = None
-                med_nat = layer_mod.fan_to_native(med, k, h).numpy()[:, :, 0]
-        for b, inst in enumerate(chunk):
-            scale = gift.seasonal_error(inst.context, m)
-            model_acc.add(inst.target, med_nat[b], None if fan_nat is None else fan_nat[b], scale)
-            sn_acc.add(inst.target, gift.seasonal_naive_forecast(inst.context, h, m), None, scale)
-            k_hist[round(float(k[b]), 2)] += 1
-            log_ks.append(float(lk[b]))
-    res = {"config": config, "prediction_length": h, "seasonality": m,
-           "windows": windows, "n_series": len(series), "n_instances": len(log_ks),
-           "model": model_acc.result(), "seasonal_naive_local": sn_acc.result(),
-           "ratein": {"k_hist": {str(kk): nn for kk, nn in sorted(k_hist.items())},
-                      "frac_k_gt1": (sum(nn for kk, nn in k_hist.items() if kk > 1)
-                                     / max(1, sum(k_hist.values()))),
-                      "layer": {"log_k_prior": float(log_k_prior),
-                                "log_k_mean": float(np.mean(log_ks)) if log_ks else None,
-                                "log_k_std": float(np.std(log_ks)) if log_ks else None,
-                                "model_len": layer.model_len}}}
-    return res
-
-
 def evaluate_config(model, config: str, gift_root: Path, device,
                     batch_size: int, max_series: int = 0,
                     max_context: int = 0, tta_lookbacks=None,
@@ -765,8 +682,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
-                    ttt_spec=None, per_instance=None,
-                    ratein_layer=None, ratein_layer_prior: float = 0.0) -> dict:
+                    ttt_spec=None, per_instance=None) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -775,10 +691,6 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     if max_series:
         series = series[:max_series]
     windows = gift.num_windows(config, min(len(s) for s in series))
-    if ratein_mode == "layer":
-        return _evaluate_config_layer(model, ratein_layer, config, series, h, m, windows, device,
-                                      batch_size, tta_flip, quantile_gamma, freq_season,
-                                      ratein_layer_prior)
 
     model_acc = gift.MetricAccumulator()
     sn_acc = gift.MetricAccumulator()
@@ -804,6 +716,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     stride = model.patching.stride
     n_inst = 0
     k_hist = Counter()
+    # A model that owns its sampling rate (RateINForecaster) exposes the k of
+    # its last forecast; absent, these stay empty and nothing is reported.
+    layer_k_hist, layer_log_ks = Counter(), []
     win_counter = Counter()                    # series_idx -> next window index
     # RateIN: per-config k chosen by causal backtest (see the helper),
     # computed once before the loop, batched.
@@ -948,6 +863,11 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 out = tta_forecast(model, batch, h_fc,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
                                    shifts=tta_shifts, w=w_vec)
+            last_k = getattr(model, "last_k", None)
+            if last_k is not None:
+                for kk, lkk in zip(last_k.tolist(), model.last_log_k.tolist()):
+                    layer_k_hist[round(float(kk), 2)] += 1
+                    layer_log_ks.append(float(lkk))
             out = apply_quantile_gamma(out, quantile_gamma)
             if refine_spec is not None and refine_spec.active:
                 # Refinement on the model's own grid (decimated context,
@@ -1046,6 +966,14 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             res["ratein"]["mix"] = {
                 "tau": ratein_mix_tau,
                 "weights": {str(k): round(w, 4) for k, w in mix_weights.items()}}
+    if layer_log_ks:
+        hist = {str(kk): n for kk, n in sorted(layer_k_hist.items())}
+        res.setdefault("ratein", {
+            "k_hist": hist,
+            "frac_k_gt1": sum(n for kk, n in layer_k_hist.items() if kk > 1) / max(1, len(layer_log_ks))})
+        res["ratein"]["layer"] = {"k_hist": hist, "log_k_mean": float(np.mean(layer_log_ks)),
+                                  "log_k_std": float(np.std(layer_log_ks)),
+                                  "model_len": int(getattr(getattr(model, "layer", None), "model_len", 0))}
     if ttt_diag is not None:
         res["ttt"] = {"official": True, **ttt_diag}
     if spread_diag is not None:
@@ -1158,7 +1086,7 @@ KNOWN_FLAGS = frozenset((
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
     "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows", "ratein_mix_tau",
-    "freq_delta", "dump_per_k", "ratein_layer", "ratein_layer_prior",
+    "freq_delta", "dump_per_k",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
@@ -1174,6 +1102,9 @@ def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
     stub that ignores it), the FiLM and the knob together, and the JEPA-only
     inference layers (refinement, test-time training) on a model without an
     online encoder."""
+    if ratein_mode != "off" and hasattr(model, "last_k"):
+        raise ValueError("this model owns its sampling rate (RateINForecaster): +ratein must "
+                         "stay off, two rate operators would compose")
     if ratein_mode == "delta":
         if getattr(model, "rate_knob", None) != "delta":
             raise ValueError("+ratein=delta needs a model whose rate knob is the "
@@ -1284,35 +1215,20 @@ def main(cfg: DictConfig):
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
                        "backtest": "backtest", "bt": "backtest",
                        "mix": "mix", "energy": "energy",
-                       "delta": "delta", "layer": "layer"}.get(ratein_raw, "off")
+                       "delta": "delta"}.get(ratein_raw, "off")
     if ratein_raw and ratein_raw not in ("off", "false", "0", "oracle") \
             and ratein_mode_val == "off":
         # An unknown mode must not fall back to "off": it would land in the
         # plain cache directory and silently re-read another procedure's
         # numbers.
         raise ValueError(f"unknown +ratein={ratein_raw!r} (fft, backtest, mix, "
-                         "energy, delta, layer, oracle)")
-    #   +ratein=layer +ratein_layer=<ckpt>      the trained RateIN layer (scripts/
-    #                                           train_ratein_layer.py): one continuous
-    #                                           rate per instance, one forecast each.
-    #   +ratein_layer_prior=<yaml>              frequency string -> prior k (default 1)
-    ratein_layer_path = cfg.get("ratein_layer")
-    if ratein_mode_val == "layer" and not ratein_layer_path:
-        raise ValueError("+ratein=layer needs +ratein_layer=<checkpoint>")
-    if ratein_layer_path and ratein_mode_val != "layer":
-        raise ValueError("+ratein_layer needs +ratein=layer")
-    ratein_layer_prior_table = None
-    if cfg.get("ratein_layer_prior"):
-        import yaml as _yaml
-        ratein_layer_prior_table = _yaml.safe_load(Path(str(cfg.ratein_layer_prior)).read_text()) or {}
+                         "energy, delta, oracle)")
     ratein_on = ratein_mode_val != "off"
     ratein_oracle = ratein_raw == "oracle"
     ratein_pool = str(cfg.get("ratein_pool", "")).lower() in ("true", "1", "on")
     ratein_delta_max_k = int(cfg.get("ratein_delta_max_k", 0) or 0)
     if ratein_delta_max_k and ratein_mode_val != "delta":
         raise ValueError("+ratein_delta_max_k needs +ratein=delta")
-    if ratein_mode_val == "layer" and (ratein_pool or cfg.get("ratein_k_up") or cfg.get("ratein_w")):
-        raise ValueError("+ratein=layer takes no backtest options (+ratein_pool, +ratein_k_up, +ratein_w)")
     if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy", "delta"):
         raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy/delta")
     #   +ratein_k_up=2x3x4      RateIN-up: upsampling candidates k = 1/m for the
@@ -1335,10 +1251,11 @@ def main(cfg: DictConfig):
         raise ValueError("+ratein_mix_tau needs +ratein=mix")
     if any(m < 2 for m in ratein_k_up):
         raise ValueError("+ratein_k_up factors must be >= 2")
-    if (ratein_k_up or ratein_min_bt != 16 or ratein_bt_windows != 2) \
+    if ratein_k_up and not (ratein_mode_val in ("backtest", "mix", "delta") or ratein_raw == "oracle"):
+        raise ValueError("+ratein_k_up needs +ratein=backtest/mix/delta (or the oracle sweep)")
+    if (ratein_min_bt != 16 or ratein_bt_windows != 2) \
             and ratein_mode_val not in ("backtest", "mix", "delta"):
-        raise ValueError("+ratein_k_up / +ratein_min_bt / +ratein_bt_windows need "
-                         "+ratein=backtest/mix/delta")
+        raise ValueError("+ratein_min_bt / +ratein_bt_windows need +ratein=backtest/mix/delta")
     if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
         raise ValueError("+ratein=energy needs +energy_ckpt=<pretrain checkpoint>")
     #   +refine=energy|ceiling                  inference refinement of the
@@ -1421,8 +1338,6 @@ def main(cfg: DictConfig):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = create_model_from_config(cfg)
-    ratein_layer_obj = (layer_mod.load_layer(str(ratein_layer_path), device)
-                        if ratein_mode_val == "layer" else None)
     if external is None:
         model = load_checkpoint(model, checkpoint_path, device)
         run_stem = Path(checkpoint_path).stem
@@ -1468,10 +1383,6 @@ def main(cfg: DictConfig):
         tag += "_ratein-energy"
     elif ratein_mode_val == "delta":
         tag += "_ratein-delta" + (f"-k{ratein_delta_max_k}" if ratein_delta_max_k else "")
-    elif ratein_mode_val == "layer":
-        tag += f"_ratein-layer-{Path(str(ratein_layer_path)).stem}"
-        if ratein_layer_prior_table:
-            tag += "-prior"
     elif ratein_oracle:
         tag += "_ratein-oracle"
     if ratein_pool:
@@ -1554,7 +1465,9 @@ def main(cfg: DictConfig):
                 # by rate canonicalization.
                 per_k, best = {}, None
                 dump_rows = [] if dump_per_k else None
-                for kk in ratein_mod.K_CANDIDATES:
+                # With +ratein_k_up the sweep also scores the upsampling rates
+                # (and +dump_per_k records them); the tag carries -up<m...>.
+                for kk in tuple(ratein_mod.K_CANDIDATES) + tuple(1.0 / int(m) for m in (ratein_k_up or [])):
                     r_k = evaluate_config(model, config, gift_root, device,
                                           batch_size, max_series,
                                           max_context=max_context,
@@ -1600,10 +1513,6 @@ def main(cfg: DictConfig):
                                       tta_shifts=tta_shifts,
                                       quantile_gamma=quantile_gamma,
                                       ratein_mode=ratein_mode_val,
-                                      ratein_layer=ratein_layer_obj,
-                                      ratein_layer_prior=float(np.log(float(
-                                          (ratein_layer_prior_table or {}).get(
-                                              config.split("/")[1], 1.0)))),
                                       ratein_w=ratein_w,
                                       ratein_delta_max_k=ratein_delta_max_k,
                                       ratein_pool=ratein_pool,

@@ -74,50 +74,58 @@ lignes officielles d'un modèle tiers. Un modèle externe passe par
 
 Le resampling par backtest choisit k par configuration au prix de 20 à 40 prévisions par
 série. La couche (`src/timejepa/ratein_layer.py`) remplace la recherche par une fonction du
-contexte : un banc de filtres (SSM diagonal lu au dernier pas, énergie par mode) donne
-`log k = log k_prior + g(x)` ; le contexte est rééchantillonné à longueur fixe par un
+contexte : un banc de filtres (SSM diagonal complexe lu au dernier pas, log-énergie par mode)
+donne `log k = log k_prior + g(x)` ; le contexte est rééchantillonné à longueur fixe par un
 opérateur dérivable en k (moyennes de blocs par sommes cumulées pour k ≥ 1, interpolation
 entre centres pour k < 1, exactement `decimate` / `upsample` pour k entier) ; le modèle gelé
-prévoit ⌈h / k_min⌉ pas ; le fan revient au pas natif (`reinterp_fan` / `pool_fan`
-généralisés). Un batch porte un k différent par série sans découpage.
+prévoit ⌈h / k_min⌉ pas ; le fan revient au pas natif. Un batch porte un k par série.
 
-Entraînement, modèle gelé, sur un corpus au format standard (`.npy [N, L]` + table de
-fréquences, jamais GIFT-Eval). Le script est une application Hydra : le bloc `model` est
-celui de l'évaluation (même construction, même `+checkpoint_path`), le bloc `ratein_layer`
-porte la couche et le run. Depuis le dépôt TimeSSM, config `configs/ratein_layer_e2e.yaml` :
+`src/timejepa/models/ratein_forecaster.py` compose la couche devant un modèle gelé derrière
+l'interface d'un forecaster (`forecast`, `robust_scaler`, `revin`, `decoder`, `freeze_*`,
+`delta_range`, `core_prefixes`) : la pile d'entraînement et le harnais le voient comme un
+modèle. Le bouton de cadence suit k comme `+freq_delta` (`w · k`, k quantifié au 1/8
+d'octave pour borner le nombre de noyaux SSM) ; seul le sélecteur a des paramètres entraînables.
 
-```bash
-scripts/train_ratein_layer.sh checkpoints/timessm_mini_v3_freq_zs/pretrain_False/epoch00_valloss1.2814.ckpt
-scripts/train_ratein_layer.sh <ckpt> ratein_layer.steps=200 ratein_layer.wandb=false        # fumée
-# curve, pour un modèle qu'on ne peut pas traverser (enveloppes tierces sous no_grad) :
-# un config dont le bloc model est model.external, ratein_layer.mode=curve, ratein_layer.grid_cache=<npz>
-```
-
-Modes : `e2e` (référence, gradient à travers le modèle gelé, une passe avant-arrière par
-pas) et `curve` (perte du modèle à chaque k de la grille par fenêtre, en cache, puis
-sélecteur sur la courbe lissée). `ratein_layer.k_prior_table` (fréquence → k) remplace le
-prior k = 1 ; `ratein_layer.shrink` pénalise le résidu `g²` ; `horizons` est tiré par
-batch (défaut 256, l'horizon d'entraînement du modèle) ; W&B par le bloc `wandb` du config.
-Le journal imprime `trainable parameters: selector N, forecaster 0` (assertion) puis, sur
-la validation, la perte au prior, la perte apprise et (mode curve) l'oracle. Le checkpoint
-garde les overrides Hydra et le bloc `ratein_layer` résolu.
-Corpus réduit : `configs/ratein_layer_subsets_{long,short}.txt` (24 sous-ensembles LOTSA,
-une cadence par ligne du corpus, 500 morceaux chacun, 4096 pas pour les cadences fines et
-1536 pour le quotidien et l'hebdo), voir `prepare_lotsa.py --subsets-from`. Coût CPU mesuré :
-une prévision TimeSSM de 24 séries ≈ 4 à 8 s ; e2e ≈ 3 passes par pas (30 s à batch 16,
-h = 256) ; curve = 14 passes par lot de fenêtres, une fois.
-
-Évaluation GIFT, une prévision par instance, tag `_ratein-layer-<fichier>` :
+Entraînement (TimeSSM, `configs/ratein_layer_e2e.yaml`, gradient à travers le modèle gelé,
+pile ordinaire : datamodule + table de fréquences, `SSMFinetuneModule`, W&B, autosave,
+`train_ssm_loop.sh`) :
 
 ```bash
-python scripts/evaluate_gift.py --config-name <eval> "+checkpoint_path=$CK" +tta_flip=true \
-    +ratein=layer +ratein_layer=checkpoints/ratein_layer/e2e_timessm_2.5m.pt [+ratein_layer_prior=<yaml>]
+cd ../TimeSSM
+python scripts/train_ssm.py --config-name ratein_layer_e2e \
+    model.ratein_layer.inner_checkpoint=checkpoints/timessm_mini_v3_freq_zs/pretrain_False/epoch00_valloss1.2814.ckpt
+# fumée : ... trainer.limit_train_batches=3 trainer.limit_val_batches=2 data.batch_size=4
 ```
 
-Une couche non entraînée (g = 0) à prior 1 reproduit le chemin nu bit pour bit, à prior 2 le
-balayage oracle k = 2 (tests `tests/test_ratein_layer*.py`). `+dump_per_k=true` avec
-`+ratein=oracle` (tag `_perk`) écrit les sommes de pinball par instance et par k, pour
-noter un sélecteur hors ligne.
+La perte est celle de la pile (pinball dans le repère normalisé du modèle) ; `rate/*`
+(k médian, min, max, part > 1, g, noyaux distincts) et `freq/*` sont journalisés. Le corpus
+réduit : `configs/ratein_layer_subsets_{long,short}.txt` (24 sous-ensembles LOTSA, 500
+morceaux chacun, 4096 pas pour les cadences fines et 1536 pour le quotidien et l'hebdo),
+`prepare_lotsa.py --subsets-from` ; la géométrie 3840 + 256 garde les familles à 4096.
+
+Modèles non traversables (enveloppes tierces sous `no_grad`), mode `curve` : perte du
+modèle à chaque k de la grille par fenêtre, en cache, puis sélecteur sur la courbe lissée.
+Même config (bloc `model.external` + `inner_builder: timejepa.evaluation.external:build`),
+même datamodule :
+
+```bash
+python scripts/train_ratein_curve.py --config-path ../TimeSSM/configs --config-name <cfg> \
+    +ratein_curve.grid_cache=checkpoints/ratein_layer/curve_<nom>.pt +ratein_curve.out=checkpoints/ratein_layer/curve_<nom>.pt
+```
+
+Évaluation GIFT, une prévision par instance, par le chemin ordinaire du harnais (`+ratein`
+reste éteint : la couche possède la cadence) ; `res["ratein"]["layer"]` porte l'histogramme
+de k ; le cache est `evaluation/timessm_mini_v3_freq_ratein/<ckpt>/gift_flip_fdelta/` :
+
+```bash
+EVAL_CONFIG=ratein_layer_e2e_eval scripts/eval_ssm.sh checkpoints/timessm_mini_v3_freq_ratein/pretrain_False/<ckpt> \
+    +freq_delta=true +tta_flip=true
+```
+
+Une couche non entraînée (g = 0) à prior 1 reproduit le chemin nu (tests
+`tests/test_ratein_forecaster*.py`, `tests/test_ratein_layer.py`). `+dump_per_k=true` avec
+`+ratein=oracle [+ratein_k_up=2x3x4]` (tag `_perk`) écrit les sommes de pinball par
+instance et par k, pour noter un sélecteur hors ligne.
 
 ## Le juge (TimeJEPA-EBM)
 

@@ -172,3 +172,22 @@ def test_mix_tau_is_relayed_and_default_is_unchanged(harness):
                 ratein_mix_tau=1.0)
     assert flat["ratein"]["mix"]["tau"] == 1.0
     assert max(flat["ratein"]["mix"]["weights"].values()) < max(base["ratein"]["mix"]["weights"].values())
+
+
+def test_oracle_sweep_accepts_an_upsampling_candidate(monkeypatch):
+    """The oracle loop of main sweeps forced_k over K_CANDIDATES plus 1/m when
+    +ratein_k_up is given; the plain path already takes a fractional forced_k
+    and reports it in k_hist and per_instance."""
+    import evaluate_gift as EG
+    rng = np.random.default_rng(4)
+    series = [np.cumsum(rng.standard_normal(300)).astype(np.float32) + 10 + 5 * np.sin(2 * np.pi * np.arange(300) / PERIOD)
+              for _ in range(4)]
+    monkeypatch.setattr(EG.gift, "load_series", lambda root, cfg: series)
+    monkeypatch.setattr(EG.gift, "prediction_length", lambda cfg: H)
+    monkeypatch.setattr(EG.gift, "num_windows", lambda cfg, n: 2)
+    monkeypatch.setattr(EG.gift, "seasonality", lambda f: PERIOD)
+    rows = []
+    res = EG.evaluate_config(_BandStub(), "stub/M/short", Path("."), torch.device("cpu"),
+                             batch_size=8, forced_k=0.5, per_instance=rows)
+    assert res["ratein"]["k_hist"] == {"0.5": 8}
+    assert rows and all(r["k"] == 0.5 for r in rows)
