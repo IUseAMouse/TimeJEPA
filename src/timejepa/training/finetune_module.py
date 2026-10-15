@@ -681,6 +681,15 @@ class FinetuneModule(pl.LightningModule):
         length = int(eligible[torch.randint(len(eligible), (1,)).item()])
         return context[:, -length:]
 
+    def _log_rate_diagnostics(self, on_step: bool, on_epoch: bool) -> None:
+        """A model that owns its sampling rate (RateINForecaster) reports
+        `rate_diagnostics()`; other models have no such hook and log nothing."""
+        diag = getattr(self.model, 'rate_diagnostics', None)
+        if not callable(diag):
+            return
+        for key, value in diag().items():
+            self.log(f'rate/{key}', value, on_step=on_step, on_epoch=on_epoch, logger=True)
+
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         """Training step."""
         context = batch['context']
@@ -716,6 +725,7 @@ class FinetuneModule(pl.LightningModule):
         predictions = results['forecast']
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self._log_rate_diagnostics(on_step=True, on_epoch=False)
         if self._last_anchor is not None:
             self.log('train_loss/anchor', self._last_anchor,
                      on_step=True, on_epoch=True, logger=True, sync_dist=True)
@@ -759,6 +769,7 @@ class FinetuneModule(pl.LightningModule):
         predictions = results['forecast']
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self._log_rate_diagnostics(on_step=False, on_epoch=True)
         if self._last_anchor is not None:
             self.log('val_loss/anchor', self._last_anchor,
                      on_step=False, on_epoch=True, logger=True, sync_dist=True)

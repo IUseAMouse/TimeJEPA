@@ -24,7 +24,6 @@ numpy primitives are untouched.
 """
 
 import math
-import os
 from typing import Callable, Optional, Tuple, Union
 
 import torch
@@ -211,15 +210,25 @@ class RateINLayer(nn.Module):
         super().__init__()
         self.selector = selector if selector is not None else RateSelector()
         self.model_len = int(model_len)
-        self.log_k_min, self.log_k_max = math.log(k_min), math.log(k_max)
+        # Buffers, so a checkpoint carries the bounds it was trained with.
+        self.register_buffer("log_k_bounds", torch.tensor([math.log(k_min), math.log(k_max)], dtype=torch.float32))
         self.min_blocks = int(min_blocks)
+
+    @property
+    def log_k_min(self) -> float:
+        return float(self.log_k_bounds[0])
+
+    @property
+    def log_k_max(self) -> float:
+        return float(self.log_k_bounds[1])
 
     def bound_log_k(self, log_k: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
         """Clamp to the grid's range and to the rates that leave at least
         `min_blocks` valid blocks in the context (k <= len / min_blocks)."""
-        hi = torch.log(lengths.to(log_k.dtype) / self.min_blocks).clamp(max=self.log_k_max)
-        hi = torch.maximum(hi, torch.full_like(hi, self.log_k_min))
-        return torch.maximum(torch.minimum(log_k, hi), torch.full_like(log_k, self.log_k_min))
+        lo, hi_grid = self.log_k_min, self.log_k_max
+        hi = torch.log(lengths.to(log_k.dtype) / self.min_blocks).clamp(max=hi_grid)
+        hi = torch.maximum(hi, torch.full_like(hi, lo))
+        return torch.maximum(torch.minimum(log_k, hi), torch.full_like(log_k, lo))
 
     def log_k(self, x: torch.Tensor, lengths: Optional[torch.Tensor] = None,
               log_k_prior: Union[float, torch.Tensor] = 0.0) -> torch.Tensor:
@@ -315,15 +324,3 @@ def interp_loss_curve(log_k_grid: torch.Tensor, losses: torch.Tensor,
     l0 = losses.gather(1, (idx - 1)[:, None]).squeeze(1)
     l1 = losses.gather(1, idx[:, None]).squeeze(1)
     return l0 + w * (l1 - l0)
-
-
-# ------------------------------------------------------------------ checkpoint
-def load_layer(path: Union[str, "os.PathLike"], device="cpu") -> "RateINLayer":
-    """A layer saved by scripts/train_ratein_layer.py (state_dict + meta)."""
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
-    meta = ckpt["meta"]
-    layer = RateINLayer(RateSelector(int(meta["n_modes"]), int(meta["hidden"])),
-                        model_len=int(meta["model_len"]), min_blocks=int(meta["min_blocks"]))
-    layer.load_state_dict(ckpt["state_dict"])
-    layer.meta = meta
-    return layer.to(torch.device(device)).eval()

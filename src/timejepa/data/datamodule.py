@@ -1023,3 +1023,55 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             }
             for i, name in enumerate(self.dataset_names_order)
         }
+
+def build_finetune_datamodule(cfg) -> "MultiDatasetMonashDataModule":
+    """The finetune datamodule of a Hydra config: `data.*` keys, the model's
+    `seq_length` / `prediction_length` as window geometry, the finetune
+    augmentations (`augmentations.finetune`, off when `enabled: false`),
+    and `data.frequency_table` only when set (an older config has none).
+    One mapping shared by the trainers that consume the finetune corpus
+    (TimeSSM's train_ssm.py, the RateIN curve trainer)."""
+    from omegaconf import OmegaConf
+    aug_root = cfg.get("augmentations") or {}
+    aug_cfg = aug_root.get("finetune") if aug_root else None
+    if aug_cfg is not None:
+        aug_cfg = OmegaConf.to_container(aug_cfg, resolve=True)
+        if not aug_cfg.get("enabled", True):
+            aug_cfg = None
+    logger.info("Augmentations (finetune): " + ("enabled" if aug_cfg else "disabled"))
+    extra = {}
+    if cfg.data.get("frequency_table"):
+        extra["frequency_table"] = str(cfg.data.frequency_table)
+    return MultiDatasetMonashDataModule(
+        data_dir=cfg.data.data_dir,
+        context_length=cfg.model.seq_length,
+        prediction_length=cfg.model.prediction_length,
+        datasets=cfg.data.get("datasets_finetune"),
+        dataset_pattern=cfg.data.get("dataset_pattern", "*.npy"),
+        combine_mode=cfg.data.get("combine_mode", "concatenate"),
+        balanced_sampling=cfg.data.balanced_sampling,
+        sampling_temperature=cfg.data.sampling_temperature,
+        max_oversample_ratio=cfg.data.max_oversample_ratio,
+        ration_oversample=bool(cfg.data.get("ration_oversample", False)),
+        max_batch_size=cfg.data.get("max_batch_size"),
+        fractional_batch=bool(cfg.data.get("fractional_batch", False)),
+        batch_size=cfg.data.batch_size,
+        stride=cfg.data.stride,
+        normalize_mode=cfg.data.normalize_mode,
+        normalizer_type=cfg.data.normalizer_type,
+        clip_outliers=cfg.data.clip_outliers,
+        clip_sigma=cfg.data.clip_sigma,
+        train_val_test_split=cfg.data.train_val_test_split,
+        augmentation_config=aug_cfg,
+        multi_resolution_factors=list(cfg.data.get("multi_resolution_factors_finetune") or [1]),
+        p_multi_resolution=float(cfg.data.get("p_multi_resolution_finetune", 0.0)),
+        cross_resolution=bool(cfg.model.get("cross_resolution", False)),
+        short_series_windows=bool(cfg.data.get("short_series_windows", False)),
+        short_min_context=int(cfg.data.get("short_min_context", 16)),
+        short_min_target=int(cfg.data.get("short_min_target", 4)),
+        **extra,
+        seed=cfg.data.seed,
+        num_workers=int(cfg.data.get("num_workers", 4)),
+        persistent_workers=bool(cfg.data.get("persistent_workers", False)),
+        use_mmap=bool(cfg.data.get("use_mmap", False)),
+    )
