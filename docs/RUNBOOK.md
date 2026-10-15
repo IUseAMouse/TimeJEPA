@@ -88,7 +88,7 @@ fréquences, jamais GIFT-Eval) :
 # e2e, le mode de référence : gradient à travers le modèle gelé, une passe avant-arrière par pas
 PYTHONPATH=../TimeSSM/src python scripts/train_ratein_layer.py --mode e2e --model timessm \
     --pretrained ../TimeSSM/export/timessm-2.5m --corpus-dir data/processed/lotsa_ratein \
-    --frequency-table configs/corpus_v3_frequencies.yaml --windows 12000 --steps 3000 --batch 16 \
+    --frequency-table configs/corpus_v3_frequencies.yaml --windows 12000 --steps 3000 --batch 16 --horizon 256 --wandb-project timessm \
     --out checkpoints/ratein_layer/e2e_timessm.pt
 # curve, pour un modèle qu'on ne peut pas traverser (enveloppes tierces sous no_grad) : perte du
 # modèle à chaque k de la grille par fenêtre, en cache, puis sélecteur sur la courbe lissée

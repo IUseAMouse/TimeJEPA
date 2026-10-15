@@ -77,9 +77,10 @@ def season_of(stem: str, entry, corpus_dir: Path, n_rows: int):
 class Windows:
     """Random windows over the corpus: (context, target, season, log_k_prior)."""
 
-    def __init__(self, corpus_dir, table_path, horizon, min_context, n_windows, seed,
+    def __init__(self, corpus_dir, table_path, horizons, min_context, n_windows, seed,
                  k_prior_table=None):
-        self.h = int(horizon)
+        self.horizons = sorted(int(h) for h in horizons)
+        self.h = max(self.horizons)                 # the longest horizon bounds the context draw
         self.min_ctx = int(min_context)
         corpus_dir = Path(corpus_dir)
         table = load_table(table_path) if table_path else {}
@@ -114,18 +115,19 @@ class Windows:
     def __len__(self):
         return len(self.index)
 
-    def get(self, i):
+    def get(self, i, h=None):
+        h = self.h if h is None else int(h)
         f, r, ctx_len = self.index[i]
         row = np.array(self.arrays[f][r], dtype=np.float32)      # a copy: the mmap is read-only
         L = len(row)
-        context = row[L - self.h - ctx_len:L - self.h]
-        target = row[L - self.h:]
+        context = row[L - h - ctx_len:L - h]
+        target = row[L - h:]
         s = self.seasons[f]
         season = float(s[r]) if isinstance(s, np.ndarray) else s
         return context, target, season, self.priors[f]
 
-    def batch(self, ids, device):
-        items = [self.get(i) for i in ids]
+    def batch(self, ids, device, h=None):
+        items = [self.get(i, h) for i in ids]
         Lmax = max(len(c) for c, _, _, _ in items)
         x = torch.full((len(items), Lmax), float("nan"))
         for b, (c, _, _, _) in enumerate(items):
@@ -161,6 +163,7 @@ def build_forecaster(args, device):
             if q.dim() == 4:
                 q = q[..., 0]
             return q
+        forecast_fn.model = model
         return forecast_fn, True
 
     if args.model == "external":
@@ -211,7 +214,9 @@ def main():
     ap.add_argument("--corpus-dir", required=True)
     ap.add_argument("--frequency-table", default=None)
     ap.add_argument("--k-prior-table", default=None, help="yaml: frequency string -> prior k (default 1)")
-    ap.add_argument("--horizon", type=int, default=48)
+    ap.add_argument("--horizon", default="256",
+                    help="native horizon(s) of the training windows, comma-separated; one is drawn per "
+                         "batch (default 256 = the forecaster's training horizon)")
     ap.add_argument("--min-context", type=int, default=256)
     ap.add_argument("--windows", type=int, default=5000)
     ap.add_argument("--val-fraction", type=float, default=0.1)
@@ -228,22 +233,34 @@ def main():
     ap.add_argument("--eval-every", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--wandb-project", default=None, help="log to Weights & Biases (optional)")
+    ap.add_argument("--wandb-name", default=None)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
     k_prior_table = yaml.safe_load(Path(args.k_prior_table).read_text()) if args.k_prior_table else None
-    windows = Windows(args.corpus_dir, args.frequency_table, args.horizon, args.min_context,
+    horizons = [int(h) for h in str(args.horizon).split(",")]
+    windows = Windows(args.corpus_dir, args.frequency_table, horizons, args.min_context,
                       args.windows, args.seed, k_prior_table)
     n_val = int(len(windows) * args.val_fraction)
     train_ids, val_ids = list(range(n_val, len(windows))), list(range(n_val))
     print(f"{len(windows.arrays)} files, {len(windows)} windows ({len(train_ids)} train, {n_val} val), "
-          f"h={args.horizon}", flush=True)
+          f"h={horizons}", flush=True)
 
     layer = RL.RateINLayer(RL.RateSelector(args.n_modes, args.hidden), model_len=args.model_len,
                            min_blocks=args.min_blocks).to(device)
     forecast_fn, differentiable = build_forecaster(args, device)
+    n_sel = sum(p.numel() for p in layer.parameters() if p.requires_grad)
+    n_model = sum(p.numel() for p in getattr(forecast_fn, "model", torch.nn.Module()).parameters() if p.requires_grad)
+    print(f"trainable parameters: selector {n_sel}, forecaster {n_model}", flush=True)
+    assert n_model == 0, "the forecaster must be frozen"
+    run = None
+    if args.wandb_project:
+        import wandb
+        run = wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args),
+                         tags=["ratein-layer", args.mode, args.model])
     if args.mode == "e2e" and not differentiable:
         raise ValueError("--mode e2e needs a differentiable forecaster (timessm); use --mode curve")
     opt = torch.optim.AdamW(layer.parameters(), lr=args.lr, weight_decay=0.0)
@@ -273,9 +290,10 @@ def main():
         layer.eval()
         tot_learned, tot_prior, tot_orc, n = 0.0, 0.0, 0.0, 0
         with torch.no_grad():
-            for start in range(0, len(ids), args.batch):
+            for bi, start in enumerate(range(0, len(ids), args.batch)):
                 b = ids[start:start + args.batch]
-                x, lengths, y, season, prior = windows.batch(b, device)
+                h = windows.horizons[bi % len(windows.horizons)]
+                x, lengths, y, season, prior = windows.batch(b, device, h)
                 lk = layer.log_k(x, lengths, prior)
                 if args.mode == "curve":
                     Lb = L_all[b]
@@ -286,9 +304,9 @@ def main():
                     def run(lkk):
                         k = torch.exp(lkk)
                         yc, _ = RL.resample_context(x, k, layer.model_len, lengths)
-                        n_m = RL.RateINLayer.model_horizon(windows.h, k)
-                        return RL.pinball_wql(RL.fan_to_native(forecast_fn(yc, n_m, k, season), k, windows.h), y, LEVELS,
-                                              denom=RL.context_scale(x, windows.h, lengths))
+                        n_m = RL.RateINLayer.model_horizon(h, k)
+                        return RL.pinball_wql(RL.fan_to_native(forecast_fn(yc, n_m, k, season), k, h), y, LEVELS,
+                                              denom=RL.context_scale(x, h, lengths))
                     learned, at_prior = run(lk), run(layer.bound_log_k(prior, lengths))
                 tot_learned += learned.sum().item(); tot_prior += at_prior.sum().item(); n += len(b)
         layer.train()
@@ -301,7 +319,8 @@ def main():
     t0 = time.time()
     for step in range(1, args.steps + 1):
         b = [int(i) for i in rng.choice(train_ids, size=min(args.batch, len(train_ids)), replace=False)]
-        x, lengths, y, season, prior = windows.batch(b, device)
+        h = int(rng.choice(windows.horizons))
+        x, lengths, y, season, prior = windows.batch(b, device, h)
         g = layer.selector(x, lengths)
         lk = layer.bound_log_k(prior + g, lengths)
         if args.mode == "curve":
@@ -309,15 +328,21 @@ def main():
         else:
             k = torch.exp(lk)
             yc, _ = RL.resample_context(x, k, layer.model_len, lengths)
-            n_m = RL.RateINLayer.model_horizon(windows.h, k)
+            n_m = RL.RateINLayer.model_horizon(h, k)
             fan = forecast_fn(yc, n_m, k, season)
-            loss_items = RL.pinball_wql(RL.fan_to_native(fan, k, windows.h), y, LEVELS,
-                                        denom=RL.context_scale(x, windows.h, lengths))
+            loss_items = RL.pinball_wql(RL.fan_to_native(fan, k, h), y, LEVELS,
+                                        denom=RL.context_scale(x, h, lengths))
         loss = loss_items.mean() + args.shrink * g.pow(2).mean()
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(layer.parameters(), 1.0)
         opt.step()
+        if run is not None:
+            kk_ = torch.exp(lk.detach())
+            run.log({"train/loss": float(loss_items.mean()), "train/g_mean": float(g.mean()),
+                     "train/g_std": float(g.std()), "train/k_median": float(kk_.median()),
+                     "train/k_min": float(kk_.min()), "train/k_max": float(kk_.max()),
+                     "train/frac_k_gt1": float((kk_ > 1.0001).float().mean()), "train/h": h}, step=step)
         if step % 20 == 0 or step == 1:
             kk = torch.exp(lk.detach())
             print(f"step {step:5d} loss {loss_items.mean():.4f} | g mean {g.mean():+.3f} std {g.std():.3f} "
@@ -331,15 +356,19 @@ def main():
                 share = (ev["prior"] - ev["learned"]) / (ev["prior"] - ev["oracle"])
                 msg += f" | share of the oracle gain captured {share:.2f}"
             print(f"  val: {msg}", flush=True)
+            if run is not None:
+                run.log({f"val/{kname}": v for kname, v in ev.items()}, step=step)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": layer.state_dict(),
                 "meta": {"n_modes": args.n_modes, "hidden": args.hidden, "model_len": args.model_len,
                          "min_blocks": args.min_blocks, "mode": args.mode, "model": args.model,
-                         "horizon": args.horizon, "windows": len(windows), "steps": args.steps,
+                         "horizons": horizons, "windows": len(windows), "steps": args.steps,
                          "k_prior_table": k_prior_table}}, out)
     print(f"saved {out}", flush=True)
+    if run is not None:
+        run.finish()
 
 
 if __name__ == "__main__":
