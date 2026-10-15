@@ -212,3 +212,13 @@ def test_kernel_loss_curve_is_smooth_at_grid_points():
     assert lk.grad.item() < 0                                      # descends toward k = 2
     far = RL.kernel_loss_curve(grid, losses, torch.log(torch.tensor([2.0])), 0.05).item()
     assert far == pytest.approx(0.5, abs=1e-6)                     # a narrow kernel is the grid value
+
+
+def test_context_scale_is_level_free_and_stable_on_zero_targets():
+    x = torch.tensor(np.stack([_series(600, 1), _series(600, 1) * 100 + 1e4]), dtype=torch.float32)
+    sc = RL.context_scale(x, 48)
+    assert sc[1].item() == pytest.approx(100 * sc[0].item(), rel=1e-4)      # scale, not level
+    fan = torch.zeros(1, 48, 9); target = torch.zeros(1, 48)                  # a flat zero window
+    assert RL.pinball_wql(fan, target, LEVELS, denom=sc[:1]).item() == 0.0
+    fan = torch.ones(1, 48, 9) * 0.01
+    assert RL.pinball_wql(fan, target, LEVELS, denom=sc[:1]).item() < 1.0    # bounded, no explosion

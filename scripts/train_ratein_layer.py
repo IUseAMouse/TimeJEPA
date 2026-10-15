@@ -194,7 +194,8 @@ def grid_losses(windows, forecast_fn, layer, device, batch_size, log_every=20):
                 n = RL.RateINLayer.model_horizon(windows.h, k)
                 fan = forecast_fn(yc, n, k, season)
                 native = RL.fan_to_native(fan, k, windows.h)
-                losses[ids, g] = RL.pinball_wql(native, y, LEVELS).cpu().numpy()
+                losses[ids, g] = RL.pinball_wql(native, y, LEVELS,
+                                                denom=RL.context_scale(x, windows.h, lengths)).cpu().numpy()
             if (start // batch_size) % log_every == 0:
                 print(f"  grid: {min(start + batch_size, len(windows))}/{len(windows)} windows, "
                       f"{time.time() - t0:.0f}s", flush=True)
@@ -286,7 +287,8 @@ def main():
                         k = torch.exp(lkk)
                         yc, _ = RL.resample_context(x, k, layer.model_len, lengths)
                         n_m = RL.RateINLayer.model_horizon(windows.h, k)
-                        return RL.pinball_wql(RL.fan_to_native(forecast_fn(yc, n_m, k, season), k, windows.h), y, LEVELS)
+                        return RL.pinball_wql(RL.fan_to_native(forecast_fn(yc, n_m, k, season), k, windows.h), y, LEVELS,
+                                              denom=RL.context_scale(x, windows.h, lengths))
                     learned, at_prior = run(lk), run(layer.bound_log_k(prior, lengths))
                 tot_learned += learned.sum().item(); tot_prior += at_prior.sum().item(); n += len(b)
         layer.train()
@@ -309,7 +311,8 @@ def main():
             yc, _ = RL.resample_context(x, k, layer.model_len, lengths)
             n_m = RL.RateINLayer.model_horizon(windows.h, k)
             fan = forecast_fn(yc, n_m, k, season)
-            loss_items = RL.pinball_wql(RL.fan_to_native(fan, k, windows.h), y, LEVELS)
+            loss_items = RL.pinball_wql(RL.fan_to_native(fan, k, windows.h), y, LEVELS,
+                                        denom=RL.context_scale(x, windows.h, lengths))
         loss = loss_items.mean() + args.shrink * g.pow(2).mean()
         opt.zero_grad()
         loss.backward()

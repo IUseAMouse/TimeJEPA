@@ -253,17 +253,39 @@ class RateINLayer(nn.Module):
 
 
 # ------------------------------------------------------------------------ loss
-def pinball_wql(fan: torch.Tensor, target: torch.Tensor, levels) -> torch.Tensor:
-    """Weighted quantile loss per item, the harness's CRPS proxy:
-    mean over levels of sum_t 2|(q - y)(1[y <= q] - tau)| / sum_t |y|,
-    NaN targets masked. fan [B, h, Q], target [B, h] -> [B]."""
+def pinball_wql(fan: torch.Tensor, target: torch.Tensor, levels,
+                denom: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Weighted quantile loss per item: mean over levels of
+    sum_t 2|(q - y)(1[y <= q] - tau)| / denom, NaN targets masked.
+    fan [B, h, Q], target [B, h] -> [B]. With `denom` None the divisor is
+    sum_t |y| (the harness's CRPS on one instance; fine for reporting, but a
+    near-zero target window, solar at night, makes it explode). Training
+    passes `context_scale(...)`, a divisor read from the context."""
     q = torch.as_tensor(levels, dtype=fan.dtype, device=fan.device)[None, None, :]
     mask = torch.isfinite(target)
     y = torch.where(mask, target, torch.zeros_like(target)).unsqueeze(-1)
     ql = 2.0 * torch.abs((fan - y) * ((y <= fan).to(fan.dtype) - q))
     ql = (ql * mask.unsqueeze(-1)).sum(1).mean(1)
-    denom = (y.squeeze(-1).abs() * mask).sum(1).clamp(min=EPS)
-    return ql / denom
+    if denom is None:
+        denom = (y.squeeze(-1).abs() * mask).sum(1)
+    return ql / denom.to(ql.dtype).clamp(min=EPS)
+
+
+def context_scale(x: torch.Tensor, h: int, lengths: Optional[torch.Tensor] = None,
+                  tail: int = 512) -> torch.Tensor:
+    """Divisor for the training loss: h times the mean absolute deviation of
+    the last `tail` valid context points around their mean (a level-free
+    scale, stable when the target window is flat or zero). [B]."""
+    B, L = x.shape
+    if lengths is None:
+        lengths = torch.full((B,), L, dtype=torch.long, device=x.device)
+    pos = torch.arange(L, device=x.device)[None, :]
+    valid = (pos >= (L - lengths)[:, None]) & (pos >= L - tail) & torch.isfinite(x)
+    xz = torch.where(valid, x, torch.zeros_like(x))
+    n = valid.sum(1).clamp(min=1).to(x.dtype)
+    mean = xz.sum(1) / n
+    mad = (torch.where(valid, (x - mean[:, None]).abs(), torch.zeros_like(x)).sum(1) / n)
+    return h * mad
 
 
 def kernel_loss_curve(log_k_grid: torch.Tensor, losses: torch.Tensor,
