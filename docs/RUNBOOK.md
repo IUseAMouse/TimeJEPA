@@ -83,8 +83,15 @@ prévoit ⌈h / k_min⌉ pas ; le fan revient au pas natif. Un batch porte un k 
 `src/timejepa/models/ratein_forecaster.py` compose la couche devant un modèle gelé derrière
 l'interface d'un forecaster (`forecast`, `robust_scaler`, `revin`, `decoder`, `freeze_*`,
 `delta_range`, `core_prefixes`) : la pile d'entraînement et le harnais le voient comme un
-modèle. Le bouton de cadence suit k comme `+freq_delta` (`w · k`, k quantifié au 1/8
-d'octave pour borner le nombre de noyaux SSM) ; seul le sélecteur a des paramètres entraînables.
+modèle. Le bouton de cadence suit k comme `+freq_delta` (`w · k` exact, avec son gradient : le
+modèle lit la période dans w, un w arrondi le déphase, et le noyau SSM est le chemin principal
+du gradient vers k ; un noyau par série sous autograd) ; seul le sélecteur a des paramètres
+entraînables. Gradient de la cadence : `model.ratein_layer.rate_grad: exact` (autograd à travers
+le rééchantillonnage et le noyau ; pente locale de l'ordre de 10 et de signe aléatoire sur des
+fenêtres réelles, car le bloc j du contexte bouge de (1023 − j)·Δk échantillons) ou `fd`
+(différences finies à ± `fd_delta` = 0.35 en log k, deux passes avant sans graphe, terme
+straight-through ajouté par le module : gradient de la perte lissée sur ± δ, version à deux
+points du mode curve).
 
 Entraînement (TimeSSM, `configs/ratein_layer_e2e.yaml`, gradient à travers le modèle gelé,
 pile ordinaire : datamodule + table de fréquences, `SSMFinetuneModule`, W&B, autosave,

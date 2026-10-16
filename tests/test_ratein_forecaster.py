@@ -10,14 +10,17 @@ Pinned on a stub inner (seasonal naive plus a fixed fan, records its calls):
    reinterp_fan; the inner is asked ceil(h / 2) steps and w * 2.
 3. Gradients reach the selector only; the inner is frozen and stays in eval
    through `train()`.
-4. The knob rule: passthrough without a knob, 1/8-octave grid, clamp, number
-   of distinct w bounded by distinct w x distinct k_q.
+4. The knob rule: passthrough without a knob, w = base * k exactly with the
+   gradient to k kept, clamp, None stays None at k = 1.
 5. Hooks: representations and pretrain mode refused, freeze_* no-ops,
    parameter counts.
 6. `FinetuneModule` trains the wrapper: one training_step, optimizer groups,
    the rate diagnostics logged.
 7. `build_from_config` with an inner builder of this module, with and
    without an inner checkpoint; a geometry mismatch is refused.
+8. Finite-difference rate gradient: the training forward carries no graph,
+   `fd_surrogate` gives the selector the hand-computed two-point slope,
+   eval and `rate_grad="exact"` are untouched, FinetuneModule adds the term.
 """
 
 import math
@@ -151,18 +154,19 @@ def test_gradients_reach_the_selector_only_and_inner_stays_eval():
 # ------------------------------------------------------------- 4. knob rule
 def test_inner_w_rule():
     w = _wrap()
-    k = torch.tensor([1.0, 1.05, 2.0, 2.9, 40.0, 0.3])
+    k = torch.tensor([1.0, 1.05, 2.0, 2.9, 40.0, 0.3], requires_grad=True)
     wi = w._inner_w(torch.ones(6), k)
-    step = math.log(2) / 8
-    assert torch.allclose(torch.log(wi[:4]) / step, torch.round(torch.log(wi[:4]) / step), atol=1e-5)
-    assert wi[0].item() == 1.0 and wi[2].item() == pytest.approx(2.0)
-    assert wi[4].item() == 4.0 and wi[5].item() == pytest.approx(0.3, rel=0.1)      # clamped / near
+    torch.testing.assert_close(wi[:4], k[:4])                                  # exact, no grid
+    assert wi[0].item() == 1.0 and wi[4].item() == 4.0 and wi[5].item() == pytest.approx(0.3)
+    wi.sum().backward()
+    assert k.grad.tolist() == [1.0, 1.0, 1.0, 1.0, 0.0, 1.0]                   # clamped item: no gradient
+    assert w._last_n_unique_w == 6
     assert w._inner_w(None, torch.ones(3)) is None
     w2 = _wrap(inner=_Inner(knob=False))
     assert w2._inner_w(None, k) is None and torch.equal(w2._inner_w(torch.ones(6), k), torch.ones(6))
     base = torch.tensor([1.0, 1.0, 0.25, 0.25])
     kk = torch.tensor([1.0, 2.0, 1.0, 2.0])
-    assert torch.unique(w._inner_w(base, kk)).numel() <= 4
+    torch.testing.assert_close(w._inner_w(base, kk), base * kk)
 
 
 # ------------------------------------------------------------------ 5. hooks
@@ -246,3 +250,56 @@ def test_build_from_config_and_checkpoint_round_trip(tmp_path):
     bad.layer.selector = RL.RateSelector(16, 4)                       # other geometry
     with pytest.raises(RuntimeError):
         load_checkpoint(bad, str(tmp_path / "wrap.ckpt"), torch.device("cpu"))
+
+
+# -------------------------------------------------- 8. finite differences
+def _per_item_pinball(results, target):
+    q = results["quantiles"]
+    t = target[..., 0] if target.ndim == 3 else target
+    lv = torch.tensor(LEVELS, dtype=q.dtype)
+    d = t.unsqueeze(-1) - q
+    return (2.0 * torch.maximum(lv * d, (lv - 1.0) * d)).mean(dim=(1, 2))
+
+
+def test_fd_rate_gradient():
+    with pytest.raises(ValueError):
+        _wrap(rate_grad="other")
+    w = _wrap(rate_grad="fd", fd_delta=0.3)
+    with torch.no_grad():
+        w.layer.selector.mlp[-1].weight.fill_(0.2)
+    x = _series(4, 700).unsqueeze(-1)
+    y = _series(4, H, seed=5).unsqueeze(-1)
+    # eval: the ordinary forecast, with its graph
+    w.eval()
+    assert w.forecast(x, n=H)["quantiles"].requires_grad
+    # train: detached forward, surrogate = mean(lk * slope)
+    w.train()
+    res = w.forecast(x, n=H)
+    assert not res["quantiles"].requires_grad and w._fd_log_k is not None
+    lk = w._fd_log_k.detach().clone()
+    k_fwd = w.last_k.clone()
+    term = w.fd_surrogate(x, y, None, H, _per_item_pinball)
+    assert torch.equal(w.last_k, k_fwd)                                       # diagnostics of the forward, not the shifts
+    lengths = torch.full((4,), 700)
+    with torch.no_grad():
+        lp = _per_item_pinball(w._forecast_at(x[..., 0], w.layer.bound_log_k(lk + 0.3, lengths), H), y)
+        lm = _per_item_pinball(w._forecast_at(x[..., 0], w.layer.bound_log_k(lk - 0.3, lengths), H), y)
+    slope = (lp - lm) / 0.6
+    torch.testing.assert_close(w.last_fd_slope, slope)
+    torch.testing.assert_close(term, (lk * slope).mean())
+    assert "fd_slope_mean" in w.rate_diagnostics()
+    term.backward()
+    grads = [p.grad for p in w.layer.selector.parameters()]
+    assert any(g is not None and g.abs().sum() > 0 for g in grads)
+    with pytest.raises(RuntimeError):
+        w.fd_surrogate(x, y, None, H, _per_item_pinball)                       # consumed
+    # the module adds the term in training and not in eval
+    from timejepa.training.finetune_module import FinetuneModule
+    w2 = _wrap(rate_grad="fd")
+    mod = FinetuneModule(w2, finetune_mode="full_finetune", lr_scheduler="constant", learning_rate=1e-3)
+    mod.train()
+    loss, _, _ = mod._forward_and_loss(x, y)
+    assert torch.isfinite(loss) and loss.requires_grad and w2.last_fd_slope is not None
+    mod.eval()
+    loss_e, _, _ = mod._forward_and_loss(x, y)
+    assert w2._fd_log_k is None and torch.isfinite(loss_e)

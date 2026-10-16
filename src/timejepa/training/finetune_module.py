@@ -461,6 +461,7 @@ class FinetuneModule(pl.LightningModule):
         else:
             loss = self._masked_point_loss(results['forecast'], target,
                                            target_mask)
+        loss = self._add_rate_fd(loss, context, raw_target, w)
 
         self._last_anchor = None
         self._last_joint = None
@@ -680,6 +681,30 @@ class FinetuneModule(pl.LightningModule):
             return context
         length = int(eligible[torch.randint(len(eligible), (1,)).item()])
         return context[:, -length:]
+
+    def _add_rate_fd(self, loss, context, raw_target, w):
+        """A model whose rate trains by finite differences (RateINForecaster,
+        rate_grad='fd') gets its straight-through term added after a
+        training forward; other models and evaluation return `loss` as is.
+        The per-item loss is this module's pinball in the normalized frame
+        of the shifted forward (target mask ignored: the term is a training
+        signal for the rate, not the reported loss)."""
+        if not (self.training and getattr(self.model, 'rate_grad', None) == 'fd'):
+            return loss
+        head = self.model.decoder.decoder
+        levels = torch.tensor(head.quantile_levels, dtype=raw_target.dtype, device=raw_target.device)
+
+        def per_item(results, target):
+            if getattr(self.model, 'robust_scaler', None) is not None:
+                target = self.model.robust_scaler.transform(target)
+            if self.model.revin is not None:
+                target = (target - self.model.revin.mean) / self.model.revin.std
+            q = results['quantiles']
+            t = target[..., 0] if target.ndim == 3 else target
+            d = t.unsqueeze(-1) - q
+            return (2.0 * torch.maximum(levels * d, (levels - 1.0) * d)).mean(dim=(1, 2))
+
+        return loss + self.model.fd_surrogate(context, raw_target, w, raw_target.shape[1], per_item)
 
     def _log_rate_diagnostics(self, on_step: bool, on_epoch: bool) -> None:
         """A model that owns its sampling rate (RateINForecaster) reports

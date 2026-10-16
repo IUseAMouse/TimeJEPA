@@ -86,7 +86,6 @@ class _WrappedStub(RateINForecaster):
         object.__setattr__(self, "inner", stub)
         self.layer = layer
         self.log_k_prior = math.log(k_prior)
-        self.k_quant_octave = 8
         self.name = "wrapped_stub"
         self.prediction_length = H
         self.input_length = int(layer.model_len * RL.K_MAX)
@@ -95,6 +94,7 @@ class _WrappedStub(RateINForecaster):
         self.expects_frequency = False
         self._pretrain_mode = False
         self.last_log_k = self.last_k = self.last_model_horizon = self._last_n_unique_w = None
+        self.rate_grad, self.fd_delta, self._fd_log_k, self.last_fd_slope = "exact", 0.35, None, None
 
 
 def _synthetic(rng, n_series=8, length=900):
