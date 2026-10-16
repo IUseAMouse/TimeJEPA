@@ -17,8 +17,16 @@ wrapper (timejepa.models.ratein_forecaster), `model.ratein_layer` the layer,
   1. the loss of every window at every rate of the grid (K_CANDIDATES plus
      1/2, 1/3, 1/4), forecaster under no_grad, cached as npz;
   2. the selector trained on the kernel-smoothed curve, validation on the
-     last `ratein_curve.val_fraction` of the windows: loss at the prior, at
+     first `ratein_curve.val_fraction` of the windows: loss at the prior, at
      the learned rate (linear interpolation) and at the oracle.
+The training curve is, by default (`ratein_curve.objective=logratio`), the
+log of the loss relative to the loss at k = 1, clipped to +-`log_clip`: a
+scale-free regret, so a window whose context scale is degenerate (a flat or
+zero-padded tail, loss in the 1e8 range) weighs as much as any other, and
+its mean is the log of a geometric mean of ratios, the aggregation GIFT
+uses. `objective=raw` trains on the raw curve (the WQL in context-scale
+units; on the LOTSA corpus 20 windows out of 8100 carried 99.9 % of it).
+Windows with a non-finite or zero loss at k = 1 are dropped.
 The checkpoint is written in the Lightning format (`state_dict` with the
 `model.` prefix) so the GIFT harness loads it through load_checkpoint with
 the same config (`+checkpoint_path=<out>`).
@@ -46,6 +54,7 @@ LEVELS = list(gift.QUANTILE_LEVELS)
 GRID = tuple(sorted(tuple(float(k) for k in R.K_CANDIDATES) + (1 / 2, 1 / 3, 1 / 4)))
 DEFAULTS = {"max_batches": 0, "val_fraction": 0.05, "steps": 2000, "lr": 1e-3, "sigma": 0.25,
             "grid_cache": None, "eval_every": 200, "seed": 0, "device": "cpu",
+            "objective": "logratio", "log_clip": 3.0,
             "out": "checkpoints/ratein_layer/curve.pt"}
 
 
@@ -112,12 +121,24 @@ def main(cfg: DictConfig):
             cache.parent.mkdir(parents=True, exist_ok=True)
             torch.save({"contexts": X, "losses": L, "grid": grid}, cache)
     log_grid = torch.log(grid).to(device)
+    k1 = int((grid == 1.0).nonzero()[0])
+    keep = torch.isfinite(L).all(1) & (L[:, k1] > 0)
+    if not bool(keep.all()):
+        print(f"curve: {int((~keep).sum())} windows dropped (non-finite or zero loss at k=1)", flush=True)
+        X, L = X[keep], L[keep]
     L = L.to(device)
+    if str(rc.objective) == "logratio":
+        C = torch.log(L / L[:, k1:k1 + 1]).clamp(-float(rc.log_clip), float(rc.log_clip))
+    elif str(rc.objective) == "raw":
+        C = L
+    else:
+        raise ValueError(f"ratein_curve.objective must be logratio or raw, got {rc.objective!r}")
     n_val = int(len(X) * float(rc.val_fraction))
     val, train = list(range(n_val)), list(range(n_val, len(X)))
-    k1 = int((grid == 1.0).nonzero()[0])
-    print(f"{len(X)} windows ({len(train)} train, {n_val} val): loss at k=1 {L[:, k1].mean():.4f}, "
-          f"oracle {L.min(1).values.mean():.4f}", flush=True)
+    ratio = torch.exp(torch.log((L.min(1).values / L[:, k1]).clamp_min(1e-6)).mean()).item()
+    print(f"{len(X)} windows ({len(train)} train, {n_val} val): loss at k=1 {L[:, k1].mean():.4f} "
+          f"(median {L[:, k1].median():.4f}), oracle {L.min(1).values.mean():.4f}, "
+          f"geomean oracle/k=1 {ratio:.4f}", flush=True)
 
     layer = wrapper.layer
     opt = torch.optim.AdamW(layer.parameters(), lr=float(rc.lr), weight_decay=0.0)
@@ -130,9 +151,23 @@ def main(cfg: DictConfig):
             x = X[val].to(device); lk = layer.log_k(x, None, wrapper.log_k_prior)
             lengths = torch.full((len(val),), x.shape[1], dtype=torch.long, device=device)
             prior = layer.bound_log_k(torch.full_like(lk, wrapper.log_k_prior), lengths)
-            out = {"learned": RL.interp_loss_curve(log_grid, L[val], lk).mean().item(),
-                   "prior": RL.interp_loss_curve(log_grid, L[val], prior).mean().item(),
-                   "oracle": L[val].min(1).values.mean().item()}
+            Lv = L[val]
+            out = {"learned": RL.interp_loss_curve(log_grid, Lv, lk).mean().item(),
+                   "prior": RL.interp_loss_curve(log_grid, Lv, prior).mean().item(),
+                   "oracle": Lv.min(1).values.mean().item()}
+            # geometric means of the ratio to k = 1 (GIFT's aggregation)
+            l1 = Lv[:, k1]
+            for name, lr_ in (("learned", RL.interp_loss_curve(log_grid, Lv, lk)),
+                              ("prior", RL.interp_loss_curve(log_grid, Lv, prior)),
+                              ("oracle", Lv.min(1).values)):
+                out["g_" + name] = torch.exp(torch.log((lr_ / l1).clamp_min(1e-6)).mean()).item()
+            # the same ratio on a fixed slice of the training windows (fit vs generalisation)
+            tr = train[:len(val)] if val else train[:256]
+            xt = X[tr].to(device); lkt = layer.log_k(xt, None, wrapper.log_k_prior)
+            Lt = L[tr]
+            out["g_train"] = torch.exp(torch.log((RL.interp_loss_curve(log_grid, Lt, lkt) / Lt[:, k1])
+                                                 .clamp_min(1e-6)).mean()).item()
+            out["g_train_oracle"] = torch.exp(torch.log((Lt.min(1).values / Lt[:, k1]).clamp_min(1e-6)).mean()).item()
         layer.train()
         return out
 
@@ -141,7 +176,7 @@ def main(cfg: DictConfig):
         b = [int(i) for i in rng.choice(train, size=min(batch_size, len(train)), replace=False)]
         x = X[b].to(device)
         lk = layer.log_k(x, None, wrapper.log_k_prior)
-        loss = RL.kernel_loss_curve(log_grid, L[b], lk, float(rc.sigma)).mean()
+        loss = RL.kernel_loss_curve(log_grid, C[b], lk, float(rc.sigma)).mean()
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(layer.parameters(), 1.0); opt.step()
         if step % 50 == 0 or step == 1:
@@ -153,7 +188,9 @@ def main(cfg: DictConfig):
             share = ((ev["prior"] - ev["learned"]) / (ev["prior"] - ev["oracle"])
                      if ev["prior"] > ev["oracle"] else float("nan"))
             print(f"  val: prior {ev['prior']:.4f} learned {ev['learned']:.4f} oracle {ev['oracle']:.4f} "
-                  f"| share of the oracle gain captured {share:.2f}", flush=True)
+                  f"| share of the oracle gain captured {share:.2f} | geomean ratio to k=1: "
+                  f"prior {ev['g_prior']:.4f} learned {ev['g_learned']:.4f} oracle {ev['g_oracle']:.4f} "
+                  f"| train slice learned {ev['g_train']:.4f} oracle {ev['g_train_oracle']:.4f}", flush=True)
 
     out = Path(rc.out); out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": {"model." + k: v.cpu() for k, v in wrapper.state_dict().items()},
