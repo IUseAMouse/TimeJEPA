@@ -64,6 +64,22 @@ python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval "+checkpoint_pa
     +tta_flip=true +ratein=mix +ratein_pool=true                                                             # + resampling par backtest
 ```
 
+Pile RateIN de l'article (mélange par backtest, candidats de suréchantillonnage, backtest
+court), puis la borne oracle par configuration (diagnostic qui lit le test) :
+
+```bash
+python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval "+checkpoint_path=$CK" \
+    +tta_flip=true +ratein=mix +ratein_pool=true +ratein_k_up=2x3x4 +ratein_min_bt=4 +ratein_bt_windows=4
+python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval "+checkpoint_path=$CK" \
+    +tta_flip=true +ratein=oracle
+```
+
+Les mêmes drapeaux valent pour un modèle externe (`--config-name ext_chronos2_eval`, sans
+`+checkpoint_path`). Pour TimeSSM, cloner https://github.com/IUseAMouse/TimeSSM à côté de ce
+dépôt (`../TimeSSM`), passer `--config-path "$(realpath ../TimeSSM/configs)"` avec
+`PYTHONPATH=../TimeSSM/src` (ou son `scripts/eval_ssm.sh`) et ajouter `+freq_delta=true`.
+La liste complète des drapeaux est dans la docstring de `scripts/evaluate_gift.py`.
+
 Résultats par configuration dans `evaluation/<model.name>/<ckpt>/gift<tag>/per_config/`,
 mis en cache ; l'agrégat est la moyenne géométrique des ratios au naïf saisonnier
 officiel, comme sur le leaderboard. `scripts/harness_fidelity.py` compare le harnais aux
@@ -105,11 +121,3 @@ python scripts/forecast_video.py --scene vortex --checkpoint <ckpt finetuné> --
 
 Chaque pixel est prévu comme une série indépendante ; sortie dans
 `evaluation/video_forecast/`.
-
-## Règles de travail
-
-Une variable par expérience. Les prédictions sont écrites dans
-un journal d'expériences tenu hors du dépôt, avant le lancement, avec leurs seuils de succès et d'échec,
-et le verdict après. Rien n'est réglé sur le test GIFT-Eval ; l'oracle est un
-diagnostic. Aucun fichier n'est supprimé, il est déplacé. Code et commentaires en
-anglais, documents en français, carte de modèle en anglais.

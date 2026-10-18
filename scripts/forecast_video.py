@@ -667,7 +667,7 @@ def main():
     ap.add_argument("--model-config", default="lotsa_tiny_v3_eval")
     ap.add_argument("--config-dir", default=None,
                     help="Hydra config directory (default: this repo's configs/model); "
-                         "e.g. ../TimeMamba/configs for a TimeSSM checkpoint")
+                         "e.g. ../TimeSSM/configs for a TimeSSM checkpoint")
     ap.add_argument("--w", type=float, default=None,
                     help="rate knob of a model that has one (TimeSSM): 24 / season of "
                          "the scene, e.g. 24/128 for the pendulum; None = the model's default")

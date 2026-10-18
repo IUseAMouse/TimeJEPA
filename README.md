@@ -67,7 +67,7 @@ CRPS to 0.6508. Given a deliberately biased proposer, the judge moves its
 mass to the alternative center kept in the pool: a verifier that can fire its
 proposer. Coverage (0.62 against 0.80 nominal) is the open gap.
 
-**What did not work**, recorded with the same care: selecting the resampling
+**What did not work**: selecting the resampling
 rate by energy is worse than selecting it by backtest; reweighting the
 forecaster's own calibrated fan with its judge dilutes it; refining
 candidates by gradient descent on E helps only on uncentered pools; and the
@@ -215,13 +215,55 @@ python scripts/train.py --config-name lotsa_tiny_v3 wandb.run_name=my-run
 python scripts/train.py --config-name lotsa_tiny_v3_zeroshot \
     '+training.pretrained_encoder_path="checkpoints/.../<ckpt>"'
 
-# GIFT-Eval, 97 configs, under 15 minutes on one 3090
+# GIFT-Eval, 97 configs, under 15 minutes on one 3090 (sign flip and
+# backtest resampling, the inference of the table above; the RateIN
+# stack of the paper is in the next section)
 python scripts/evaluate_gift.py --config-name lotsa_tiny_v3_eval \
     '+checkpoint_path="checkpoints/.../<ckpt>"' +tta_flip=true +ratein=backtest
 
 # Video demo: every pixel forecast as an independent series
 python scripts/forecast_video.py
 ```
+
+## Reproducing RateIN
+
+RateIN resamples the context by a factor k at inference and maps the forecast
+back to the native grid. The operator is `src/timejepa/evaluation/ratein.py`;
+the selection of k (backtest windows, pooled ratio table, mixture weights) is
+in `scripts/evaluate_gift.py` (`_backtest_series_k`, `_pool_ratios`,
+`_mix_weights`). Every flag of the harness is listed in its module docstring.
+
+The paper's numbers use this flag stack:
+
+```bash
+python scripts/evaluate_gift.py --config-name <eval config> [+checkpoint_path=<ckpt>] \
+    +tta_flip=true +ratein=mix +ratein_pool=true \
+    +ratein_k_up=2x3x4 +ratein_min_bt=4 +ratein_bt_windows=4
+```
+
+and the per-config oracle bound (a diagnostic that reads the test set):
+
+```bash
+python scripts/evaluate_gift.py --config-name <eval config> [+checkpoint_path=<ckpt>] \
+    +tta_flip=true +ratein=oracle
+```
+
+The model is chosen by the Hydra config:
+
+- third-party forecasters: `configs/model/ext_*_eval.yaml` (for example
+  `--config-name ext_chronos2_eval`), built from their Hugging Face id, no
+  checkpoint flag; install with `uv pip install -e ".[external]"`;
+- a TimeJEPA checkpoint: `--config-name lotsa_tiny_v3_eval
+  '+checkpoint_path="checkpoints/.../<ckpt>"'`;
+- a TimeSSM checkpoint: the eval config lives in a clone of
+  [TimeSSM](https://github.com/IUseAMouse/TimeSSM) next to this repository
+  (`--config-path "$(realpath ../TimeSSM/configs)"`: Hydra resolves a
+  relative path against the script, not the shell; `../TimeSSM/src` goes on
+  `PYTHONPATH`, and its `scripts/eval_ssm.sh` wraps the call), and
+  `+freq_delta=true` is added to both commands.
+
+Results land in `evaluation/<model.name>/<ckpt or HF id>/gift<tag>/`, one
+directory per flag set; `summary.json` holds the two leaderboard aggregates.
 
 ## Project structure
 
