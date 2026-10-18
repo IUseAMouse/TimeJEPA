@@ -188,3 +188,42 @@ def to_native_fan(fan: np.ndarray, h: int, k: int | float) -> np.ndarray:
     if k > 1:
         return reinterp_fan(fan, h, k)
     return pool_fan(fan, h, int(round(1.0 / k)))
+
+
+# ------------------------------------------------------------- controls
+# Decimation by block means changes three things at once: the number of
+# samples per cycle, the smoothing of the values, and the native span the
+# model's positions cover. Each control keeps some of them and drops the
+# others, for an integer k > 1 (oracle sweeps only):
+#   smooth    : trailing mean of width k at the native rate; native length,
+#               native horizon, no return step (smoothing only);
+#   subsample : the value at the centre of each block instead of its mean
+#               (rate and span, no smoothing);
+#   samespan  : block means over the native span the model sees at k = 1
+#               only (rate and smoothing, no extra history).
+CONTROLS = ("smooth", "subsample", "samespan")
+
+
+def control_is_native(control: str) -> bool:
+    """True when the control forecasts at the native rate (no return step)."""
+    return control == "smooth"
+
+
+def control_context(x: np.ndarray, k: int, max_len: int, control: str) -> np.ndarray:
+    """The context the model sees at factor k under `control`."""
+    if control not in CONTROLS:
+        raise ValueError(f"unknown RateIN control {control!r} ({', '.join(CONTROLS)})")
+    k = int(k)
+    if k == 1:
+        return x
+    if control == "smooth":
+        x = np.asarray(x[-max_len:], dtype=np.float64)
+        c = np.concatenate(([0.0], np.cumsum(x)))
+        idx = np.arange(1, len(x) + 1)
+        lo = np.maximum(idx - k, 0)
+        return ((c[idx] - c[lo]) / (idx - lo)).astype(np.float32)
+    if control == "subsample":
+        x = x[-(max_len * k):]
+        n = (len(x) // k) * k
+        return x[len(x) - n:].reshape(-1, k)[:, k // 2]
+    return decimate(x[-max_len:], k)

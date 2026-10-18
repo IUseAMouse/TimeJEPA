@@ -65,6 +65,10 @@ inference variant writes to its own gift<tag> directory.
     ratein_bt_windows        backtest windows per series (default 2)
     ratein_mix_tau           temperature of the mix weights (default MIX_TAU = 0.05)
     ratein_delta_max_k       with +ratein=delta: the knob up to this k, decimation beyond
+    ratein_control           with +ratein=oracle: smooth | subsample | samespan, a control
+                             variant of the operator (ratein.control_context)
+    ratein_oracle_ks         with +ratein=oracle: the factors swept, written 1x2x4 (default
+                             all integer candidates)
     ratein_w                 FiLM on w = 1/k for decimated buckets with k <= 4
                              (cross-resolution models only)
     freq_delta               Delta tied to each config's declared frequency (rate-knob
@@ -717,6 +721,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     ratein_k_up=None, ratein_min_bt: int = 16,
                     ratein_bt_windows: int = 2,
                     ratein_mix_tau: float = MIX_TAU,
+                    ratein_control: str = "",
                     freq_season=None,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
@@ -852,8 +857,11 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         else:
             k = 1
         knob_k = use_delta and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k)
-        hist = (ratein_mod.resample_context(inst.context, k, max_len)
-                if k != 1 and not knob_k else inst.context)
+        if ratein_control and k != 1:
+            hist = ratein_mod.control_context(inst.context, k, max_len, ratein_control)
+        else:
+            hist = (ratein_mod.resample_context(inst.context, k, max_len)
+                    if k != 1 and not knob_k else inst.context)
         if k != 1 and not knob_k and len(hist) < model.patching.patch_size:
             # Guard: a short history decimated by a large k goes empty, fall
             # back to k=1.
@@ -879,7 +887,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             use_delta and k != 1 and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k))
         # Decimated grid: h' = ceil(h/k) steps cover the native horizon
         # (fewer rollouts on long-term 10S/5T).
-        h_fc = h if use_w else ratein_mod.fc_horizon(h, k)
+        native = bool(ratein_control) and ratein_mod.control_is_native(ratein_control)
+        h_fc = h if (use_w or native) else ratein_mod.fc_horizon(h, k)
         for i in range(0, len(items), batch_size):
             chunk = items[i:i + batch_size]
             batch = torch.from_numpy(np.stack([c[0] for c in chunk]))
@@ -890,7 +899,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             if freq_season is not None:
                 # +freq_delta: the declared frequency sets Delta, RateIN's
                 # decimation (if any) still shortens the context and the horizon.
-                w_vec = torch.full((batch.shape[0],), freq_delta_w(model, freq_season, k),
+                w_vec = torch.full((batch.shape[0],),
+                                   freq_delta_w(model, freq_season, 1 if native else k),
                                    device=device)
             with torch.no_grad():
                 out = tta_forecast(model, batch, h_fc,
@@ -928,7 +938,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 mix_mid = mid
             for b, item in enumerate(chunk):
                 _, target, past, scale = item[:4]
-                if k != 1 and not use_w:
+                if k != 1 and not use_w and not native:
                     if quants is not None:
                         fan_nat = ratein_mod.to_native_fan(quants[b], h, k)
                         med_nat = fan_nat[:, mid]
@@ -1102,6 +1112,7 @@ KNOWN_FLAGS = frozenset((
     "gift_configs", "gift_data_dir", "gift_max_series", "gift_terms",
     "max_context", "quantile_gamma", "ratein", "ratein_pool", "ratein_w",
     "ratein_delta_max_k", "ratein_k_up", "ratein_min_bt", "ratein_bt_windows", "ratein_mix_tau",
+    "ratein_control", "ratein_oracle_ks",
     "freq_delta",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
@@ -1229,6 +1240,15 @@ def main(cfg: DictConfig):
     ratein_mix_tau = float(cfg.get("ratein_mix_tau", MIX_TAU) or MIX_TAU)
     if ratein_mix_tau != MIX_TAU and ratein_mode_val != "mix":
         raise ValueError("+ratein_mix_tau needs +ratein=mix")
+    ratein_control = str(cfg.get("ratein_control", "") or "").lower()
+    if ratein_control and (not ratein_oracle or ratein_control not in ratein_mod.CONTROLS):
+        raise ValueError(f"+ratein_control needs +ratein=oracle and one of {ratein_mod.CONTROLS}")
+    ratein_oracle_ks = ([int(x) for x in re.split(r"[,x\-]", str(cfg.ratein_oracle_ks)) if x]
+                        if cfg.get("ratein_oracle_ks") else list(ratein_mod.K_CANDIDATES))
+    if not ratein_oracle and cfg.get("ratein_oracle_ks"):
+        raise ValueError("+ratein_oracle_ks needs +ratein=oracle")
+    if 1 not in ratein_oracle_ks:
+        raise ValueError("+ratein_oracle_ks must include 1 (the reference of the gain)")
     if any(m < 2 for m in ratein_k_up):
         raise ValueError("+ratein_k_up factors must be >= 2")
     if (ratein_k_up or ratein_min_bt != 16 or ratein_bt_windows != 2) \
@@ -1335,6 +1355,10 @@ def main(cfg: DictConfig):
         tag += "_ratein-delta" + (f"-k{ratein_delta_max_k}" if ratein_delta_max_k else "")
     elif ratein_oracle:
         tag += "_ratein-oracle"
+        if ratein_control:
+            tag += f"-ctl{ratein_control}"
+        if cfg.get("ratein_oracle_ks"):
+            tag += "-ks" + "x".join(str(k) for k in ratein_oracle_ks)
     if ratein_pool:
         tag += "-pool"
     if ratein_k_up:
@@ -1407,7 +1431,7 @@ def main(cfg: DictConfig):
                 # Per-config k sweep: the upper bound on the gain reachable
                 # by rate canonicalization.
                 per_k, best = {}, None
-                for kk in ratein_mod.K_CANDIDATES:
+                for kk in ratein_oracle_ks:
                     r_k = evaluate_config(model, config, gift_root, device,
                                           batch_size, max_series,
                                           max_context=max_context,
@@ -1416,6 +1440,7 @@ def main(cfg: DictConfig):
                                           tta_shifts=tta_shifts,
                                           quantile_gamma=quantile_gamma,
                                           forced_k=kk, ratein_w=ratein_w,
+                                          ratein_control=ratein_control,
                                           freq_season=freq_season,
                                           refine_spec=refine_spec,
                                           refine_judge=refine_judge,
