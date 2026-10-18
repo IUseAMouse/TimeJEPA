@@ -43,13 +43,11 @@ class TSFileParser:
         # Try multiple encodings
         encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
         content = None
-        used_encoding = None
         
         for encoding in encodings:
             try:
                 with open(file_path, 'r', encoding=encoding) as f:
                     content = f.read()
-                used_encoding = encoding
                 logger.info(f"Successfully read file with {encoding} encoding")
                 break
             except UnicodeDecodeError:
@@ -169,7 +167,7 @@ class DataArchive:
                 else:
                     logger.info("All files already extracted")
             
-            logger.info(f"Extraction complete")
+            logger.info("Extraction complete")
             return extract_to
             
         except zipfile.BadZipFile as e:
@@ -199,7 +197,7 @@ def save_processed_data(
         'median_len': np.median(lengths)
     }
     
-    logger.info(f"Dataset statistics:")
+    logger.info("Dataset statistics:")
     logger.info(f"  - Number of series: {stats['num_series']}")
     logger.info(f"  - Total datapoints: {stats['total_points']:,}")
     logger.info(f"  - Length range: [{stats['min_len']}, {stats['max_len']}]")

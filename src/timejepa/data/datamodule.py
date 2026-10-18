@@ -488,7 +488,7 @@ class MonashDataModule(pl.LightningDataModule):
             
             logger.info(f"Setup complete with {self.normalizer.__class__.__name__}")
             if self.augmentation_config:
-                logger.info(f"Augmentations enabled for training only")
+                logger.info("Augmentations enabled for training only")
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -589,7 +589,6 @@ class MultiHorizonDataModule(MonashDataModule):
             
             train_len = int(total_len * train_frac)
             val_len = int(total_len * val_frac)
-            test_len = total_len - train_len - val_len
             
             generator = torch.Generator().manual_seed(self.seed)
             indices = torch.randperm(total_len, generator=generator).tolist()
@@ -959,7 +958,7 @@ class MultiDatasetMonashDataModule(pl.LightningDataModule):
             self.normalizer = list(self.datamodules.values())[0].normalizer
             
             if self.augmentation_config:
-                logger.info(f"Augmentations enabled for training across all datasets")
+                logger.info("Augmentations enabled for training across all datasets")
     
     def train_dataloader(self) -> DataLoader:
         if self._train_sampler is not None:

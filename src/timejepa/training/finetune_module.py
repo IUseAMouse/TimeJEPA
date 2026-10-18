@@ -8,7 +8,6 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional, Literal, List
-from pathlib import Path
 import logging
 
 from ..models.jepa_tst import JEPATST, filter_loadable, grow_future_query_table
@@ -209,7 +208,7 @@ class FinetuneModule(pl.LightningModule):
         if self.lambda_joint > 0 or self.critic_n_max > 0 or self.lambda_score > 0:
             # Printed at init so a launch can be audited from the log alone.
             logger.info(
-                f"H2b/S6 settings: lambda_joint={self.lambda_joint} joint_target={self.joint_target} "
+                f"joint/critic/score settings: lambda_joint={self.lambda_joint} joint_target={self.joint_target} "
                 f"joint_sigreg={self.joint_sigreg} | critic_steps={self.critic_steps} "
                 f"critic_alpha={self.critic_alpha} critic_route={self.critic_route} "
                 f"critic_target={self.critic_target} critic_energy={self.critic_energy} "
@@ -237,7 +236,7 @@ class FinetuneModule(pl.LightningModule):
             if self.lambda_joint <= 0:
                 raise ValueError("critic_steps > 0 requires lambda_joint > 0: without "
                                  "the joint term the encoder has no reason to keep a "
-                                 "usable energy landscape (S6 is gated behind H2b)")
+                                 "usable energy landscape")
             if finetune_mode == 'linear_probe':
                 raise ValueError("critic_steps > 0 with finetune_mode='linear_probe': "
                                  "the descent needs a trainable encoder")
@@ -267,7 +266,7 @@ class FinetuneModule(pl.LightningModule):
             # the loaded online encoder instead (exact as the EMA rate goes
             # to 1 at the end of pretrain).
             self.model.target_encoder.copy_from(self.model.online_encoder)
-            logger.info("G9.3 anchor / H2b joint: target_encoder <- copy of the "
+            logger.info("anchor / joint: target_encoder <- copy of the "
                         f"loaded online encoder (lambda_anchor={self.lambda_anchor}, "
                         f"lambda_joint={self.lambda_joint})")
 

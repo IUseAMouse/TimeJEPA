@@ -155,7 +155,7 @@ class JEPAPretrainModule(pl.LightningModule):
         if self.reconstruction_target:
             proj = model.patching.projection
             self.recon_head = nn.Linear(proj.out_features, proj.in_features)
-            print("  WARNING: ABLATION: reconstruction target (raw patches), NOT latent")
+            logger.warning("reconstruction target (raw patches), not latent")
 
         self.context_lengths = list(context_lengths) if context_lengths else None
         self.p_random_context = float(p_random_context)
@@ -176,10 +176,8 @@ class JEPAPretrainModule(pl.LightningModule):
 
         self.log_every_n_steps = log_every_n_steps
         
-        print(f"JEPAPretrainModule initialized:")
-        print(f"  Loss type: {loss_type}")
-        print(f"  Learning rate: {learning_rate}")
-        print(f"  Predicting {model.num_target_patches} future patches")
+        logger.info(f"JEPAPretrainModule initialized: loss {loss_type}, learning rate "
+                    f"{learning_rate}, {model.num_target_patches} future patches")
     
     def forward(self, context: torch.Tensor, target: torch.Tensor):
         """Forward pass."""

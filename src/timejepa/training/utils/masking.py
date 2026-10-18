@@ -1,5 +1,5 @@
-# DEPRECATED (2026-08-19 audit) - masked-reconstruction path, unused since the
-# JEPA objective replaced it. Kept per the no-delete policy; do not import.
+# DEPRECATED: masked-reconstruction path, unused since the JEPA objective
+# replaced it; do not import.
 """
 Masking strategies for JEPA pretraining.
 
@@ -7,8 +7,7 @@ Creates context and target masks for patch-based JEPA training.
 """
 
 import torch
-from typing import Tuple, Literal, Optional
-import math
+from typing import Tuple, Literal
 
 
 class MaskingStrategy:

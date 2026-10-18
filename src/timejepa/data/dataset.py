@@ -3,14 +3,14 @@ PyTorch Dataset for time series with sliding windows for JEPA training.
 """
 import logging
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from .normalizer import Normalizer, get_normalizer
-from .augmentations import TimeSeriesAugmentations, AugmentationConfig, FinetuneAugmentations
+from .augmentations import TimeSeriesAugmentations, AugmentationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +288,7 @@ class TimeSeriesDataset(Dataset):
         self.window_indices = self._generate_window_indices()
 
         if self.augmentations is not None:
-            logger.info(f"Augmentations configured (applied via AugmentedSubset)")
+            logger.info("Augmentations configured (applied via AugmentedSubset)")
             self._log_augmentation_config()
 
         self._log_multi_resolution_coverage()

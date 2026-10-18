@@ -88,7 +88,7 @@ def main():
 
     def table(items, title, limit=None):
         print(f"### {title}\n")
-        print("| # | modèle | params (M) | CRPS | MASE | type |")
+        print("| # | model | params (M) | CRPS | MASE | type |")
         print("|---|---|---|---|---|---|")
         for i, r in enumerate(items[:limit] if limit else items, 1):
             p = "n/a" if r["params"] is None else f"{r['params']:g}"
@@ -96,31 +96,30 @@ def main():
             print(f"| {i} | {name} | {p} | {r['crps']:.4f} | {r['mase']:.4f} | {r['type']} |")
         print()
 
-    print(f"# Classements GIFT-Eval — fondations seules (snapshot {args.snapshot})\n")
-    print(f"Source : `docs/assets/gift_leaderboard/{args.snapshot}/` (leaderboard.csv + "
-          f"models_meta.csv, {n_all} entrées, agrégats recalculés avec la formule "
-          "officielle : moyenne géométrique des ratios par config contre la Seasonal "
-          "Naive officielle).\n")
-    print("Filtre « fondation » : `model_type` ∈ {zero-shot, pretrained} et "
-          "`testdata_leakage` = No. Exclus : `agentic` (routeurs et ensembles de "
-          "plusieurs modèles), `fine-tuned` (adaptation par jeu de données), "
-          "`deep-learning` (entraînés par jeu), `statistical`, et toute entrée avec "
-          "fuite déclarée. Les lignes en gras sont nos checkpoints, insérés à leur rang "
-          "(nos agrégats : même formule, mêmes CSV officiels de la Seasonal Naive).\n")
+    print(f"# GIFT-Eval rankings, foundation models only (snapshot {args.snapshot})\n")
+    print(f"Source: `docs/assets/gift_leaderboard/{args.snapshot}/` (leaderboard.csv + "
+          f"models_meta.csv, {n_all} entries, aggregates recomputed with the official "
+          "formula: geometric mean of the per-config ratios against the official "
+          "Seasonal Naive).\n")
+    print("Foundation filter: `model_type` in {zero-shot, pretrained} and "
+          "`testdata_leakage` = No. Excluded: `agentic` (routers and ensembles of "
+          "several models), `fine-tuned` (per-dataset adaptation), "
+          "`deep-learning` (trained per dataset), `statistical`, and any entry with "
+          "declared leakage. Rows in bold are our checkpoints, inserted at their rank "
+          "(our aggregates: same formula, same official Seasonal Naive CSVs).\n")
     kept = len([r for r in found if not r["ours"]])
-    print(f"Sur {n_all} entrées, {kept} sont des fondations au sens ci-dessus. "
-          f"Exclus en plus par leur nom (enveloppes déclarées `pretrained`) : "
-          f"{', '.join(wrapped) if wrapped else 'aucun'}.\n")
-    table(found, f"Fondations, top {args.top} (sur {kept})", args.top)
-    table(sub, "Fondations de moins de 10M de paramètres")
-    print("Notes : TempoPFN n'a pas de compte de paramètres dans les métadonnées ; "
-          "son article (arXiv 2510.25502) indique 34.69M, il n'est donc pas dans la "
-          "table sub-10M. FlowState apparaît trois fois (FlowState-9.1M, FlowState-r1.1 "
-          "et Granite-FlowState-r1.1 : une lignée, deux versions) — un seul modèle "
-          "au sens du classement. TTM-R3-FT est exclu (type fine-tuned), TTM-R3-PT "
-          "est la référence pretrained. Le type est auto-déclaré par les auteurs : "
-          "le filtre est le meilleur possible depuis les métadonnées, pas une "
-          "vérité absolue.")
+    print(f"Of {n_all} entries, {kept} are foundation models in the above sense. "
+          f"Also excluded by name (wrappers declared `pretrained`): "
+          f"{', '.join(wrapped) if wrapped else 'none'}.\n")
+    table(found, f"Foundation models, top {args.top} (of {kept})", args.top)
+    table(sub, "Foundation models under 10M parameters")
+    print("Notes: TempoPFN has no parameter count in the metadata; its paper "
+          "(arXiv 2510.25502) reports 34.69M, so it is not in the sub-10M table. "
+          "FlowState appears three times (FlowState-9.1M, FlowState-r1.1 and "
+          "Granite-FlowState-r1.1: one lineage, two versions), one model in the "
+          "sense of the ranking. TTM-R3-FT is excluded (type fine-tuned), TTM-R3-PT "
+          "is the pretrained reference. The type is self-declared by the authors: "
+          "the filter is the best the metadata allows, not ground truth.")
 
 
 if __name__ == "__main__":

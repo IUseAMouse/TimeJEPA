@@ -10,7 +10,7 @@ This model learns to predict future representations from past context:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Literal
 
 from .components.revin import RevIN
 from .components.patching import Patching
@@ -278,9 +278,9 @@ class JEPATST(nn.Module):
         # Model state
         self._pretrain_mode = True
         
-        print(f"JEPATST initialized:")
-        print(f"  Context: {input_length} tp -> {self.num_patches} patches")
-        print(f"  Target: {prediction_length} tp -> {self.num_target_patches} patches")
+        logger.info(f"JEPATST initialized: context {input_length} tp -> "
+                    f"{self.num_patches} patches, target {prediction_length} tp -> "
+                    f"{self.num_target_patches} patches")
         
     def set_pretrain_mode(self, mode: bool = True):
         """Set whether model is in pretrain or finetune mode."""

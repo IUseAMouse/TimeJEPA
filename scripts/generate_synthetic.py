@@ -52,10 +52,10 @@ def main():
     ap.add_argument("--families", nargs="*", default=None,
                     help="Restrict to these families (default: all in the set).")
     ap.add_argument("--set", choices=["default", "v3"], default="default",
-                    help="v3 = the 3 v1 families + ops_bursty (bizitobs/E19) "
-                         "+ intermittent (car_parts). Roadmap S2 2026-08-24.")
+                    help="v3 = the 3 default families + ops_bursty (bizitobs) "
+                         "+ intermittent (car_parts).")
     ap.add_argument("--suffix", default="",
-                    help="Filename suffix (v3 sharding, 2026-08-27): the "
+                    help="Filename suffix (v3 sharding): the "
                          "T=0.5 sampler weighs in sqrt PER FILE, so the "
                          "synthetic batch share is sized by the NUMBER of "
                          "shards (corpus precedent: era5_*/cmip6_*/largest_*). "

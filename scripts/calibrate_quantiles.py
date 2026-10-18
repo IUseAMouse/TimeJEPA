@@ -215,7 +215,7 @@ def main():
         "checkpoint": args.checkpoint, "config_name": args.config_name,
         "flip": args.flip, "per_dataset": per_ds,
         "doctrine": ("uniform over 97 configs, calibrated on the finetune "
-                     "corpus, never GIFT - paper ablation status 2026-08-25"),
+                     "corpus, never GIFT"),
     }
     path = out_dir / f"gamma_{tag}.json"
     path.write_text(json.dumps(payload, indent=2))

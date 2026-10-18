@@ -6,8 +6,6 @@ lands in one place.
 """
 
 import logging
-from pathlib import Path
-from typing import Optional
 
 import torch
 from omegaconf import DictConfig

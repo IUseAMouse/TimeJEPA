@@ -7,7 +7,6 @@ output with the same statistics.
 
 import torch
 import torch.nn as nn
-from typing import Optional
 
 
 class RevIN(nn.Module):

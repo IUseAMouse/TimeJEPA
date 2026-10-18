@@ -240,7 +240,7 @@ def print_analysis(
     
     token_stats = compute_effective_tokens(total_points, epochs, context_length)
     
-    print(f"\nDATA STATISTICS:")
+    print("\nDATA STATISTICS:")
     print(f"  Total datapoints:         {token_stats['total_points']:>15,}")
     print(f"  Context length:           {context_length:>15}")
     print(f"  Epochs:                   {token_stats['epochs']:>15}")
@@ -248,9 +248,9 @@ def print_analysis(
     print(f"  Total tokens (raw):       {token_stats['total_tokens']:>15,}")
     print(f"  Effective epochs*:        {token_stats['effective_epochs']:>15.2f}")
     print(f"  Effective tokens*:        {token_stats['effective_tokens']:>15,.0f}")
-    print(f"\n  * Accounts for diminishing returns of repeated data")
+    print("\n  * Accounts for diminishing returns of repeated data")
     
-    print(f"\nOPTIMAL PARAMETER COUNTS:")
+    print("\nOPTIMAL PARAMETER COUNTS:")
     print("-" * 80)
     
     for regime in ["chinchilla", "representation", "conservative"]:
@@ -267,7 +267,7 @@ def print_analysis(
         "representation"
     )
     
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("PRESET CONFIGURATIONS")
     print("=" * 80)
     print(f"\n{'Name':<10} {'d_model':>8} {'heads':>6} {'L_enc':>6} {'L_pred':>7} {'L_dec':>6} {'Params':>12} {'Status':<15}")
@@ -292,7 +292,7 @@ def print_analysis(
               f"{params_str:>12} {status:<15}")
     
     
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("CUSTOM CONFIGURATION (optimized for your data)")
     print("=" * 80)
     
@@ -301,7 +301,7 @@ def print_analysis(
         indicator = " ⭐" if n_layers == 6 else ""
         print(f"  {custom}{indicator}")
     
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("RECOMMENDED YAML CONFIG")
     print("=" * 80)
     

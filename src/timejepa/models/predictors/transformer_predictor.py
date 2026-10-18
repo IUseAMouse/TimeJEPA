@@ -5,7 +5,7 @@ representations. The predictor is kept lighter than the encoder.
 
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+from typing import Optional
 
 from ..components.attention import TransformerBlock
 
@@ -299,7 +299,7 @@ class MLPPredictor(nn.Module):
         # nowhere to apply; refuse rather than let **kwargs swallow `w`.
         if w is not None and bool((w != 1).any()):
             raise NotImplementedError(
-                "MLPPredictor does not support w conditioning (G9.2) - "
+                "MLPPredictor does not support w conditioning: "
                 "use predictor_type='transformer'."
             )
         # Likewise **kwargs must not swallow return_z.

@@ -81,7 +81,7 @@ def resample(series_2d: np.ndarray, factor: int) -> np.ndarray:
     up = -factor
     t = torch.from_numpy(series_2d).float().unsqueeze(1)      # (S,1,T)
     out = torch.nn.functional.interpolate(
-        up_ := t, size=series_2d.shape[1] * up, mode="linear", align_corners=True
+        t, size=series_2d.shape[1] * up, mode="linear", align_corners=True
     )
     return out.squeeze(1).numpy()
 

@@ -111,7 +111,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": avg}, out)
     print(f"{n_avg} float tensors averaged -> {out}")
-    print("  Verdict via GIFT eval, never via val_loss (E18i/G7.3c).")
+    print("  Judge the average on the GIFT eval, not on val_loss.")
 
 
 if __name__ == "__main__":

@@ -82,7 +82,7 @@ def main():
                     help="auto = read from the config's training.mode")
     ap.add_argument("--deciles", type=int, default=10)
     ap.add_argument("--ration", action="store_true",
-                    help="force G10.2 rationing (to compare without touching the config)")
+                    help="force batch rationing (to compare without touching the config)")
     args = ap.parse_args()
 
     from hydra import compose, initialize
@@ -146,7 +146,7 @@ def main():
         print(f"  ... and {len(ext_rows) - 25} more")
 
     top5 = np.argsort(sizes)[-5:]
-    print(f"\nCOMPOSITION PER DECILE (batch share, decile mean):")
+    print("\nCOMPOSITION PER DECILE (batch share, decile mean):")
     print(f"  {'decile':<8s}{'batch size':>13s}{'capped':>12s}"
           f"{'free':>9s}{'top-5 sizes':>15s}")
     for d in range(n_dec):

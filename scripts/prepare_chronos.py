@@ -64,7 +64,7 @@ CHRONOS_EXCLUDED = {
     "uber_tlc_*": "already in LOTSA",
     "m5": "already in LOTSA",
     "nn5": "already in LOTSA (readmitted there)",
-    "weatherbench_*": "climate - era5+cmip6 already weigh ~30% of the batch (G7.1 audit)",
+    "weatherbench_*": "climate - era5+cmip6 already weigh ~30% of the batch",
     "wind_farms_*": "already in LOTSA (wind_farms_with_missing)",
     "training_corpus": "TSMixup of the whole Chronos corpus: a mix of the "
                        "sources above, so leakage by construction",

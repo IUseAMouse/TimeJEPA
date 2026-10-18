@@ -30,7 +30,6 @@ import json
 import hydra
 from omegaconf import DictConfig, OmegaConf, ListConfig
 import torch
-import pytorch_lightning as pl
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -40,7 +39,6 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.data.datamodule import MonashDataModule
-from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.utils.metrics import (
     compute_forecasting_metrics_extended,
     compute_per_horizon_metrics,
@@ -50,12 +48,9 @@ from timejepa.training.utils.baselines import (
     compute_all_baselines,
     get_seasonality,
 )
-from timejepa.models import JEPATST
-from timejepa.models.jepa_tst import filter_loadable
 # Shared with the GIFT-Eval harness so both load checkpoints through the same
 # code path (see evaluation/loading.py).
 from timejepa.evaluation.loading import create_model_from_config, load_checkpoint
-from timejepa.models.decoders import ForecastingHead
 
 try:
     from timejepa.data.nixtla import (
@@ -1065,7 +1060,7 @@ def main(cfg: DictConfig):
                 print(f"     WQL/ND:      {metrics['wql']:.4f}")
                 print(f"     R²:          {metrics['r2']:.4f}")
                 print(f"     Correlation: {metrics['correlation']:.4f}")
-                print(f"  vs baselines (MASE):")
+                print("  vs baselines (MASE):")
                 for bname, bm in metrics['_baselines'].items():
                     marker = ""
                     if metrics.get('mase') is not None and bm.get('mase') is not None:
@@ -1165,7 +1160,7 @@ def main(cfg: DictConfig):
     
     # Nixtla summary (already printed in create_nixtla_benchmark_table)
     if nixtla_results:
-        print(f"\nNixtla benchmark results saved to:")
+        print("\nNixtla benchmark results saved to:")
         print(f"   - {output_dir / 'nixtla_mse.csv'}")
         print(f"   - {output_dir / 'nixtla_mae.csv'}")
     
@@ -1183,12 +1178,12 @@ def main(cfg: DictConfig):
     print("=" * 80)
     print(f"  Results saved to: {output_dir}")
     if all_results:
-        print(f"     - local_results.json / local_results.csv")
-        print(f"     - horizon_metrics.json")
+        print("     - local_results.json / local_results.csv")
+        print("     - horizon_metrics.json")
     if nixtla_results:
-        print(f"     - nixtla_results.json")
-        print(f"     - nixtla_mse.csv / nixtla_mae.csv")
-    print(f"     - plots/")
+        print("     - nixtla_results.json")
+        print("     - nixtla_mse.csv / nixtla_mae.csv")
+    print("     - plots/")
     print("=" * 80)
 
 

@@ -249,7 +249,7 @@ def main():
     ap.add_argument("--instances", type=int, default=8)
     ap.add_argument("--candidates", type=int, default=16, help="per family (T1)")
     ap.add_argument("--lambda-e", type=float, default=0.5,
-                    help="weight of the energy EXCESS above e_ref (rebalanced E20c)")
+                    help="weight of the energy EXCESS above e_ref")
     ap.add_argument("--plan-beta", type=float, default=BETA,
                     help="T2b: beta BELIEVED by the planner (true=0.5) - controlled model error")
     ap.add_argument("--e-ref", type=float, default=0.80,

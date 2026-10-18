@@ -347,10 +347,10 @@ def main():
     ap.add_argument("--ttm-revision", default="1024-96-r3",
                     help="HF revision (context-horizon) - main = reinitialized head!")
     ap.add_argument("--calibrate-T", action="store_true",
-                    help="calibrate T per series on past context sub-windows (G12a)")
+                    help="calibrate T per series on past context sub-windows")
     ap.add_argument("--cal-windows", type=int, default=2)
     ap.add_argument("--centered-bootstrap", action="store_true",
-                    help="G12c: hybrid_ttm pool centered on the proposer - "
+                    help="hybrid_ttm pool centered on the proposer - "
                          "seasonal-innovation bootstrap GLUED onto the TTM "
                          "path (anti-dilution by construction), drift out of "
                          "the pool")

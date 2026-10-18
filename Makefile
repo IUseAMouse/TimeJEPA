@@ -22,7 +22,7 @@ install: ## Install dependencies in editable mode
 	uv venv
 	source .venv/bin/activate
 	uv pip install -e ".[dev]"
-	@echo "✓ Installation complete. Activate venv with: source .venv/bin/activate"
+	@echo "Installation complete. Activate venv with: source .venv/bin/activate"
 
 ##@ Data
 
@@ -33,51 +33,51 @@ download-data: ## Download dataset (usage: make download-data DATASET=electricit
 	python scripts/download_data.py --dataset $(or $(DATASET),electricity) -v
 
 download-all: ## Download all datasets
-	@echo "📥 Downloading all datasets..."
+	@echo "Downloading all datasets..."
 	python scripts/download_data.py --dataset all -v
-	@echo "✓ Download complete!"
+	@echo "Download complete!"
 
 lotsa-list: ## Inventory LOTSA subsets and show what would be EXCLUDED (writes nothing)
-	@echo "🔎 LOTSA inventory — review the exclusion list before converting"
+	@echo "LOTSA inventory: review the exclusion list before converting"
 	python scripts/prepare_lotsa.py --list
 
 lotsa-download: ## Convert LOTSA to the TimeJEPA format (usage: make lotsa-download [CHUNKS=30000] [OUT=data/processed/lotsa])
-	@echo "📥 Converting LOTSA (this is long — streaming, constant RAM)"
-	@echo "   ⚠️  ~250 MB per subset at CHUNKS=30000 (chunk length 2048)."
+	@echo "Converting LOTSA (this is long: streaming, constant RAM)"
+	@echo "   Warning: ~250 MB per subset at CHUNKS=30000 (chunk length 2048)."
 	@echo "      123 subsets => ~30 GB. Raise CHUNKS for a larger corpus."
-	@echo "   ⚠️  --resume is always on: existing files are NEVER reconverted."
+	@echo "   Warning: --resume is always on: existing files are NEVER reconverted."
 	@echo "      To GROW the corpus (higher CHUNKS), point OUT at a NEW directory:"
 	@echo "        make lotsa-download CHUNKS=1000000 OUT=data/processed/lotsa_full"
-	@echo "   ⚠️  Re-read the EXCLUDED list it prints: pretraining on an eval"
+	@echo "   Warning: re-read the EXCLUDED list it prints: pretraining on an eval"
 	@echo "      benchmark would invalidate every number in the project."
 	python scripts/prepare_lotsa.py \
 		--out $(or $(OUT),data/processed/lotsa) \
 		--max-chunks-per-subset $(or $(CHUNKS),30000) \
 		--resume
-	@echo "✓ LOTSA ready — pretrain with: make train CONFIG=lotsa_tiny"
+	@echo "LOTSA ready. Pretrain with: make train CONFIG=lotsa_tiny"
 
 gift-download: ## Download the GIFT-Eval benchmark data (~a few GB, once)
-	@echo "📥 Downloading Salesforce/GiftEval to data/gift_eval"
+	@echo "Downloading Salesforce/GiftEval to data/gift_eval"
 	hf download Salesforce/GiftEval --repo-type=dataset --local-dir data/gift_eval \
 		|| huggingface-cli download Salesforce/GiftEval --repo-type=dataset --local-dir data/gift_eval
-	@echo "✓ GIFT-Eval ready — evaluate with: python scripts/evaluate_gift.py"
+	@echo "GIFT-Eval ready. Evaluate with: python scripts/evaluate_gift.py"
 
 count-data: ## Count total datapoints in processed datasets
-	@echo "📊 Counting datapoints..."
+	@echo "Counting datapoints..."
 	python scripts/compute_dataset_stats.py --data-dir data
 
 ##@ Training
 
 train: ## Pretrain model (usage: make train CONFIG=base)
 	@if [ -z "$(CONFIG)" ]; then \
-		echo "❌ Error: CONFIG is not set."; \
+		echo "Error: CONFIG is not set."; \
 		echo "Usage: make train CONFIG=tiny|small|base|large"; \
 		echo ""; \
 		echo "Available configs:"; \
 		ls -1 configs/model/*.yaml 2>/dev/null | xargs -I {} basename {} .yaml | sed 's/^/  - /'; \
 		exit 1; \
 	fi
-	@echo "🚀 Starting pretraining with config: $(CONFIG)"
+	@echo "Starting pretraining with config: $(CONFIG)"
 	python scripts/train.py --config-name $(CONFIG) $(ARGS)
 
 
@@ -85,11 +85,11 @@ train: ## Pretrain model (usage: make train CONFIG=base)
 
 finetune: ## Linear Probe: Freeze encoder, train decoder only
 	@if [ -z "$(CHECKPOINT)" ]; then \
-		echo "❌ Error: CHECKPOINT is not set."; \
+		echo "Error: CHECKPOINT is not set."; \
 		echo "Usage: make finetune-linear CHECKPOINT=checkpoints/model.ckpt [CONFIG=tiny] [STRIDE=48] [EPOCHS=40] [LR=1e-4]"; \
 		exit 1; \
 	fi
-	@echo "🧊 Starting Linear Probe (encoder frozen)"
+	@echo "Starting Linear Probe (encoder frozen)"
 	@echo "   Checkpoint: $(CHECKPOINT)"
 	python scripts/train.py --config-name $(or $(CONFIG),tiny) \
         training.mode=finetune \
@@ -107,7 +107,7 @@ finetune: ## Linear Probe: Freeze encoder, train decoder only
 
 evaluate: ## Evaluate trained model (usage: make evaluate CHECKPOINT=path/to/ckpt)
 	@if [ -z "$(CHECKPOINT)" ]; then \
-		echo "❌ Error: CHECKPOINT is not set."; \
+		echo "Error: CHECKPOINT is not set."; \
 		echo "Usage: make evaluate CHECKPOINT=checkpoints/model.ckpt [DATASET=electricity]"; \
 		exit 1; \
 	fi
@@ -117,12 +117,12 @@ evaluate: ## Evaluate trained model (usage: make evaluate CHECKPOINT=path/to/ckp
 
 clean-data: ## Remove downloaded and processed data (WARNING: destructive)
 	rm -rf data/raw/ data/processed/
-	@echo "⚠️  Data removed. Run 'make download-all' to re-download."
+	@echo "Data removed. Run 'make download-all' to re-download."
 
 clean-checkpoints: ## Remove all checkpoints (WARNING: destructive)
-	@echo "⚠️  This will delete ALL checkpoints!"
+	@echo "Warning: this will delete ALL checkpoints!"
 	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	rm -rf checkpoints/ lightning_logs/
-	@echo "✓ Checkpoints removed."
+	@echo "Checkpoints removed."
 
 clean-all: clean clean-data ## Remove all generated files (keeps checkpoints)

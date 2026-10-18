@@ -290,7 +290,7 @@ def main():
     ap.add_argument("--judge-checkpoint", default=None,
                     help="required unless --ttm-only")
     ap.add_argument("--ttm-only", action="store_true",
-                    help="cross-validation of the TTM claim (2026-08-31): raw "
+                    help="cross-validation of the TTM claim: raw "
                          "TTM on the FULL windows, no judge, aggregated vs "
                          "local AND official SN. Its MASE compares to the "
                          "0.7240 of the leaderboard CSV; the gap measures "
@@ -310,7 +310,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--proposer", choices=("ttm", "self"), default="ttm",
                     help="'self' = OUR finetuned champion proposes (fan "
-                         "trajectories + MC-dropout paths, the measured E18d "
+                         "trajectories + MC-dropout paths, the same "
                          "pool recipe) and the pretrain judge reranks; no "
                          "external model involved, granite-tsfm not needed")
     ap.add_argument("--proposer-checkpoint", default=None,
@@ -322,11 +322,11 @@ def main():
                     help="apply the champion's RateIN layer (per-series "
                          "causal backtest k) to the proposer fan")
     ap.add_argument("--temperature", type=float, default=1.0,
-                    help="Gibbs T on standardized energies (P-SH.3 control: "
-                         "small T concentrates mass on the best candidates, "
-                         "the anti-dilution knob measured in E18e)")
+                    help="Gibbs T on standardized energies: small T "
+                         "concentrates mass on the best candidates "
+                         "(anti-dilution)")
     ap.add_argument("--centered-bootstrap", action="store_true",
-                    help="G12c: seasonal-innovation bootstrap glued onto the "
+                    help="seasonal-innovation bootstrap glued onto the "
                          "TTM path (anti-dilution by construction)")
     ap.add_argument("--ttm-flip", action="store_true",
                     help="sign-flip mirror on the TTM proposer (TTA layer 1)")

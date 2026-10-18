@@ -59,8 +59,6 @@ class Patching(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(-1)  # [B, L, 1]
         
-        num_features = x.shape[-1]
-        
         if self.padding:
             remainder = (seq_len - self.patch_size) % self.stride
             if remainder != 0:

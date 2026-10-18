@@ -108,7 +108,7 @@ def main():
     ap.add_argument("--min-length", type=int, default=1280,
                     help="Shorter series ignored (= required window).")
     ap.add_argument("--pad-to", type=int, default=None,
-                    help="v3 corpus, short series (G7.1/S2): LEFT-pads every "
+                    help="v3 corpus, short series: LEFT-pads every "
                          "accepted chunk up to this length (first value "
                          "repeated) - the target stays real, the 'flat then "
                          "data' context is the short-series eval condition. "
@@ -121,8 +121,7 @@ def main():
                          "3x the per-subset cap. Essential because cmip6 (33 "
                          "yearly slices) and era5 (30) are 63 of the 123 "
                          "subsets: without this cap, half the corpus would be "
-                         "climate reanalysis. E10 already measured this "
-                         "imbalance at smaller scale.")
+                         "climate reanalysis.")
     ap.add_argument("--subsets", nargs="*", default=None,
                     help="Restrict to these subsets (default: all).")
     ap.add_argument("--subsets-from", type=Path, default=None,
