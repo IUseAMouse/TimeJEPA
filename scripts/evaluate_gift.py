@@ -33,15 +33,77 @@ three artifacts under evaluation/<model>/<ckpt>/gift/:
 MSIS is reported as NaN: it needs the 0.025/0.975 quantiles and the decoder's
 grid is the leaderboard's nine 0.1..0.9 levels. The leaderboard aggregate does
 not use MSIS.
+
+Flags (`+key=value`; any other `+key` is refused, see KNOWN_FLAGS). Each
+inference variant writes to its own gift<tag> directory.
+
+  Run
+    checkpoint_path          checkpoint to evaluate (exclusive with model.external)
+    gift_data_dir            benchmark root (default data/gift_eval)
+    gift_configs             comma-separated subset of configs
+    gift_terms               short, medium or long only
+    gift_max_series          first N series per config (debug)
+    gift_batch_size          forward batch size (default 64)
+    max_context              context cap in steps (default: the model's input length)
+    seed                     seed of the refinement noise and of test-time training
+  Test-time augmentation
+    tta_flip                 average with the sign-flip mirror
+    tta_lookbacks            '512,1024': average over context lengths
+    tta_shifts               '2,4,6': average over origins t-s; shifts outside 0 < s < h are dropped
+    quantile_gamma           JSON of per-level widening factors (scripts/calibrate_quantiles.py)
+  RateIN (src/timejepa/evaluation/ratein.py)
+    ratein                   off | fft (alias true): period-based k per instance
+                             | backtest (alias bt): one k per config, causal backtest
+                             | mix: per-config weighted mix of k, weights from the backtest
+                             | energy: per-config k minimizing the JEPA energy (+energy_ckpt)
+                             | delta: backtest k applied as w = 1/k on the model's rate knob
+                             | oracle: per-config sweep scored on the test set (diagnostic)
+    ratein_pool              backtest ratio table pooled like the CRPS (sum over
+                             series) instead of a geometric mean over series
+    ratein_k_up              upsampling factors m, candidates k = 1/m, written 2x3x4
+    ratein_min_bt            shortest backtest horizon (default 16)
+    ratein_bt_windows        backtest windows per series (default 2)
+    ratein_mix_tau           temperature of the mix weights (default MIX_TAU = 0.05)
+    ratein_delta_max_k       with +ratein=delta: the knob up to this k, decimation beyond
+    ratein_w                 FiLM on w = 1/k for decimated buckets with k <= 4
+                             (cross-resolution models only)
+    freq_delta               Delta tied to each config's declared frequency (rate-knob
+                             models); composes with RateIN by resampling
+    energy_ckpt              pretrain checkpoint used as the energy judge
+    energy_config            config of that checkpoint (default: the evaluated one)
+  Refinement of the fan along the energy
+    refine                   energy | ceiling (descends the true pinball, diagnostic)
+    refine_steps             maximum number of steps (default 8)
+    refine_alpha             step size (default 0.1)
+    refine_eps               stopping tolerance (default 1e-3)
+    refine_noise             noise added to each step (default 0)
+    refine_energy            cos | mse (default cos)
+    refine_target            center | fan (default center)
+    refine_judge             self | ckpt (the +energy_ckpt judge)
+    refine_step              norm | raw (default norm: alpha is the largest displacement per step)
+    refine_contextualized    contextualized targets in the energy
+  Level and spread corrections
+    bias                     backtest (causal level bias of the center) | oracle (diagnostic)
+    bias_lambdas             '0.25,0.5,1': shrink candidates validated on the backtest
+    spread                   backtest: one scale of the fan around its median per config
+    spread_grid              '0.8,0.9,1.1,1.25,1.5,2': candidate scales
+  Test-time training (JEPA models)
+    ttt                      norm (LayerNorm/RevIN affine) | all (encoder + predictor)
+    ttt_steps                adaptation steps (default 16)
+    ttt_lr                   learning rate (default 1e-3 norm, 1e-5 all)
+    ttt_gate                 keep the adaptation only if it lowers the backtest pinball (default true)
+    ttt_margin               relative margin of that gate (default 0.01)
 """
 
 import json
 import logging
 import math
+import re
 import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Optional
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -73,7 +135,7 @@ for _noisy in ("datasets", "huggingface_hub", "fsspec", "filelock", "urllib3"):
 # ---------------------------------------------------------------------------
 
 def prepare_context(past: np.ndarray, max_len: int, stride: int,
-                    min_len: int, keep_nan: bool = False) -> np.ndarray:
+                    min_len: int, keep_nan: bool = False) -> Optional[np.ndarray]:
     """
     Turn a raw past into a model-ready context.
 
@@ -86,6 +148,8 @@ def prepare_context(past: np.ndarray, max_len: int, stride: int,
       otherwise right-pad by repeating the final value, i.e. fabricate
       observations after the true last point, exactly where they hurt most;
     * series shorter than `min_len` (one patch) are edge-padded on the left.
+
+    Returns None when the context has no finite value.
     """
     ctx = np.asarray(past[-max_len:], dtype=np.float32)
 
@@ -138,8 +202,8 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
       * `shifts`: for each s, a variant forecasts from origin t-s (the s most
         recent points removed, length re-aligned on the stride, so the
         patch-grid phase changes); its forecast is realigned onto the horizon
-        and averaged per position with a coverage mask. Small s (1..7, less
-        than one patch of staleness) is recommended.
+        and averaged per position with a coverage mask. Only 0 < s < h is
+        used; other shifts are dropped.
     A scale variant f(kx)/k would be an exact no-op under RobustScale+RevIN
     (median and MAD are 1-homogeneous); the sign is the only affine-group
     element not quotiented out by normalization, hence the flip.
@@ -242,7 +306,8 @@ def apply_quantile_gamma(out: dict, gamma) -> dict:
 
 
 def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
-    """Mean pinball loss (GluonTS x2 convention, no effect on the argmin)."""
+    """Mean pinball loss over steps and levels (without the GluonTS x2
+    factor, which does not change an argmin or a ratio)."""
     d = y[:, None] - fan
     q = np.asarray(levels, dtype=np.float64)
     return float(np.mean(np.maximum(q * d, (q - 1.0) * d)))
@@ -294,29 +359,23 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     """
     REL_MARGIN = 0.05
     N_BT_WINDOWS = int(n_bt_windows)
-    # RateIN-up: `min_bt` < 16 lets the backtest run on the short horizons
-    # (A 6, Q 8, W 8-13, M 12), and `k_candidates` may carry k = 1/m
-    # (upsampling), see ratein.upsample.
+    # `min_bt` < 16 lets the backtest run on the short horizons (A 6, Q 8,
+    # W 8-13, M 12), and `k_candidates` may carry k = 1/m (upsampling), see
+    # ratein.upsample.
     candidates = tuple(k_candidates) if k_candidates else ratein_mod.K_CANDIDATES
-    ks = {}
     entries = []                                    # (idx, sub_hist, known)
     for idx, y in enumerate(series):
         past = y[:len(y) - windows * h]             # before ANY test target
         avail = len(past) - 4 * patch
         h_bt = min(h, avail)
         if h_bt < min_bt:
-            ks[idx] = 1
             continue
-        got = 0
         for j in range(1, min(N_BT_WINDOWS, avail // h_bt) + 1):
             lo = len(past) - j * h_bt
             sub_hist, known = past[:lo], past[lo:lo + h_bt]
             if not np.isfinite(known).all():
                 continue
             entries.append((idx, sub_hist, known))
-            got += 1
-        if got == 0:
-            ks[idx] = 1
 
     scores = defaultdict(lambda: defaultdict(list))
     for k in candidates:
@@ -335,7 +394,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
             # also carries h_fc so each batch stays homogeneous.
             h_fc_k = len(known) if knob_k else ratein_mod.fc_horizon(len(known), k)
             buckets[(len(ctx), h_fc_k)].append((idx, ctx, known))
-        for (length, h_fc), items in buckets.items():
+        for (_, h_fc), items in buckets.items():
             for i in range(0, len(items), batch_size):
                 chunk = items[i:i + batch_size]
                 batch = torch.from_numpy(np.stack([c[1] for c in chunk]))
@@ -413,7 +472,7 @@ def _backtest_bias(model, series, h: int, windows: int, max_len: int,
         buckets[(len(ctx), len(known))].append((idx, j, ctx, sub_hist, known))
     per_series = defaultdict(dict)                  # idx -> j -> record
     levels_seen = None
-    for (length, h_bt), items in buckets.items():
+    for (_, h_bt), items in buckets.items():
         for i in range(0, len(items), batch_size):
             chunk = items[i:i + batch_size]
             batch = torch.from_numpy(np.stack([c[2] for c in chunk]))
@@ -574,7 +633,7 @@ def _energy_series_k(judge, series, h: int, windows: int, max_len: int,
             if ctx is None:
                 continue
             buckets[len(ctx)].append((idx, ctx, hist[-n_e:]))
-        for length, items in buckets.items():
+        for _, items in buckets.items():
             for i in range(0, len(items), batch_size):
                 chunk = items[i:i + batch_size]
                 x_ctx = torch.from_numpy(np.stack([c[1] for c in chunk]))
@@ -616,11 +675,9 @@ def _energy_series_k(judge, series, h: int, windows: int, max_len: int,
     return {idx: K for idx in range(len(series))}, diag
 
 
-# RateIN-mix: a hard selection loses to missed k, wrong k and false
-# positives in comparable shares, so no margin setting can win. Mixing
-# addresses all three at once: no threshold, no argmin, k=1 keeps weight. The
-# temperature equals the old margin: a k that beats k=1 by exactly the margin
-# gets weight e vs 1.
+# RateIN-mix: per-config weights over k, a softmax over -log(ratio) / T with
+# k=1 kept at ratio 1; the default T equals the backtest margin, so a k that
+# beats k=1 by that margin gets about e times the weight of k=1.
 MIX_TAU = 0.05
 MIX_MIN_WEIGHT = 0.02
 MIX_MAX_COMPONENTS = 4
@@ -719,7 +776,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                             n_bt_windows=ratein_bt_windows,
                                             freq_season=freq_season)
         if ratein_mode == "mix":
-            # The hard per-series choice is replaced by per-config weights.
+            # The single per-config k is replaced by per-config weights over k.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"], tau=ratein_mix_tau), None
     if ratein_mode == "energy" and not forced_k:
         bt_ks, bt_diag = _energy_series_k(energy_judge, series, h, windows,
@@ -784,8 +841,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             n_inst += 1
             continue
         # RateIN: k is a causal statistic of the past, one uniform rule across
-        # the 97 configs. forced_k is the oracle mode (diagnostic, never
-        # official).
+        # the 97 configs. forced_k is the oracle mode (a diagnostic that looks
+        # at the test set).
         if forced_k:
             k = forced_k
         elif bt_ks is not None:
@@ -812,8 +869,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         k_hist[k] += 1
         n_inst += 1
 
-    for (length, k), items in sorted(buckets.items()):
-        # RateIN x w (gated flag): context decimated by k, fan requested
+    for (_, k), items in sorted(buckets.items()):
+        # +ratein_w: context decimated by k, fan requested
         # directly at native rate via w = 1/k, no re-interpolation.
         # Extrapolation guard: the FiLM only saw log2(w) within the training
         # factor range ([1,2,4] -> [-2,2]); beyond ratein_w_max_k, fall back
@@ -870,7 +927,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             if quants is not None:
                 mix_mid = mid
             for b, item in enumerate(chunk):
-                ctx, target, past, scale = item[:4]
+                _, target, past, scale = item[:4]
                 if k != 1 and not use_w:
                     if quants is not None:
                         fan_nat = ratein_mod.to_native_fan(quants[b], h, k)
@@ -1141,33 +1198,9 @@ def main(cfg: DictConfig):
     batch_size = int(cfg.get("gift_batch_size", 64))
     max_series = int(cfg.get("gift_max_series", 0))
 
-    # TTA / long context, opt-in. Examples:
-    #   +max_context=2048                       (inference only)
-    #   +tta_lookbacks='512,1024'               (averaged multi-lookback)
-    #   +tta_flip=true                          (sign-flip mirror)
+    # Flags are documented in the module docstring.
     max_context = int(cfg.get("max_context", 0))
-    #   +ratein=fft   (alias true)             period detector v1
-    #   +ratein=backtest                        per-series k, causal backtest (v2)
-    #   +ratein=oracle                          k sweep, diagnostic: looks at
-    #                                           the test set, never official
     ratein_raw = str(cfg.get("ratein", "")).lower()
-    #   +ratein=mix                             per-config weighted mix of k
-    #                                           (quantile averaging, causal)
-    #   +ratein=energy +energy_ckpt=<pretrain>  k = argmin of the pretrain's
-    #                                           JEPA energy on the decimated
-    #                                           past (no forecast); optional
-    #                                           +energy_config=<eval config>
-    #   +ratein=delta                           RateIN-Delta: same backtest
-    #                                           selector, but k becomes w = 1/k
-    #                                           on the model's rate knob (LTI
-    #                                           SSM), no decimation, no
-    #                                           re-interpolation
-    #   +ratein_delta_max_k=4                   hybrid: the knob up to that k,
-    #                                           decimation beyond (the knob's
-    #                                           trained range)
-    #   +ratein_pool=true                       ratio table pooled like the
-    #                                           CRPS (sum over series) instead
-    #                                           of a per-series geomean
     ratein_mode_val = {"true": "fft", "1": "fft", "on": "fft", "fft": "fft",
                        "backtest": "backtest", "bt": "backtest",
                        "mix": "mix", "energy": "energy",
@@ -1187,21 +1220,12 @@ def main(cfg: DictConfig):
         raise ValueError("+ratein_delta_max_k needs +ratein=delta")
     if ratein_pool and ratein_mode_val not in ("backtest", "mix", "energy", "delta"):
         raise ValueError("+ratein_pool needs +ratein=backtest/mix/energy/delta")
-    #   +ratein_k_up=2x3x4      RateIN-up: upsampling candidates k = 1/m for the
-    #                           short cycles (12 monthly, 52 weekly on ~150
-    #                           points) the [16, 48] band never reached
-    #   +ratein_min_bt=4        backtest allowed down to h_bt >= 4 (default 16: off
-    #                           on A/Q/W and the M configs at h = 12)
-    #   +ratein_bt_windows=4    backtest windows (default 2; more on short h)
     # Separator: "x" or "-" as well as ",": an unquoted `+ratein_k_up=2,3,4` is
     # a sweep for Hydra. Write +ratein_k_up=2x3x4 (or quote: '+ratein_k_up="2,3,4"').
-    import re as _re
-    ratein_k_up = ([int(x) for x in _re.split(r"[,x\-]", str(cfg.ratein_k_up)) if x]
+    ratein_k_up = ([int(x) for x in re.split(r"[,x\-]", str(cfg.ratein_k_up)) if x]
                    if cfg.get("ratein_k_up") else [])
     ratein_min_bt = int(cfg.get("ratein_min_bt", 16) or 16)
     ratein_bt_windows = int(cfg.get("ratein_bt_windows", 2) or 2)
-    #   +ratein_mix_tau=0.03    temperature of the mix weights (default MIX_TAU = 0.05):
-    #                           lower = closer to a hard choice, higher = flatter mix
     ratein_mix_tau = float(cfg.get("ratein_mix_tau", MIX_TAU) or MIX_TAU)
     if ratein_mix_tau != MIX_TAU and ratein_mode_val != "mix":
         raise ValueError("+ratein_mix_tau needs +ratein=mix")
@@ -1213,21 +1237,7 @@ def main(cfg: DictConfig):
                          "+ratein=backtest/mix/delta")
     if ratein_mode_val == "energy" and not cfg.get("energy_ckpt"):
         raise ValueError("+ratein=energy needs +energy_ckpt=<pretrain checkpoint>")
-    #   +refine=energy|ceiling                  inference refinement of the
-    #                                           fan's center down the energy
-    #                                           (ceiling = true pinball, a
-    #                                           diagnostic, never official)
-    #   +refine_steps=8 +refine_alpha=0.1 +refine_eps=1e-3 +refine_noise=0
-    #   +refine_target=center|fan +refine_judge=self|ckpt (+energy_ckpt)
-    #   +refine_step=norm|raw (norm: alpha = largest displacement per step,
-    #                          the box N*alpha is the same for both modes)
     refine_spec, refine_judge_kind, refine_tag = parse_refine_flags(cfg)
-    #   +bias=backtest                          BiasIN: causal level-bias correction
-    #                                           of the center from the backtest
-    #                                           windows (official)
-    #   +bias=oracle                            constant per-instance shift from the
-    #                                           target (diagnostic, never official)
-    #   +bias_lambdas='0.25,0.5,1'              shrink candidates validated causally
     bias_mode = str(cfg.get("bias", "off")).lower()
     if bias_mode not in ("off", "backtest", "oracle"):
         raise ValueError(f"unknown +bias={bias_mode!r} (backtest, oracle)")
@@ -1236,19 +1246,11 @@ def main(cfg: DictConfig):
     if bias_mode == "oracle":
         logger.warning("BIAS-ORACLE: shifts the center by the target's median residual - "
                        "a diagnostic bound on the level drift, never official")
-    #   +spread=backtest                        SpreadIN: one scale of the fan around
-    #                                           its median per config, chosen on the
-    #                                           backtest windows (official)
-    #   +spread_grid='0.8,0.9,1.1,1.25,1.5,2'   candidate scales
     spread_mode = str(cfg.get("spread", "off")).lower()
     if spread_mode not in ("off", "backtest"):
         raise ValueError(f"unknown +spread={spread_mode!r} (backtest)")
     spread_grid = ([float(x) for x in str(cfg.spread_grid).split(",")]
                    if cfg.get("spread_grid") else None)
-    #   +ttt=norm|all                           JEPA test-time adaptation on the
-    #                                           lookbacks (params: LayerNorm/RevIN
-    #                                           affine, or encoder + predictor)
-    #   +ttt_steps=16 +ttt_lr=<1e-3 norm, 1e-5 all> +ttt_gate=true +ttt_margin=0.01
     ttt_spec = None
     ttt_params = str(cfg.get("ttt", "off")).lower()
     if ttt_params not in ("off", "norm", "all"):
@@ -1261,9 +1263,9 @@ def main(cfg: DictConfig):
     if refine_spec is not None and refine_spec.mode == "ceiling":
         logger.warning("REFINE-CEILING: descends the TRUE target - a diagnostic "
                        "bound on what refinement can give, never an official number")
-    # RateIN x w (gated): +ratein_w=true, fan at native rate via w=1/k on
-    # decimated buckets (k <= 4). Requires a cross_resolution model and an
-    # active ratein mode (without decimation, w=1 everywhere is a no-op).
+    # +ratein_w: fan at native rate via w=1/k on decimated buckets (k <= 4).
+    # Requires a cross_resolution model and an active ratein mode (without
+    # decimation, w=1 everywhere is a no-op).
     ratein_w = str(cfg.get("ratein_w", "")).lower() in ("true", "1", "on")
     if ratein_w and not (ratein_on or ratein_oracle):
         raise ValueError("+ratein_w requires +ratein=backtest/fft/oracle "
@@ -1271,13 +1273,8 @@ def main(cfg: DictConfig):
     tta_lookbacks = ([int(x) for x in str(cfg.tta_lookbacks).split(",")]
                      if cfg.get("tta_lookbacks") else None)
     tta_flip = bool(cfg.get("tta_flip", False))
-    #   +tta_shifts='2,4,6'  (translation: origins t-s realigned, s < stride
-    #                         recommended, less than one patch of staleness)
     tta_shifts = ([int(x) for x in str(cfg.tta_shifts).split(",")]
                   if cfg.get("tta_shifts") else None)
-    #   +quantile_gamma='evaluation/calibration/gamma_<ckpt>.json'
-    #   (per-level widening factors, calibrated on the finetune corpus by
-    #    scripts/calibrate_quantiles.py; a paper ablation)
     quantile_gamma, gamma_tag = None, ""
     if cfg.get("quantile_gamma"):
         gpath = _resolve_data_file(str(cfg.quantile_gamma))
@@ -1318,10 +1315,8 @@ def main(cfg: DictConfig):
         tag += "_flip"
     if ratein_w and getattr(model.predictor, "w_film", None) is None:
         raise ValueError("+ratein_w requires a cross_resolution model "
-                         "(no w FiLM in the predictor - xres config)")
-    #   +freq_delta=true        Delta tied to the declared frequency of each config
-    #                           (w = 24 / season, data/frequency.py, FlowState's rule);
-    #                           composes with RateIN by decimation. Tag _fdelta.
+                         "(no w FiLM in the predictor)")
+    # +freq_delta: w = 24 / season (data/frequency.py, FlowState's rule).
     freq_delta = bool(cfg.get("freq_delta", False))
     check_model_flags(model, ratein_mode_val, ratein_w, refine_spec, ttt_spec, freq_delta)
     if getattr(model, "expects_frequency", False) and not freq_delta:
@@ -1536,8 +1531,8 @@ def main(cfg: DictConfig):
         fr = [r["ratein"]["frac_k_gt1"] for r in results.values()
               if "ratein" in r]
         n_active = sum(1 for f in fr if f > 0.5)
-        logger.info(f"  RateIN: {n_active}/{len(fr)} configs mostly "
-                    f"decimated | share of k>1 instances (mean): "
+        logger.info(f"  RateIN: {n_active}/{len(fr)} configs with "
+                    f"mostly k>1 | share of k>1 instances (mean): "
                     f"{float(np.mean(fr)):.1%}")
     bss = [r["bias"] for r in results.values() if "bias" in r]
     if bss:
@@ -1584,9 +1579,7 @@ def main(cfg: DictConfig):
             logger.info(f"    {c}: {g:+.1%} (best_k="
                         f"{results[c]['oracle']['best_k']})")
         if not big:
-            logger.info("    NONE -> P-RIN diagnostic failure: scale "
-                        "geometry is not the tail mechanism; G9.3/xres "
-                        "not funded.")
+            logger.info("    none: no config gains more than 5% with its best k")
     logger.info(f"Results: {out_dir}")
 
 
