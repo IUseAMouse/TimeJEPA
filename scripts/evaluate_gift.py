@@ -682,7 +682,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
-                    ttt_spec=None, per_instance=None) -> dict:
+                    ttt_spec=None, per_instance=None, clip_nonneg: bool = False) -> dict:
     h = gift.prediction_length(config)
     freq = config.split("/")[1]
     m = gift.seasonality(freq)
@@ -896,6 +896,14 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                    if levels is not None and quants is not None
                    else (quants.shape[-1] // 2 if quants is not None else 0))
 
+            if clip_nonneg:
+                # +clip_nonneg: a series whose whole past is >= 0 gets no forecast below 0
+                # (median and every quantile, before any re-interpolation, which keeps the sign).
+                nonneg = np.array([bool(np.isfinite(c[2]).any() and np.nanmin(c[2]) >= 0)
+                                   for c in chunk])
+                median[nonneg] = np.maximum(median[nonneg], 0.0)
+                if quants is not None:
+                    quants[nonneg] = np.maximum(quants[nonneg], 0.0)
             if quants is not None:
                 mix_mid = mid
             for b, item in enumerate(chunk):
@@ -1089,7 +1097,7 @@ KNOWN_FLAGS = frozenset((
     "freq_delta", "dump_per_k",
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
-    "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts",
+    "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts", "clip_nonneg",
     "bias", "bias_lambdas", "spread", "spread_grid",
     "ttt", "ttt_steps", "ttt_lr", "ttt_gate", "ttt_margin",
 ))
@@ -1189,6 +1197,7 @@ def main(cfg: DictConfig):
     #   +max_context=2048                       (inference only)
     #   +tta_lookbacks='512,1024'               (averaged multi-lookback)
     #   +tta_flip=true                          (sign-flip mirror)
+    #   +clip_nonneg=true                       (no forecast below 0 when the past is >= 0; tag _clip0)
     max_context = int(cfg.get("max_context", 0))
     #   +ratein=fft   (alias true)             period detector v1
     #   +ratein=backtest                        per-series k, causal backtest (v2)
@@ -1361,6 +1370,9 @@ def main(cfg: DictConfig):
         tag += "_lb" + "-".join(str(x) for x in tta_lookbacks)
     if tta_flip:
         tag += "_flip"
+    clip_nonneg = bool(cfg.get("clip_nonneg", False))
+    if clip_nonneg:
+        tag += "_clip0"
     if ratein_w and getattr(model.predictor, "w_film", None) is None:
         raise ValueError("+ratein_w requires a cross_resolution model "
                          "(no w FiLM in the predictor - xres config)")
@@ -1484,7 +1496,8 @@ def main(cfg: DictConfig):
                                           spread_mode=spread_mode,
                                           spread_grid=spread_grid,
                                           ttt_spec=ttt_spec,
-                                          per_instance=dump_rows)
+                                          per_instance=dump_rows,
+                                          clip_nonneg=clip_nonneg)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
@@ -1528,7 +1541,8 @@ def main(cfg: DictConfig):
                                       bias_lambdas=bias_lambdas,
                                       spread_mode=spread_mode,
                                       spread_grid=spread_grid,
-                                      ttt_spec=ttt_spec)
+                                      ttt_spec=ttt_spec,
+                                      clip_nonneg=clip_nonneg)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return
