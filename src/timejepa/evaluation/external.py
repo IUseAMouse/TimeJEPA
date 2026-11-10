@@ -39,9 +39,8 @@ below what this environment needs.
 """
 
 from types import SimpleNamespace
-from typing import List, Optional, Sequence
+from typing import Optional
 
-import numpy as np
 import torch
 
 LEVELS = tuple(round(0.1 * j, 1) for j in range(1, 10))

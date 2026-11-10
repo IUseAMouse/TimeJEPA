@@ -16,7 +16,7 @@ test-time-training choice) and 'all' (encoder + predictor).
 """
 
 import copy
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import torch

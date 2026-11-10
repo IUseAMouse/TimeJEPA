@@ -6,8 +6,6 @@ lands in one place.
 """
 
 import logging
-from pathlib import Path
-from typing import Optional
 
 import torch
 from omegaconf import DictConfig
@@ -106,7 +104,7 @@ def load_checkpoint(
     raises RuntimeError instead of warning. The only legitimate mismatch is
     the decoder swap (point head to quantile head); an encoder or predictor
     mismatch would score freshly initialised weights. `allow_partial=True`
-    is a manual-debugging escape hatch; no config sets it.
+    lifts the refusal; only the energy judge of +ratein=energy uses it.
     """
     logger.info(f"Loading checkpoint: {checkpoint_path}")
 

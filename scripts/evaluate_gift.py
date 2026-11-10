@@ -162,7 +162,7 @@ def tta_forecast(model, batch: torch.Tensor, h: int,
     outs = []                                  # (output, shift s)
     for lb in looks:
         for s in shift_list:
-            ctx = batch[:, -lb:L - s if s else None] if s else batch[:, -lb:]
+            ctx = batch[:, -lb:L - s] if s else batch[:, -lb:]
             # stride re-alignment: trim on the left, never on the right
             # (Patching's padding would fabricate points after the origin)
             trim = ctx.shape[1] % stride
@@ -248,6 +248,27 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
     return float(np.mean(np.maximum(q * d, (q - 1.0) * d)))
 
 
+def _backtest_windows(series, h: int, windows: int, patch: int, n_windows: int,
+                      min_bt: int) -> list:
+    """Backtest windows before the first test target, (idx, j, sub_hist, known)
+    with j = 1 the most recent. Horizon h_bt = min(h, past - 4 patches); a
+    series with h_bt < min_bt has none, a window with a missing target is
+    skipped."""
+    entries = []
+    for idx, y in enumerate(series):
+        past = y[:len(y) - windows * h]             # before ANY test target
+        avail = len(past) - 4 * patch
+        h_bt = min(h, avail)
+        if h_bt < min_bt:
+            continue
+        for j in range(1, min(n_windows, avail // h_bt) + 1):
+            lo = len(past) - j * h_bt
+            sub_hist, known = past[:lo], past[lo:lo + h_bt]
+            if np.isfinite(known).all():
+                entries.append((idx, j, sub_hist, known))
+    return entries
+
+
 DELTA_RANGE = (1.0 / 48.0, 4.0)     # default trained range of the Delta knob (TimeSSM wide arm)
 
 
@@ -298,25 +319,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     # (A 6, Q 8, W 8-13, M 12), and `k_candidates` may carry k = 1/m
     # (upsampling), see ratein.upsample.
     candidates = tuple(k_candidates) if k_candidates else ratein_mod.K_CANDIDATES
-    ks = {}
-    entries = []                                    # (idx, sub_hist, known)
-    for idx, y in enumerate(series):
-        past = y[:len(y) - windows * h]             # before ANY test target
-        avail = len(past) - 4 * patch
-        h_bt = min(h, avail)
-        if h_bt < min_bt:
-            ks[idx] = 1
-            continue
-        got = 0
-        for j in range(1, min(N_BT_WINDOWS, avail // h_bt) + 1):
-            lo = len(past) - j * h_bt
-            sub_hist, known = past[:lo], past[lo:lo + h_bt]
-            if not np.isfinite(known).all():
-                continue
-            entries.append((idx, sub_hist, known))
-            got += 1
-        if got == 0:
-            ks[idx] = 1
+    entries = [(idx, sub_hist, known) for idx, _, sub_hist, known
+               in _backtest_windows(series, h, windows, patch, N_BT_WINDOWS, min_bt)]
 
     scores = defaultdict(lambda: defaultdict(list))
     for k in candidates:
@@ -352,7 +356,7 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 if q is None:
                     continue
                 levels = list(out.get("quantile_levels",
-                                      [0.1 * j for j in range(1, 10)]))
+                                      gift.QUANTILE_LEVELS))
                 q = q.cpu().numpy()
                 if q.ndim == 4:
                     q = q[..., 0]
@@ -391,20 +395,7 @@ def _backtest_bias(model, series, h: int, windows: int, max_len: int,
     older window's bias to the recent window's forecast (pooled pinball
     ratio, 5% margin, no-op otherwise). Strictly causal: the windows precede
     the first test target. Returns (betas {series_idx: beta}, diag)."""
-    N_BT_WINDOWS = 2
-    entries = []                                    # (idx, j, sub_hist, known)
-    for idx, y in enumerate(series):
-        past = y[:len(y) - windows * h]
-        avail = len(past) - 4 * patch
-        h_bt = min(h, avail)
-        if h_bt < 16:
-            continue
-        for j in range(1, min(N_BT_WINDOWS, avail // h_bt) + 1):
-            lo = len(past) - j * h_bt
-            sub_hist, known = past[:lo], past[lo:lo + h_bt]
-            if not np.isfinite(known).all():
-                continue
-            entries.append((idx, j, sub_hist, known))
+    entries = _backtest_windows(series, h, windows, patch, n_windows=2, min_bt=16)
     buckets = defaultdict(list)
     for idx, j, sub_hist, known in entries:
         ctx = prepare_context(sub_hist, max_len, stride, patch)
@@ -428,7 +419,7 @@ def _backtest_bias(model, series, h: int, windows: int, max_len: int,
                 if q.ndim == 4:
                     q = q[..., 0]
                 levels_seen = list(out.get("quantile_levels",
-                                           [0.1 * jj for jj in range(1, 10)]))
+                                           gift.QUANTILE_LEVELS))
             for b, (idx, j, _, sub_hist, known) in enumerate(chunk):
                 sc = biasin_mod.level_scale(sub_hist)
                 per_series[idx][j] = {
@@ -442,7 +433,7 @@ def _backtest_bias(model, series, h: int, windows: int, max_len: int,
         if 1 in wins and 2 in wins:
             records.append({"fan": wins[1]["fan"], "known": wins[1]["known"],
                             "beta_old": wins[2]["beta"], "scale": wins[1]["scale"]})
-    levels = levels_seen or [0.1 * jj for jj in range(1, 10)]
+    levels = levels_seen or gift.QUANTILE_LEVELS
     choice = biasin_mod.choose_shrink(records, levels, lambdas)
     finite = [b for b in betas.values() if np.isfinite(b)]
     diag = {"lambda": choice["lambda"], "ratios": choice["ratios"],
@@ -502,7 +493,7 @@ def _ttt_adapt_config(model, series, h: int, windows: int, max_len: int, stride:
     m_ad, st = ttt_mod.adapt(model, contexts, device, steps=spec["steps"], lr=spec["lr"],
                              params=spec["params"], batch_size=batch_size,
                              seed=spec.get("seed", 0))
-    diag.update({k: v for k, v in st.items()})
+    diag.update(st)
     return m_ad, diag
 
 
@@ -619,9 +610,10 @@ def _energy_series_k(judge, series, h: int, windows: int, max_len: int,
 # RateIN-mix: a hard selection loses to missed k, wrong k and false
 # positives in comparable shares, so no margin setting can win. Mixing
 # addresses all three at once: no threshold, no argmin, k=1 keeps weight. The
-# temperature equals the old margin: a k that beats k=1 by exactly the margin
-# gets weight e vs 1.
+# temperature equals the selection margin REL_MARGIN: a k that beats k=1 by
+# exactly that margin gets weight e vs 1.
 MIX_TAU = 0.05
+RATEIN_W_MAX_K = 4              # +ratein_w: largest k inside the FiLM's trained range
 MIX_MIN_WEIGHT = 0.02
 MIX_MAX_COMPONENTS = 4
 
@@ -672,7 +664,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     tta_flip: bool = False, tta_shifts=None,
                     quantile_gamma=None,
                     ratein_mode: str = "off", forced_k: int = 0,
-                    ratein_w: bool = False, ratein_w_max_k: int = 4,
+                    ratein_w: bool = False,
                     ratein_delta_max_k: int = 0,
                     ratein_pool: bool = False, energy_judge=None,
                     ratein_k_up=None, ratein_min_bt: int = 16,
@@ -694,13 +686,17 @@ def evaluate_config(model, config: str, gift_root: Path, device,
 
     model_acc = gift.MetricAccumulator()
     sn_acc = gift.MetricAccumulator()
+    # max_context may exceed model.input_length: the encoder is RoPE
+    # (length-agnostic), the predictor only depends on the number of target
+    # queries.
+    max_len = max_context or (model.input_length
+                              if hasattr(model, "input_length") else 1024)
     ttt_diag = None
     if ttt_spec:
         # JEPA test-time adaptation on the lookbacks, before anything else
         # (the backtest layers then see the adapted model).
         model, ttt_diag = _ttt_adapt_config(
-            model, series, h, windows,
-            max_context or (model.input_length if hasattr(model, "input_length") else 1024),
+            model, series, h, windows, max_len,
             model.patching.stride, model.patching.patch_size, device, batch_size, ttt_spec,
             tta_lookbacks=tta_lookbacks, tta_flip=tta_flip, tta_shifts=tta_shifts)
 
@@ -708,11 +704,6 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     # rectangular batch. Within a config almost everything lands in one bucket
     # (most series are longer than the 1024-step cap).
     buckets = defaultdict(list)
-    # max_context may exceed model.input_length: the encoder is RoPE
-    # (length-agnostic), the predictor only depends on the number of target
-    # queries.
-    max_len = max_context or (model.input_length
-                              if hasattr(model, "input_length") else 1024)
     stride = model.patching.stride
     n_inst = 0
     k_hist = Counter()
@@ -840,9 +831,9 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         # RateIN x w (gated flag): context decimated by k, fan requested
         # directly at native rate via w = 1/k, no re-interpolation.
         # Extrapolation guard: the FiLM only saw log2(w) within the training
-        # factor range ([1,2,4] -> [-2,2]); beyond ratein_w_max_k, fall back
+        # factor range ([1,2,4] -> [-2,2]); beyond RATEIN_W_MAX_K, fall back
         # to the standard decimate+reinterp path.
-        use_w = (ratein_w and 1 < k <= ratein_w_max_k) or (
+        use_w = (ratein_w and 1 < k <= RATEIN_W_MAX_K) or (
             use_delta and k != 1 and (ratein_delta_max_k <= 0 or k <= ratein_delta_max_k))
         # Decimated grid: h' = ceil(h/k) steps cover the native horizon
         # (fewer rollouts on long-term 10S/5T).
@@ -1199,8 +1190,8 @@ def main(cfg: DictConfig):
     #   +tta_flip=true                          (sign-flip mirror)
     #   +clip_nonneg=true                       (no forecast below 0 when the past is >= 0; tag _clip0)
     max_context = int(cfg.get("max_context", 0))
-    #   +ratein=fft   (alias true)             period detector v1
-    #   +ratein=backtest                        per-series k, causal backtest (v2)
+    #   +ratein=fft   (alias true)             per-series k from the FFT period
+    #   +ratein=backtest                        per-series k, causal backtest
     #   +ratein=oracle                          k sweep, diagnostic: looks at
     #                                           the test set, never official
     ratein_raw = str(cfg.get("ratein", "")).lower()
@@ -1666,9 +1657,7 @@ def main(cfg: DictConfig):
             logger.info(f"    {c}: {g:+.1%} (best_k="
                         f"{results[c]['oracle']['best_k']})")
         if not big:
-            logger.info("    NONE -> P-RIN diagnostic failure: scale "
-                        "geometry is not the tail mechanism; G9.3/xres "
-                        "not funded.")
+            logger.info("    NONE: no config gains more than 5 % from any k")
     logger.info(f"Results: {out_dir}")
 
 

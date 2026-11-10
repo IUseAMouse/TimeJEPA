@@ -18,9 +18,6 @@ block means, `decimate`; k = 1/m: interpolation between block centres,
 batched: a batch of B series with B different rates is one tensor, there is
 no bucketing by k. Gradients reach k through the fractional sampling
 positions and the block width.
-
-Nothing here is used unless a layer is constructed; the harness and the
-numpy primitives are untouched.
 """
 
 import math
@@ -28,7 +25,6 @@ from typing import Callable, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 K_MIN, K_MAX = 0.25, 48.0          # the grid of the backtest: 1/4 .. 48
 MODEL_LEN = 1024                   # blocks handed to the forecaster

@@ -15,7 +15,7 @@ Everything here is numpy and free of the model; the harness feeds it fans,
 targets and contexts.
 """
 
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
 
