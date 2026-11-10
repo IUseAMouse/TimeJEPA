@@ -153,6 +153,30 @@ def test_builder_dispatch_and_identity(monkeypatch):
     assert isinstance(loading.create_model_from_config(cfg2), _Fake)
 
 
+
+def test_builder_module_kind(monkeypatch):
+    """kind module: a class outside the repo, named by package.module:Class."""
+    import types
+    from omegaconf import OmegaConf
+
+    class _Outside(ext.ExternalForecaster):
+        def __init__(self, hf_id, device, name=None, context_length=1024):
+            super().__init__(name or hf_id, hf_id, context_length, device)
+    mod = types.ModuleType("_outside_adapter")
+    mod.Outside, mod.NotOne = _Outside, dict
+    monkeypatch.setitem(sys.modules, "_outside_adapter", mod)
+
+    def cfg(target):
+        return OmegaConf.create({"model": {"name": "x", "external": {
+            "kind": "module", "target": target, "hf_id": "org/m", "context_length": 300,
+            "device": "cpu"}}})
+    m = ext.build(cfg("_outside_adapter:Outside"))
+    assert isinstance(m, _Outside) and m.input_length == 300 and m.name == "x"
+    with pytest.raises(ValueError, match="package.module:Class"):
+        ext.build(cfg("_outside_adapter.Outside"))
+    with pytest.raises(TypeError, match="not an ExternalForecaster"):
+        ext.build(cfg("_outside_adapter:NotOne"))
+
 def test_external_configs_parse():
     from omegaconf import OmegaConf
     root = Path(__file__).resolve().parents[1] / "configs" / "model"

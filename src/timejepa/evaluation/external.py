@@ -29,6 +29,9 @@ Kinds:
             are interpolated by the package.
   ttm       TinyTimeMixer (IBM Granite, 1-5M), `granite-tsfm`. Point-only:
             the fan is the point repeated. Autoregressive beyond its horizon.
+  module    any ExternalForecaster subclass kept outside this repo, named by
+            `target: "package.module:Class"` (importable from PYTHONPATH) and
+            built with the same arguments as the kinds above.
 
 Install: uv pip install -e ".[external]" (chronos + t0; ttm is the `ttm`
 extra). toto-ts is not included: its pins downgrade torch and transformers
@@ -205,15 +208,28 @@ class TTMForecaster(ExternalForecaster):
 KINDS = {"chronos": ChronosForecaster, "t0": T0Forecaster, "ttm": TTMForecaster}
 
 
+def _target_class(target: str):
+    """"package.module:Class" -> the class, which must follow the contract."""
+    import importlib
+    module, sep, attr = str(target).partition(":")
+    if not sep or not module or not attr:
+        raise ValueError(f"model.external.target must read 'package.module:Class', got {target!r}")
+    cls = getattr(importlib.import_module(module), attr)
+    if not (isinstance(cls, type) and issubclass(cls, ExternalForecaster)):
+        raise TypeError(f"{target} is not an ExternalForecaster subclass")
+    return cls
+
+
 def build(cfg):
     """`model.builder: timejepa.evaluation.external:build` - reads
-    cfg.model.external = {kind, hf_id, context_length?, revision?, dtype?}."""
+    cfg.model.external = {kind, hf_id, context_length?, revision?, dtype?,
+    target? (kind module)}."""
     ext = cfg.model.get("external")
     if not ext:
         raise ValueError("model.external is required for the external builder")
     kind = str(ext.get("kind", "")).lower()
-    if kind not in KINDS:
-        raise ValueError(f"unknown external kind {kind!r} (choose from {sorted(KINDS)})")
+    if kind not in KINDS and kind != "module":
+        raise ValueError(f"unknown external kind {kind!r} (choose from {sorted(KINDS) + ['module']})")
     device = torch.device(str(ext.get("device", "cuda" if torch.cuda.is_available() else "cpu")))
     kwargs = {"hf_id": str(ext.hf_id), "device": device, "name": str(cfg.model.name)}
     if ext.get("context_length") is not None:
@@ -222,7 +238,8 @@ def build(cfg):
         kwargs["revision"] = str(ext.revision)
     if kind == "chronos" and ext.get("dtype") is not None:
         kwargs["torch_dtype"] = str(ext.dtype)
-    return KINDS[kind](**kwargs)
+    cls = _target_class(ext.get("target", "")) if kind == "module" else KINDS[kind]
+    return cls(**kwargs)
 
 
 def run_identity(hf_id: str, revision: Optional[str] = None) -> tuple:
