@@ -91,11 +91,6 @@ def get_dataset_info(name: str) -> NixtlaDatasetInfo:
     return NIXTLA_REGISTRY[key]
 
 
-def get_benchmark_horizons(name: str) -> Tuple[int, ...]:
-    """Get standard benchmark horizons for a dataset."""
-    return get_dataset_info(name).horizons
-
-
 def download_and_convert(
     dataset_name: str,
     output_dir: Path,
@@ -196,31 +191,3 @@ def download_and_convert(
     return output_path
 
 
-def prepare_all_splits(
-    dataset_name: str,
-    output_dir: Path,
-    cache_dir: Optional[Path] = None,
-    force_download: bool = False,
-) -> Dict[str, Path]:
-    """
-    Prepare train/val/test .npy files for a dataset.
-    
-    Args:
-        dataset_name: Name of the dataset
-        output_dir: Where to save files
-        cache_dir: Where to cache downloads
-        force_download: Force re-download
-    
-    Returns:
-        Dict mapping split name to file path
-    """
-    paths = {}
-    for split in ['train', 'val', 'test']:
-        paths[split] = download_and_convert(
-            dataset_name=dataset_name,
-            output_dir=output_dir,
-            cache_dir=cache_dir,
-            split=split,
-            force_download=force_download,
-        )
-    return paths

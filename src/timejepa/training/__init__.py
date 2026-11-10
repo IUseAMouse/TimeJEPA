@@ -5,7 +5,7 @@ Training infrastructure for TimeJEPA.
 
 from .jepa_pretrain_module import JEPAPretrainModule
 from .finetune_module import FinetuneModule
-from .callbacks.ema_callback import EMACallback, GradientClipCallback
+from .callbacks.ema_callback import EMACallback
 
 from .utils.metrics import (
     jepa_loss,
@@ -27,7 +27,6 @@ __all__ = [
     
     # Callbacks
     'EMACallback',
-    'GradientClipCallback',
     
     # Metrics
     'jepa_loss',
@@ -38,4 +37,4 @@ __all__ = [
     'rmse',
     'mape',
     'smape',
-]
+]

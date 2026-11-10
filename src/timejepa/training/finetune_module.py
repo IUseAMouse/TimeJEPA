@@ -8,7 +8,6 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional, Literal, List
-from pathlib import Path
 import logging
 
 from ..models.jepa_tst import JEPATST, filter_loadable, grow_future_query_table

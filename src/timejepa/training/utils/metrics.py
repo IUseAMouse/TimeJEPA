@@ -2,8 +2,7 @@
 Metrics for JEPA pretraining and finetuning.
 """
 
-import math
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
@@ -379,32 +378,6 @@ def representation_std(embeddings: torch.Tensor) -> torch.Tensor:
     std = embeddings.std(dim=0).mean()
     return std
 
-
-# No external call sites; kept per the no-delete policy.
-def cosine_similarity_matrix(
-    embeddings1: torch.Tensor,
-    embeddings2: Optional[torch.Tensor] = None
-) -> torch.Tensor:
-    """
-    Compute pairwise cosine similarity.
-    
-    Args:
-        embeddings1: [B, D]
-        embeddings2: [B, D] or None (uses embeddings1)
-    
-    Returns:
-        Similarity matrix [B, B]
-    """
-    if embeddings2 is None:
-        embeddings2 = embeddings1
-    
-    # Normalize
-    emb1_norm = F.normalize(embeddings1, p=2, dim=-1)
-    emb2_norm = F.normalize(embeddings2, p=2, dim=-1)
-    
-    # Similarity matrix
-    similarity = torch.mm(emb1_norm, emb2_norm.t())
-    return similarity
 
 def compute_pretrain_metrics(
     predictions: torch.Tensor,

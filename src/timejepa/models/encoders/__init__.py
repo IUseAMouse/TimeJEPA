@@ -10,7 +10,6 @@ from .bare_encoder import BareTransformerEncoder
 from .target_encoder import (
     TargetEncoder,
     EMAUpdater,
-    DualEncoderWrapper
 )
 
 __all__ = [
@@ -20,5 +19,4 @@ __all__ = [
     # Target encoder & EMA
     'TargetEncoder',
     'EMAUpdater',
-    'DualEncoderWrapper',
 ]

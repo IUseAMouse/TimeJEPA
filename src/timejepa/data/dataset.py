@@ -3,14 +3,14 @@ PyTorch Dataset for time series with sliding windows for JEPA training.
 """
 import logging
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from .normalizer import Normalizer, get_normalizer
-from .augmentations import TimeSeriesAugmentations, AugmentationConfig, FinetuneAugmentations
+from .augmentations import TimeSeriesAugmentations, AugmentationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -722,66 +722,3 @@ class AugmentedSubset(Dataset):
         return len(self.indices)
 
 
-class MultiHorizonDataset(TimeSeriesDataset):
-    """Extended dataset that returns multiple future horizons."""
-    
-    def __init__(
-        self,
-        data_path: Path,
-        context_length: int,
-        prediction_lengths: List[int],
-        stride: int = 1,
-        normalizer: Optional[Normalizer] = None,
-        normalize_mode: str = "per_series",
-        return_tensor: bool = True,
-        max_series: Optional[int] = None
-    ):
-        self.prediction_lengths = sorted(prediction_lengths)
-        max_pred_len = max(prediction_lengths)
-        
-        super().__init__(
-            data_path=data_path,
-            context_length=context_length,
-            prediction_length=max_pred_len,
-            stride=stride,
-            normalizer=normalizer,
-            normalize_mode=normalize_mode,
-            return_tensor=return_tensor,
-            max_series=max_series
-        )
-    
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        series_idx, start_idx = self.window_indices[idx]
-        
-        if self.data.dtype == object:
-            series = self.normalized_data[series_idx]
-        else:
-            series = self.normalized_data[series_idx]
-        
-        context_end = start_idx + self.context_length
-        
-        if self.is_multivariate:
-            context = series[:, start_idx:context_end]
-        else:
-            context = series[start_idx:context_end]
-        
-        targets = {}
-        for pred_len in self.prediction_lengths:
-            target_end = context_end + pred_len
-            if self.is_multivariate:
-                target = series[:, context_end:target_end]
-            else:
-                target = series[context_end:target_end]
-            if self.return_tensor:
-                target = torch.from_numpy(target).float()
-            targets[pred_len] = target
-        
-        if self.return_tensor:
-            context = torch.from_numpy(context).float()
-        
-        return {
-            'context': context,
-            'targets': targets,
-            'series_id': series_idx,
-            'start_idx': start_idx
-        }

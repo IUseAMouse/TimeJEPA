@@ -15,22 +15,6 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from timejepa.models import JEPATST                                      # noqa: E402
-from timejepa.models.components.revin import RevIN                       # noqa: E402
-from timejepa.training.utils.baselines import (                          # noqa: E402
-    seasonal_naive_forecast,
-    last_value_forecast,
-    mean_forecast,
-    linear_trend_forecast,
-    compute_all_baselines,
-    get_seasonality,
-)
-from timejepa.training.utils.metrics import (                            # noqa: E402
-    mase,
-    nd,
-    weighted_quantile_loss,
-    compute_forecasting_metrics_extended,
-)
 
 
 def _write(dirpath, name, arr, allow_pickle=False):
@@ -443,7 +427,6 @@ def test_pack_series_keeps_ragged_input_ragged():
 
 def test_pack_series_empty_stays_detectable():
     """The empty case must keep working: callers raise SeriesTooShortError."""
-    import numpy as np
     from timejepa.data.dataset import _pack_series
     assert len(_pack_series([])) == 0
 

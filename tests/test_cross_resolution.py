@@ -121,8 +121,6 @@ def test_target_is_physically_contiguous(tmp_path):
         item = ds.get_item(0, allow_multi_resolution=True)
         ctx, tgt = np.asarray(item["context"]), np.asarray(item["target"])
         k1 = item["resolution_factor"]
-        w = item["w"]
-        k2 = int(round(w * k1))
         start = item["start_idx"]
         expected_first = series[start + 1024 * k1]
         assert tgt[0] == pytest.approx(float(expected_first)), \

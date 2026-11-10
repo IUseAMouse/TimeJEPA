@@ -3,7 +3,7 @@
 Core components for TimeJEPA model.
 """
 
-from .revin import RevIN, RevINMultivariate
+from .revin import RevIN
 from .rope import (
     RotaryPositionEmbedding,
     RotaryEmbedding,
@@ -12,7 +12,6 @@ from .rope import (
 )
 from .patching import (
     Patching,
-    PatchEmbedding,
     UnPatching
 )
 from .attention import (
@@ -23,7 +22,6 @@ from .attention import (
 __all__ = [
     # RevIN
     'RevIN',
-    'RevINMultivariate',
     
     # RoPE
     'RotaryPositionEmbedding',
@@ -33,10 +31,9 @@ __all__ = [
     
     # Patching
     'Patching',
-    'PatchEmbedding',
     'UnPatching',
     
     # Attention
     'RoPEAttention',
     'TransformerBlock',
-]
+]

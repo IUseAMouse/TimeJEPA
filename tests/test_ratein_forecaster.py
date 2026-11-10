@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from timejepa import ratein_layer as RL  # noqa: E402
 from timejepa.evaluation import ratein as R  # noqa: E402
 from timejepa.models.decoders.quantile_head import pinball_loss  # noqa: E402
-from timejepa.models.ratein_forecaster import RateINForecaster, build_from_config  # noqa: E402
+from timejepa.models.ratein_forecaster import RateINForecaster  # noqa: E402
 
 LEVELS = [0.1 * j for j in range(1, 10)]
 PERIOD = 24

@@ -10,26 +10,9 @@ import sys
 from pathlib import Path
 
 import pytest
-import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from timejepa.models import JEPATST                                      # noqa: E402
-from timejepa.models.components.revin import RevIN                       # noqa: E402
-from timejepa.training.utils.baselines import (                          # noqa: E402
-    seasonal_naive_forecast,
-    last_value_forecast,
-    mean_forecast,
-    linear_trend_forecast,
-    compute_all_baselines,
-    get_seasonality,
-)
-from timejepa.training.utils.metrics import (                            # noqa: E402
-    mase,
-    nd,
-    weighted_quantile_loss,
-    compute_forecasting_metrics_extended,
-)
 
 
 @pytest.mark.parametrize("size,reference", [("mini", "mini"), ("base", "base")])
@@ -138,7 +121,6 @@ def test_lotsa_configs_do_not_disturb_existing_ones():
 
 def _compose(name):
     from hydra import initialize, compose
-    root = Path(__file__).resolve().parents[1]
     with initialize(version_base=None, config_path="../configs/model"):
         return compose(config_name=name)
 

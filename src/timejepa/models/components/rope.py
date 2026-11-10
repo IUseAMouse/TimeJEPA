@@ -5,7 +5,6 @@ the query and key vectors.
 
 import torch
 import torch.nn as nn
-import math
 from typing import Tuple, Optional
 
 

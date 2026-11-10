@@ -17,19 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.models import JEPATST                                      # noqa: E402
 from timejepa.models.components.revin import RevIN                       # noqa: E402
-from timejepa.training.utils.baselines import (                          # noqa: E402
-    seasonal_naive_forecast,
-    last_value_forecast,
-    mean_forecast,
-    linear_trend_forecast,
-    compute_all_baselines,
-    get_seasonality,
-)
 from timejepa.training.utils.metrics import (                            # noqa: E402
-    mase,
     nd,
     weighted_quantile_loss,
-    compute_forecasting_metrics_extended,
 )
 
 
@@ -484,7 +474,6 @@ def test_true_wql_differs_from_the_point_wql():
     scored the median rather than the fan, the quantile head's entire benefit
     would be invisible in the reported metric.
     """
-    from timejepa.training.utils.metrics import weighted_quantile_loss, nd
     torch.manual_seed(0)
     target = torch.randn(32, 96)
     median = target + torch.randn(32, 96) * 0.4

@@ -87,7 +87,6 @@ def analyse(bt: dict, oracle: dict) -> dict:
     for r in rows:
         by_case[r["case"]]["n"] += 1
         by_case[r["case"]]["gap_log"] += r["gap_log"]
-    total_gap = sum(r["gap_log"] for r in rows)
     geo_bt = math.exp(sum(math.log(r["crps_bt"]) for r in rows) / n) if n else float("nan")
     geo_or = math.exp(sum(math.log(r["crps_oracle"]) for r in rows) / n) if n else float("nan")
     # Counterfactual aggregate if one case were fixed at oracle quality.

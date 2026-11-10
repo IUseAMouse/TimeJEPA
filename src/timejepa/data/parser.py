@@ -43,13 +43,11 @@ class TSFileParser:
         # Try multiple encodings
         encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
         content = None
-        used_encoding = None
         
         for encoding in encodings:
             try:
                 with open(file_path, 'r', encoding=encoding) as f:
                     content = f.read()
-                used_encoding = encoding
                 logger.info(f"Successfully read file with {encoding} encoding")
                 break
             except UnicodeDecodeError:
@@ -218,4 +216,4 @@ def save_processed_data(
     
     logger.info(f"Saved to {output_path}")
     
-    return stats
+    return stats

@@ -6,10 +6,9 @@ gradient descent.
 
 import torch
 import torch.nn as nn
-from typing import Optional, Dict
+from typing import Optional
 from copy import deepcopy
 
-from .bare_encoder import BareTransformerEncoder
 
 import math
 
@@ -175,72 +174,3 @@ class EMAUpdater:
         self.current_step = 0
 
 
-class DualEncoderWrapper(nn.Module):
-    """
-    Bundles an online encoder, its target encoder and an EMA updater.
-
-    Usage:
-        dual_encoder = DualEncoderWrapper(encoder_config)
-        
-        # In training loop:
-        z_online = dual_encoder.online(x_context)
-        z_target = dual_encoder.target(x_target)
-        
-        # After backward:
-        dual_encoder.update_target()
-    
-    Not used by JEPATST, which wires the online/target pair directly.
-
-    Args:
-        encoder_config: Config dict for BareTransformerEncoder (d_model, num_layers, ...)
-        ema_decay: Base EMA decay rate
-        ema_final_decay: Final EMA decay rate
-        total_steps: Total training steps (for EMA schedule)
-    """
-
-    def __init__(
-        self,
-        encoder_config: Dict,
-        ema_decay: float = 0.996,
-        ema_final_decay: float = 0.9996,
-        total_steps: int = 100000
-    ):
-        super().__init__()
-
-        self.online = BareTransformerEncoder(**encoder_config)
-        self.target = TargetEncoder(self.online, ema_decay=ema_decay)
-        self.ema_updater = EMAUpdater(
-            base_decay=ema_decay,
-            final_decay=ema_final_decay,
-            total_steps=total_steps,
-            use_schedule=True
-        )
-    
-    def forward(self, x: torch.Tensor, mode: str = 'online') -> torch.Tensor:
-        """
-        Forward pass through specified encoder.
-        
-        Args:
-            x: Input tensor
-            mode: 'online' or 'target'
-            
-        Returns:
-            Encoded representations
-        """
-        if mode == 'online':
-            return self.online(x)
-        elif mode == 'target':
-            return self.target(x)
-        else:
-            raise ValueError(f"mode must be 'online' or 'target', got {mode}")
-    
-    def update_target(self):
-        """Update target encoder using current EMA decay."""
-        current_decay = self.ema_updater.get_current_decay()
-        self.target.ema_decay = current_decay
-        self.target.update(self.online)
-        self.ema_updater.step()
-    
-    def get_ema_decay(self) -> float:
-        """Get current EMA decay rate."""
-        return self.ema_updater.get_current_decay()

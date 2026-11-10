@@ -8,7 +8,6 @@ from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
-import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger 

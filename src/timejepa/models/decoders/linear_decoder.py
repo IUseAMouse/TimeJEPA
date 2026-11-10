@@ -5,7 +5,7 @@ Decoder heads for finetuning: representations [B, N, d_model] -> values
 
 import torch
 import torch.nn as nn
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
 from ..components.patching import UnPatching
 

@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader, ConcatDataset, Sampler
 
 from .dataset import (
     TimeSeriesDataset,
-    MultiHorizonDataset,
     AugmentedSubset,
     SeriesTooShortError,
 )
@@ -528,88 +527,6 @@ class MonashDataModule(pl.LightningDataModule):
     
     def teardown(self, stage: Optional[str] = None):
         pass
-
-
-class MultiHorizonDataModule(MonashDataModule):
-    """DataModule for multi-horizon forecasting."""
-    
-    def __init__(
-        self,
-        data_path: Path,
-        context_length: int,
-        prediction_lengths: List[int],
-        batch_size: int = 32,
-        stride: int = 1,
-        normalize_mode: Literal["per_series", "global"] = "per_series",
-        normalizer_type: str = "standard",
-        train_val_test_split: tuple = (0.7, 0.15, 0.15),
-        num_workers: int = 4,
-        pin_memory: bool = True,
-        persistent_workers: bool = True,
-        max_series: Optional[int] = None,
-        augmentation_config: Optional[Dict[str, Any]] = None,
-        seed: int = 42
-    ):
-        self.prediction_lengths = prediction_lengths
-        
-        super().__init__(
-            data_path=data_path,
-            context_length=context_length,
-            prediction_length=max(prediction_lengths),
-            batch_size=batch_size,
-            stride=stride,
-            normalize_mode=normalize_mode,
-            normalizer_type=normalizer_type,
-            train_val_test_split=train_val_test_split,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            persistent_workers=persistent_workers,
-            max_series=max_series,
-            augmentation_config=augmentation_config,
-            seed=seed
-        )
-    
-    def setup(self, stage: Optional[str] = None):
-        if stage == "fit" or stage is None:
-            self._full_dataset = MultiHorizonDataset(
-                data_path=self.data_path,
-                context_length=self.context_length,
-                prediction_lengths=self.prediction_lengths,
-                stride=self.stride,
-                normalizer=None,
-                normalize_mode=self.normalize_mode,
-                return_tensor=True,
-                max_series=self.max_series
-            )
-            
-            self.normalizer = self._full_dataset.get_normalizer()
-            
-            total_len = len(self._full_dataset)
-            train_frac, val_frac, test_frac = self.train_val_test_split
-            
-            train_len = int(total_len * train_frac)
-            val_len = int(total_len * val_frac)
-            test_len = total_len - train_len - val_len
-            
-            generator = torch.Generator().manual_seed(self.seed)
-            indices = torch.randperm(total_len, generator=generator).tolist()
-            
-            train_indices = indices[:train_len]
-            val_indices = indices[train_len:train_len + val_len]
-            test_indices = indices[train_len + val_len:]
-            
-            self.train_dataset = AugmentedSubset(
-                self._full_dataset, train_indices, apply_augmentation=True
-            )
-            self.val_dataset = AugmentedSubset(
-                self._full_dataset, val_indices, apply_augmentation=False
-            )
-            self.test_dataset = AugmentedSubset(
-                self._full_dataset, test_indices, apply_augmentation=False
-            )
-            
-            logger.info(f"Setup complete for multi-horizon training "
-                       f"with horizons: {self.prediction_lengths}")
 
 
 class MultiDatasetMonashDataModule(pl.LightningDataModule):

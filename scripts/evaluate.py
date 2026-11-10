@@ -30,7 +30,6 @@ import json
 import hydra
 from omegaconf import DictConfig, OmegaConf, ListConfig
 import torch
-import pytorch_lightning as pl
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -40,7 +39,6 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from timejepa.data.datamodule import MonashDataModule
-from timejepa.training.finetune_module import FinetuneModule
 from timejepa.training.utils.metrics import (
     compute_forecasting_metrics_extended,
     compute_per_horizon_metrics,
@@ -50,12 +48,9 @@ from timejepa.training.utils.baselines import (
     compute_all_baselines,
     get_seasonality,
 )
-from timejepa.models import JEPATST
-from timejepa.models.jepa_tst import filter_loadable
 # Shared with the GIFT-Eval harness so both load checkpoints through the same
 # code path (see evaluation/loading.py).
 from timejepa.evaluation.loading import create_model_from_config, load_checkpoint
-from timejepa.models.decoders import ForecastingHead
 
 try:
     from timejepa.data.nixtla import (
@@ -683,7 +678,6 @@ def evaluate_nixtla_dataset(
     )
     
     # Find max horizon to create dataloader with sufficient target length
-    max_horizon = max(horizons)
     
     for horizon in horizons:
         # Determine forecast mode

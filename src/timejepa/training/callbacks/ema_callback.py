@@ -97,34 +97,3 @@ class EMACallback(Callback):
             pl_module.log('ema/tau', tau, on_epoch=True, prog_bar=False)
 
 
-class GradientClipCallback(Callback):
-    """
-    Callback to monitor gradient norms.
-    
-    Useful for debugging training instabilities.
-    """
-    
-    def __init__(self, log_every_n_steps: int = 100):
-        super().__init__()
-        self.log_every_n_steps = log_every_n_steps
-    
-    def on_before_optimizer_step(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        optimizer,
-        opt_idx: int = 0,
-    ) -> None:
-        """Log gradient norms before optimizer step."""
-        if trainer.global_step % self.log_every_n_steps != 0:
-            return
-        
-        # Compute gradient norm
-        total_norm = 0.0
-        for p in pl_module.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-        total_norm = total_norm ** 0.5
-        
-        pl_module.log('train/grad_norm', total_norm, on_step=True, prog_bar=False)

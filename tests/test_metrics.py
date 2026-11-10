@@ -13,8 +13,6 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from timejepa.models import JEPATST                                      # noqa: E402
-from timejepa.models.components.revin import RevIN                       # noqa: E402
 from timejepa.training.utils.baselines import (                          # noqa: E402
     seasonal_naive_forecast,
     last_value_forecast,

@@ -10,7 +10,7 @@ This model learns to predict future representations from past context:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Literal
 
 from .components.revin import RevIN
 from .components.patching import Patching

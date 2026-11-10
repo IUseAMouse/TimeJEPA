@@ -39,7 +39,7 @@ def test_export_round_trip_is_exact(tmp_path):
 
 def test_energy_matches_probe_instance_and_both_conventions():
     model, _ = _small_model()
-    import importlib.util, sys
+    import importlib.util
     spec = importlib.util.spec_from_file_location(
         "probe_energy", Path(__file__).resolve().parents[1] / "scripts" / "probe_energy.py")
     probe = importlib.util.module_from_spec(spec); spec.loader.exec_module(probe)

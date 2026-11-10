@@ -2,8 +2,7 @@ import hashlib
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Union
-from urllib.parse import urlparse
+from typing import Union
 
 import requests
 from requests.adapters import HTTPAdapter
