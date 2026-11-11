@@ -42,6 +42,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Optional
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -674,15 +675,12 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     refine_spec=None, refine_judge=None,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
-                    ttt_spec=None, per_instance=None, clip_nonneg: bool = False) -> dict:
-    h = gift.prediction_length(config)
-    freq = config.split("/")[1]
-    m = gift.seasonality(freq)
-
-    series = gift.load_series(gift_root, config)
-    if max_series:
-        series = series[:max_series]
-    windows = gift.num_windows(config, min(len(s) for s in series))
+                    ttt_spec=None, per_instance=None, clip_nonneg: bool = False,
+                    data: Optional[gift.ConfigData] = None) -> dict:
+    """One config. `data` replaces the GIFT loading (series, h, m, windows), so a
+    held-out dev subset goes through the same procedure; `config` then only names it."""
+    data = data or gift.load_config(gift_root, config, max_series)
+    series, h, m, windows = data.series, data.h, data.m, data.windows
 
     model_acc = gift.MetricAccumulator()
     sn_acc = gift.MetricAccumulator()

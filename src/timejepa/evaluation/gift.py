@@ -197,6 +197,25 @@ def load_series(gift_root: Path, config: str) -> List[np.ndarray]:
 
 
 @dataclass
+class ConfigData:
+    """What the harness evaluates on: series, horizon h, season m, number of test windows.
+    A GIFT config through `load_config`; any other source (a held-out dev subset) can
+    build one and go through the same procedure."""
+    series: List[np.ndarray]
+    h: int
+    m: int
+    windows: int
+
+
+def load_config(gift_root: Path, config: str, max_series: int = 0) -> ConfigData:
+    series = load_series(gift_root, config)
+    if max_series:
+        series = series[:max_series]
+    return ConfigData(series, prediction_length(config), seasonality(config.split("/")[1]),
+                      num_windows(config, min(len(s) for s in series)))
+
+
+@dataclass
 class TestInstance:
     """One rolling-evaluation window: everything before as context, h as target."""
     series_idx: int
