@@ -106,6 +106,48 @@ def prepare_context(past: np.ndarray, max_len: int, stride: int,
     return ctx
 
 
+def _context(hist, max_len: int, stride: int, patch: int, keep_nan: bool, blank: bool):
+    """prepare_context; with `blank` (a variate of a multivariate item), a past with nothing
+    observed gives an all-NaN context of the length its siblings get, instead of None: the
+    rows of an item stay together and the model reads the variate as missing. Such a row
+    is context only, never scored (the univariate path skips it): see `_observed`."""
+    ctx = prepare_context(hist, max_len, stride, patch, keep_nan=keep_nan)
+    if ctx is None and blank:
+        ctx = np.full_like(prepare_context(np.zeros(len(hist), np.float32), max_len, stride,
+                                           patch), np.nan)
+    return ctx
+
+
+def _observed(ctx) -> bool:
+    return bool(np.isfinite(ctx).any())
+
+
+class VariateBatches:
+    """A multivariate model behind the univariate batch interface of the harness: rows
+    r * V .. r * V + V - 1 of a batch [R, L, 1] are the V variates of one item (the
+    harness keeps them together and at one rate), forecast jointly by
+    `forecast_multivariate`; outputs come back as R rows. Every other attribute is the
+    model's."""
+
+    def __init__(self, model, n_variates: int):
+        self.model, self.n_variates = model, int(n_variates)
+
+    def __getattr__(self, name):
+        return getattr(self.__dict__["model"], name)
+
+    def forecast(self, batch: torch.Tensor, n: Optional[int] = None, w=None, **_) -> dict:
+        x = batch[..., 0] if batch.dim() == 3 else batch
+        R, L = x.shape
+        V = self.n_variates
+        if R % V:
+            raise ValueError(f"{R} rows do not make items of {V} variates")
+        if isinstance(w, torch.Tensor) and w.dim() > 0:
+            w = w.reshape(R // V, V)[:, 0]              # one rate per item
+        out = self.model.forecast_multivariate(x.reshape(R // V, V, L), n=n, w=w)
+        return {k: v.reshape(R, *v.shape[2:]) if isinstance(v, torch.Tensor) else v
+                for k, v in out.items()}
+
+
 # ---------------------------------------------------------------------------
 # TTA: inference procedures uniform across the 97 configs. Single checkpoint;
 # each variant is a deterministic transform of the context, identical for all
@@ -250,11 +292,13 @@ def _pinball_np(fan: np.ndarray, y: np.ndarray, levels) -> float:
 
 
 def _backtest_windows(series, h: int, windows: int, patch: int, n_windows: int,
-                      min_bt: int) -> list:
+                      min_bt: int, n_variates: int = 1) -> list:
     """Backtest windows before the first test target, (idx, j, sub_hist, known)
     with j = 1 the most recent. Horizon h_bt = min(h, past - 4 patches); a
     series with h_bt < min_bt has none, a window with a missing target is
-    skipped."""
+    skipped. `n_variates` > 1: the windows of an item come whole, its variates in
+    order; one with a missing target is kept as context (its score is NaN, never
+    counted) as long as another variate of the window is complete."""
     entries = []
     for idx, y in enumerate(series):
         past = y[:len(y) - windows * h]             # before ANY test target
@@ -265,8 +309,12 @@ def _backtest_windows(series, h: int, windows: int, patch: int, n_windows: int,
         for j in range(1, min(n_windows, avail // h_bt) + 1):
             lo = len(past) - j * h_bt
             sub_hist, known = past[:lo], past[lo:lo + h_bt]
-            if np.isfinite(known).all():
+            if n_variates > 1 or np.isfinite(known).all():
                 entries.append((idx, j, sub_hist, known))
+    if n_variates > 1:
+        complete = {(idx // n_variates, j) for idx, j, _, known in entries
+                    if np.isfinite(known).all()}
+        entries = [e for e in entries if (e[0] // n_variates, e[1]) in complete]
     return entries
 
 
@@ -286,7 +334,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                        batch_size: int, pooled: bool = False,
                        use_delta: bool = False, delta_max_k: int = 0,
                        k_candidates=None, min_bt: int = 16,
-                       n_bt_windows: int = 2, freq_season=None) -> tuple:
+                       n_bt_windows: int = 2, freq_season=None,
+                       n_variates: int = 1) -> tuple:
     """RateIN: per-config k chosen by causal backtest.
 
     For each series, drop the last h_bt steps of its past (never the test:
@@ -321,7 +370,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
     # (upsampling), see ratein.upsample.
     candidates = tuple(k_candidates) if k_candidates else ratein_mod.K_CANDIDATES
     entries = [(idx, sub_hist, known) for idx, _, sub_hist, known
-               in _backtest_windows(series, h, windows, patch, N_BT_WINDOWS, min_bt)]
+               in _backtest_windows(series, h, windows, patch, N_BT_WINDOWS, min_bt,
+                                    n_variates)]
 
     scores = defaultdict(lambda: defaultdict(list))
     for k in candidates:
@@ -332,8 +382,8 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                     if k != 1 and not knob_k else sub_hist)
             if len(hist) < patch:
                 continue
-            ctx = prepare_context(hist, max_len, stride, patch,
-                                  keep_nan=k == 1 and getattr(model, "handles_nan", False))
+            ctx = _context(hist, max_len, stride, patch,
+                           k == 1 and getattr(model, "handles_nan", False), n_variates > 1)
             if ctx is None:
                 continue
             # h_bt varies per series (short-history fallback) -> the bucket
@@ -361,7 +411,9 @@ def _backtest_series_k(model, series, h: int, windows: int, max_len: int,
                 q = q.cpu().numpy()
                 if q.ndim == 4:
                     q = q[..., 0]
-                for b, (idx, _, known) in enumerate(chunk):
+                for b, (idx, ctx_b, known) in enumerate(chunk):
+                    if not _observed(ctx_b):
+                        continue                # a blank variate, context only
                     fan_nat = (q[b] if knob_k
                                else ratein_mod.to_native_fan(q[b], len(known), k))
                     sc = _pinball_np(fan_nat, known, levels)
@@ -676,11 +728,27 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                     bias_mode: str = "off", bias_lambdas=None,
                     spread_mode: str = "off", spread_grid=None,
                     ttt_spec=None, per_instance=None, clip_nonneg: bool = False,
-                    data: Optional[gift.ConfigData] = None) -> dict:
+                    data: Optional[gift.ConfigData] = None,
+                    multivariate: bool = False) -> dict:
     """One config. `data` replaces the GIFT loading (series, h, m, windows), so a
-    held-out dev subset goes through the same procedure; `config` then only names it."""
-    data = data or gift.load_config(gift_root, config, max_series)
+    held-out dev subset goes through the same procedure; `config` then only names it.
+
+    `multivariate`: the items of a multivariate config are forecast whole by the model's
+    `forecast_multivariate` (VariateBatches), every variate of an item at the same rate;
+    the instances scored and the metrics are those of the univariate split, only the
+    forecasts change. A univariate config runs as without it."""
+    data = data or gift.load_config(gift_root, config, max_series, multivariate=multivariate)
     series, h, m, windows = data.series, data.h, data.m, data.windows
+    V = data.n_variates if multivariate else 1
+    fmodel = model
+    if V > 1:
+        if (ratein_mode in ("fft", "energy") or bias_mode != "off" or spread_mode != "off"
+                or ttt_spec or (refine_spec is not None and refine_spec.active)):
+            raise ValueError("+multivariate composes with the RateIN backtest, mix, delta "
+                             "and oracle modes and the TTA flags only (one rate per item, "
+                             "no per-variate step)")
+        fmodel = VariateBatches(model, V)
+        batch_size = max(V, batch_size // V * V)    # a chunk never splits an item
 
     model_acc = gift.MetricAccumulator()
     sn_acc = gift.MetricAccumulator()
@@ -719,7 +787,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
     if ratein_mode in ("backtest", "mix", "delta") and not forced_k:
         k_cands = tuple(ratein_mod.K_CANDIDATES) + tuple(
             1.0 / int(m) for m in (ratein_k_up or []))
-        bt_ks, bt_diag = _backtest_series_k(model, series, h, windows, max_len,
+        bt_ks, bt_diag = _backtest_series_k(fmodel, series, h, windows, max_len,
                                             stride, model.patching.patch_size,
                                             device, batch_size,
                                             pooled=ratein_pool,
@@ -728,7 +796,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                             k_candidates=k_cands,
                                             min_bt=ratein_min_bt,
                                             n_bt_windows=ratein_bt_windows,
-                                            freq_season=freq_season)
+                                            freq_season=freq_season,
+                                            n_variates=V)
         if ratein_mode == "mix":
             # The hard per-series choice is replaced by per-config weights.
             mix_weights, bt_ks = _mix_weights(bt_diag["ratios"], tau=ratein_mix_tau), None
@@ -768,7 +837,10 @@ def evaluate_config(model, config: str, gift_root: Path, device,
         bias_shifts.append(sh / max(biasin_mod.level_scale(context), 1e-12))
         return sh
 
-    for inst in gift.iter_test_instances(series, h, windows):
+    # Multivariate: variates read as context only (target all NaN), by (series, window).
+    unscored = set()
+    scores = []                                 # scored instances, accumulated after the loop
+    for inst in gift.iter_test_instances(series, h, windows, V):
         if mix_weights is not None:
             comps = []
             for kk, wk in mix_weights.items():
@@ -776,23 +848,27 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                         if kk != 1 else inst.context)
                 if kk != 1 and len(hist) < model.patching.patch_size:
                     continue                    # same guard as the hard path
-                ctx = prepare_context(hist, max_len, stride, model.patching.patch_size,
-                                      keep_nan=kk == 1 and getattr(model, "handles_nan", False))
+                ctx = _context(hist, max_len, stride, model.patching.patch_size,
+                               kk == 1 and getattr(model, "handles_nan", False), V > 1)
                 if ctx is None:
                     continue
-                comps.append((kk, wk, ctx))
+                # A blank component (multivariate only) rides along at weight 0.
+                comps.append((kk, wk if _observed(ctx) else 0.0, ctx))
             if not comps:
                 continue
+            scored = inst.scored and any(c[1] > 0 for c in comps)
             scale = gift.seasonal_error(inst.context, m)
-            iid = n_inst
+            iid = len(mix_state)
             mix_state[iid] = {"target": inst.target, "past": inst.context,
                               "scale": scale, "fan": None, "med": None, "w": 0.0,
-                              "sidx": inst.series_idx}
+                              "sidx": inst.series_idx, "scored": scored,
+                              "order": (inst.series_idx, iid)}
             for kk, wk, ctx in comps:
                 buckets[(len(ctx), kk)].append(
                     (ctx, inst.target, inst.context, scale, iid, wk, inst.series_idx))
-            k_hist[max(comps, key=lambda c: c[1])[0]] += 1
-            n_inst += 1
+            if scored:
+                k_hist[max(comps, key=lambda c: c[1])[0]] += 1
+                n_inst += 1
             continue
         # RateIN: k is a causal statistic of the past, one uniform rule across
         # the 97 configs. forced_k is the oracle mode (diagnostic, never
@@ -814,14 +890,17 @@ def evaluate_config(model, config: str, gift_root: Path, device,
             # Guard: a short history decimated by a large k goes empty, fall
             # back to k=1.
             k, hist = 1, inst.context
-        ctx = prepare_context(hist, max_len, stride, model.patching.patch_size,
-                              keep_nan=k == 1 and getattr(model, "handles_nan", False))
+        ctx = _context(hist, max_len, stride, model.patching.patch_size,
+                       k == 1 and getattr(model, "handles_nan", False), V > 1)
         if ctx is None:
             continue
         # MASE scale uses the full past, not the capped context: gluonts
         # computes the seasonal error on the entire history of the series.
         scale = gift.seasonal_error(inst.context, m)
         buckets[(len(ctx), k)].append((ctx, inst.target, inst.context, scale, inst.series_idx, widx))
+        if not (inst.scored and _observed(ctx)):
+            unscored.add((inst.series_idx, widx))
+            continue
         k_hist[k] += 1
         n_inst += 1
 
@@ -849,7 +928,7 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 w_vec = torch.full((batch.shape[0],), freq_delta_w(model, freq_season, k),
                                    device=device)
             with torch.no_grad():
-                out = tta_forecast(model, batch, h_fc,
+                out = tta_forecast(fmodel, batch, h_fc,
                                    lookbacks=tta_lookbacks, flip=tta_flip,
                                    shifts=tta_shifts, w=w_vec)
             last_k = getattr(model, "last_k", None)
@@ -911,6 +990,8 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                 if len(item) == 7:                      # RateIN-mix component
                     st = mix_state[item[4]]
                     wk = item[5]
+                    if wk <= 0:
+                        continue                        # blank variate, context only
                     if fan_nat is not None:
                         st["fan"] = (wk * fan_nat if st["fan"] is None
                                      else st["fan"] + wk * fan_nat)
@@ -918,24 +999,35 @@ def evaluate_config(model, config: str, gift_root: Path, device,
                                  else st["med"] + wk * med_nat)
                     st["w"] += wk
                     continue
+                if (item[4], item[5]) in unscored:
+                    continue
                 if bias_mode != "off":
                     sh = _bias_shift(item[4], past, target, med_nat)
                     fan_nat, med_nat = biasin_mod.shift_fan(fan_nat, med_nat, sh)
                 if spread_s != 1.0:
                     fan_nat = biasin_mod.scale_fan(fan_nat, med_nat, spread_s)
-                model_acc.add(target, med_nat, fan_nat, scale)
-                if per_instance is not None:
-                    st = _instance_stats(target, med_nat, fan_nat, scale)
-                    st.update({"series_idx": int(item[4]), "window": int(item[5]), "k": float(k)})
-                    per_instance.append(st)
-                sn = gift.seasonal_naive_forecast(past, h, m)
-                sn_acc.add(target, sn, None, scale)
+                scores.append(((length, k), item[4], item[5],
+                               (target, med_nat, fan_nat, scale, past, k)))
+
+    # Accumulated in the order of the univariate split (bucket, series, window), which
+    # the multivariate grouping of the rows would otherwise change in the last bits.
+    for _, sidx, widx, (target, med_nat, fan_nat, scale, past, k) in (
+            sorted(scores, key=lambda r: r[:3]) if V > 1 else scores):
+        model_acc.add(target, med_nat, fan_nat, scale)
+        if per_instance is not None:
+            st = _instance_stats(target, med_nat, fan_nat, scale)
+            st.update({"series_idx": int(sidx), "window": int(widx), "k": float(k)})
+            per_instance.append(st)
+        sn = gift.seasonal_naive_forecast(past, h, m)
+        sn_acc.add(target, sn, None, scale)
 
     # RateIN-mix: quantile averaging (Vincentization) of the surviving
     # components - a convex combination of monotone fans stays monotone and
     # keeps sharpness, unlike a mixture of distributions.
-    for st in mix_state.values():
-        if st["w"] <= 0:
+    # In the order of the univariate split (series, then window), as above.
+    for st in (sorted(mix_state.values(), key=lambda st: st["order"]) if V > 1
+               else mix_state.values()):
+        if st["w"] <= 0 or not st["scored"]:
             continue
         fan = None if st["fan"] is None else st["fan"] / st["w"]
         med = fan[:, mix_mid] if fan is not None else st["med"] / st["w"]
@@ -1087,13 +1179,14 @@ KNOWN_FLAGS = frozenset((
     "refine", "refine_alpha", "refine_contextualized", "refine_energy",
     "refine_eps", "refine_judge", "refine_noise", "refine_step", "refine_steps",
     "refine_target", "seed", "tta_flip", "tta_lookbacks", "tta_shifts", "clip_nonneg",
+    "multivariate",
     "bias", "bias_lambdas", "spread", "spread_grid",
     "ttt", "ttt_steps", "ttt_lr", "ttt_gate", "ttt_margin",
 ))
 
 
 def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
-                      ttt_spec, freq_delta: bool = False) -> None:
+                      ttt_spec, freq_delta: bool = False, multivariate: bool = False) -> None:
     """Refuse the flag/model pairs that would run in silence: the Delta knob
     on a model without one (the harness would pass w to a FiLM, or to a
     stub that ignores it), the FiLM and the knob together, and the JEPA-only
@@ -1120,6 +1213,11 @@ def check_model_flags(model, ratein_mode: str, ratein_w: bool, refine_spec,
             raise ValueError("+freq_delta sets Delta from the declared frequency: it is "
                              "exclusive with +ratein=delta and +ratein_w (RateIN by "
                              "decimation composes with it: backtest, mix)")
+    if multivariate and not (callable(getattr(model, "forecast_multivariate", None))
+                             and getattr(model, "variate_layers", True)):
+        raise ValueError("+multivariate needs a model that forecasts the variates of an item "
+                         "jointly (forecast_multivariate, a PatchedSSM built with "
+                         "variate_layers)")
     jepa_only = ((refine_spec is not None and getattr(refine_spec, "active", False))
                  or ttt_spec is not None)
     if jepa_only and not hasattr(model, "online_encoder"):
@@ -1369,7 +1467,11 @@ def main(cfg: DictConfig):
     #                           (w = 24 / season, data/frequency.py, FlowState's rule);
     #                           composes with RateIN by decimation. Tag _fdelta.
     freq_delta = bool(cfg.get("freq_delta", False))
-    check_model_flags(model, ratein_mode_val, ratein_w, refine_spec, ttt_spec, freq_delta)
+    #   +multivariate=true      the items of the multivariate configs forecast whole
+    #                           (forecast_multivariate), same instances and metrics. Tag _mv.
+    multivariate = bool(cfg.get("multivariate", False))
+    check_model_flags(model, ratein_mode_val, ratein_w, refine_spec, ttt_spec, freq_delta,
+                      multivariate)
     if getattr(model, "expects_frequency", False) and not freq_delta:
         logger.warning("this model was trained with Delta tied to the frequency "
                        "(model.ssm.delta_from_frequency) and is evaluated WITHOUT "
@@ -1409,6 +1511,8 @@ def main(cfg: DictConfig):
         tag += "-w"
     if freq_delta:
         tag += "_fdelta"
+    if multivariate:
+        tag += "_mv"
     # +dump_per_k=true (oracle mode only): per-instance sums at every k, to
     # score per-series selectors offline. Tag _perk: never the cached oracle dir.
     dump_per_k = bool(cfg.get("dump_per_k", False))
@@ -1486,7 +1590,8 @@ def main(cfg: DictConfig):
                                           spread_grid=spread_grid,
                                           ttt_spec=ttt_spec,
                                           per_instance=dump_rows,
-                                          clip_nonneg=clip_nonneg)
+                                          clip_nonneg=clip_nonneg,
+                                          multivariate=multivariate)
                     per_k[str(kk)] = r_k["model"]["CRPS"]
                     if best is None or r_k["model"]["CRPS"] < best["model"]["CRPS"]:
                         best, best_k = r_k, kk
@@ -1531,7 +1636,8 @@ def main(cfg: DictConfig):
                                       spread_mode=spread_mode,
                                       spread_grid=spread_grid,
                                       ttt_spec=ttt_spec,
-                                      clip_nonneg=clip_nonneg)
+                                      clip_nonneg=clip_nonneg,
+                                      multivariate=multivariate)
         except FileNotFoundError as exc:
             logger.error(str(exc))
             return

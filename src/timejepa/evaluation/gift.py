@@ -176,6 +176,13 @@ def load_series(gift_root: Path, config: str) -> List[np.ndarray]:
     Multivariate targets are exploded channel-wise in (series, channel)
     order, as the official MultivariateToUnivariate does.
     """
+    return load_series_grouped(gift_root, config)[0]
+
+
+def load_series_grouped(gift_root: Path, config: str):
+    """(series, V): the series of `load_series` and the number of variates of every item,
+    item i being series[i * V:(i + 1) * V] (to_univariate=False in the official harness).
+    A config whose items do not all have the same number of variates is refused."""
     import datasets as hf_datasets
 
     path = gift_root / storage_path(config)
@@ -187,32 +194,45 @@ def load_series(gift_root: Path, config: str) -> List[np.ndarray]:
     ds = hf_datasets.load_from_disk(str(path)).with_format("numpy")
 
     out: List[np.ndarray] = []
+    widths = set()
     for row in ds:
         target = np.asarray(row["target"], dtype=np.float32)
         if target.ndim == 1:
             out.append(target)
+            widths.add(1)
         else:
             out.extend(target[k] for k in range(target.shape[0]))
-    return out
+            widths.add(target.shape[0])
+    if len(widths) > 1:
+        raise ValueError(f"{config}: items with different numbers of variates {sorted(widths)}")
+    return out, widths.pop() if widths else 1
 
 
 @dataclass
 class ConfigData:
     """What the harness evaluates on: series, horizon h, season m, number of test windows.
     A GIFT config through `load_config`; any other source (a held-out dev subset) can
-    build one and go through the same procedure."""
+    build one and go through the same procedure. `n_variates` > 1: series in (item,
+    variate) order, item i being series[i * n_variates:(i + 1) * n_variates]."""
     series: List[np.ndarray]
     h: int
     m: int
     windows: int
+    n_variates: int = 1
 
 
-def load_config(gift_root: Path, config: str, max_series: int = 0) -> ConfigData:
-    series = load_series(gift_root, config)
+def load_config(gift_root: Path, config: str, max_series: int = 0,
+                multivariate: bool = False) -> ConfigData:
+    """`multivariate` keeps the items whole (n_variates from the data; `max_series` then
+    rounds down to whole items)."""
+    if multivariate:
+        series, V = load_series_grouped(gift_root, config)
+    else:
+        series, V = load_series(gift_root, config), 1
     if max_series:
-        series = series[:max_series]
+        series = series[:max(V, max_series // V * V)]
     return ConfigData(series, prediction_length(config), seasonality(config.split("/")[1]),
-                      num_windows(config, min(len(s) for s in series)))
+                      num_windows(config, min(len(s) for s in series)), V)
 
 
 @dataclass
@@ -221,15 +241,24 @@ class TestInstance:
     series_idx: int
     context: np.ndarray   # full past, length varies
     target: np.ndarray    # length = prediction_length, may contain NaN
+    scored: bool = True   # False: a variate read as context only (its target is all NaN)
 
 
 def iter_test_instances(series: Sequence[np.ndarray], h: int,
-                        windows: int) -> Iterator[TestInstance]:
+                        windows: int, n_variates: int = 1) -> Iterator[TestInstance]:
     """
     The official split: the last ``windows * h`` steps of each series, cut
     into non-overlapping windows of length h, each forecast from the entire
     history before it.
+
+    `n_variates` > 1: the windows of an item come whole, its V variates in order. A
+    variate whose target is all NaN comes unscored (the univariate split skips it, the
+    multivariate forecast still reads its past); a window with no scored variate is
+    skipped, so the scored instances are those of the univariate split.
     """
+    if n_variates > 1:
+        yield from _iter_item_instances(series, h, windows, n_variates)
+        return
     for idx, y in enumerate(series):
         for k in range(windows):
             start = len(y) - (windows - k) * h
@@ -239,6 +268,25 @@ def iter_test_instances(series: Sequence[np.ndarray], h: int,
             if np.all(np.isnan(target)):
                 continue
             yield TestInstance(idx, y[:start], target)
+
+
+def _iter_item_instances(series, h: int, windows: int, V: int) -> Iterator[TestInstance]:
+    if len(series) % V:
+        raise ValueError(f"{len(series)} series do not make items of {V} variates")
+    for item in range(len(series) // V):
+        ys = series[item * V:(item + 1) * V]
+        if len({len(y) for y in ys}) > 1:
+            raise ValueError(f"item {item}: variates of different lengths")
+        for k in range(windows):
+            start = len(ys[0]) - (windows - k) * h
+            if start <= 0:
+                continue
+            targets = [y[start:start + h] for y in ys]
+            scored = [not np.all(np.isnan(t)) for t in targets]
+            if not any(scored):
+                continue
+            for c, (y, t, sc) in enumerate(zip(ys, targets, scored)):
+                yield TestInstance(item * V + c, y[:start], t, sc)
 
 
 # ---------------------------------------------------------------------------
